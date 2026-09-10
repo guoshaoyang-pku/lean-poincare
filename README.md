@@ -35,6 +35,12 @@ The historical D6 audit tools in [tools/](tools/) can be inspected alongside the
 
 The control sources in [longrun/bin/](longrun/bin/) document the deployed orchestration. They require an existing fleet layout, a configured dsh launcher, Lean packages and credentials provisioned outside Git. They are not a turnkey installer. Do not publish credentials, settings files, live logs or shared build caches. The source snapshot and worker worktrees are separate from the publication repository; Git metadata must never be synchronized with `rsync --delete`.
 
+## Imported upstream workspace
+
+The complete tracked snapshot of [frenzymath/Poincare-Conjecture](https://github.com/frenzymath/Poincare-Conjecture) is preserved under [third_party/frenzymath/Poincare-Conjecture/](third_party/frenzymath/Poincare-Conjecture/). It is locked to commit `bb91a091f0b968f8bbe8d861e025a88d82b161be` and retains the upstream package boundaries, including `DoCarmoLib`, `MorganTianLib`, `Topping`, `Shared` and the source-reference projects.
+
+The upstream workspace is substantially larger than the local release and is the preferred reference for future geometry and Ricci-flow adapters. It is intentionally not flattened into `release/`: the two workspaces use different Lean and mathlib pins, and upstream compilation or blueprint status does not by itself promote a declaration into local evidence. See [the repository structure](docs/REPOSITORY-STRUCTURE.md) and [the integration plan](docs/UPSTREAM-INTEGRATION.md).
+
 ## Scope of the remaining work
 
 Major open branches include analytic existence and regularity, actual Riemannian geometry/measure constructions, entropy and noncollapsing, geometric compactness and canonical neighborhoods, surgery/extinction and topology. Many underlying mathematical results are classical; their missing formalizations are not automatically "new mathematics."
