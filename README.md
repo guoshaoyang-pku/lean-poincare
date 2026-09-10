@@ -1,70 +1,42 @@
-# D6 weekly release — `week-1-2026-09-09`
+# Lean Poincaré / Ricci-flow formalization workbench
 
-**Verdict:** WEEKLY RELEASE CUT — STAGES 1-4 INFRASTRUCTURE VERIFIED; PERELMAN PROGRAM NOT PROVED.
+**The Poincaré conjecture and Perelman's proof are NOT established by this repository.**
 
-This worktree is the integrator's one-week release for the Ricci-flow formalization program.
-It consumes **only** the accepted `D5-clean-rebuild` artifacts, re-hashes them, rebuilds them
-from a fresh `.lake/build`, and re-runs every release gate. Nothing outside the accepted D5
-package is promoted as mathematical content.
+The repository contains conditional interfaces, checked implication chains, concrete model-space lemmas and historical audit artifacts. In particular, `release/Poincare/D7/Recognition/Assembly.lean` assumes extinction, canonical-neighborhood and recognition certificates. A proof from those certificates does not construct them.
 
-> The release does **not** claim the Poincare conjecture, Ricci-flow existence, Perelman
-> F/W/µ monotonicity, κ-noncollapsing, canonical neighbourhoods, surgery, extinction or sphere
-> recognition. Those are statement-only interfaces or explicit hypothesis structures
-> (`manifest/blockers.json`, `manifest/theorem-dependency-ledger.json`).
+## Current supervision
 
-## Release artifacts
+See [the supervision report](longrun/SUPERVISION-2026-09-10.md), [the machine-readable long-term plan](longrun/D12-plan.json) and [the observation snapshot](longrun/supervision-2026-09-10.json).
 
-| artifact | file |
-| --- | --- |
-| Weekly release manifest | `manifest/weekly-release-manifest.json` / `.md` |
-| Theorem / dependency ledger | `manifest/theorem-dependency-ledger.json` / `.md` |
-| Verified Lean declarations (per-declaration axiom report) | `manifest/verified-declarations.json` |
-| Verified theorems (headline + inventory reference) | `manifest/verified-theorems.json` |
-| Axiom report summary | `manifest/axiom-report.json` |
-| Explicit blockers for the full Perelman proof | `manifest/blockers.json` / `.md` |
-| Next 20 queued builder tasks | `manifest/next-20-tasks.json` / `.md` |
-| Independent gate run | `manifest/verification.json` |
-| Ledger/claim probe result (262 declarations) | `manifest/ledger-probe-result.json` |
-| Consumed-input hashes | `manifest/input-hashes.json` |
-| Proposed queue update (promotion denied by sandbox) | `manifest/queue.updated.json`, `longrun/queue.updated.json` |
-| Release result card | `longrun/results/D6-weekly-release.md` / `.json` |
-| Delivery note | `longrun/DELIVERY.md` |
+Fourteen D12 research tracks and two dependent D13 audit/review tasks have been assigned. The execution model is currently `deepseek-v4-pro`, with maximum reasoning effort. Each track has a 72-hour wall-clock budget, four-hour invocation slices, hourly checkpoints and at most 24 invocations. The fleet capacities are six tasks on ophis-gpu and nine on each 360 machine; the actual active count is recorded separately in the observation snapshot. These are resource limits, not promised theorem-completion times. Queued tasks may start later; the two follow-up reviews wait for terminal outcomes, including reported blockers.
 
-## Key numbers (kernel-checked)
+Supervision found and repaired transport stalls rather than counting idle workers as progress. ophis-gpu now uses its verified direct API route, while the 360 machines use a persistent Mac service forwarding encrypted API traffic through the existing HTTP proxy. Both 360 hosts were reachable again during the final inspection; SSH access remains intermittent, so use the timestamped observations rather than central `running` labels. Continued operation requires network/model availability and, for 360, the Mac/proxy remaining available. This is bounded automation, not a promise of continuous interactive-model supervision.
 
-- 11 accepted D1–D4 clusters; 53 promoted Lean files; 58 promoted+base modules.
-- Promoted-source hash check: **58/58 unchanged** against the accepted D5 provenance manifest.
-- `lake build` + `ReleaseCheck` + `ReleaseAudit` + `D6AuditReport` + `ReleaseClaims`: **all exit 0**.
-- Kernel audit: **1619 declarations** (887 theorems); **0** project axioms, **0** `unsafe`,
-  **0** `sorryAx`, **0** `native_decide`, **0** unapproved axioms, **0** `proof_wanted`.
-  Only axiom cones: `{}`, `{propext}`, `{propext, Quot.sound}`, `{propext, Classical.choice, Quot.sound}`.
-- Result-card claims: **193/193** resolve; ledger declarations: **191/191** resolve;
-  generated probe: **262/262** declarations `#check` clean.
-- Blockers: 23 open (22 carried from D5 + 1 D6 process), 1 documented, 1 corrected in the
-  worktree queue pending promotion, 3 environment limits, 3 informational.
-- Next tasks: **20 builder tasks + 1 verifier task**.
+## Evidence levels
 
-## Reproduction
+1. **Compiled:** `lake build` and per-file Lean checks from the correct package, recorded with source hashes. The legacy queue label `verified` is retained for compatibility and must not be read as mathematical completion.
+2. **Kernel-audited:** every relevant declaration's transitive axiom dependencies checked against `propext`, `Classical.choice` and `Quot.sound`, with working negative controls.
+3. **Semantically reviewed:** theorem types and certificate fields expanded; geometric domain, hypotheses and non-vacuity checked independently.
+4. **Blocker closed:** the original missing input is constructed under the intended assumptions and consumed by a downstream checked theorem.
+
+Passing one level does not imply the others. A theorem about Euclidean space, a finite discretization or an explicitly supplied certificate is not a theorem for arbitrary Ricci flows on closed three-manifolds. The current scheduling gate performs compilation only; the independent audit tasks must supply stronger acceptance evidence.
+
+The `manifest/` directory primarily describes the historical D6 release. Its declaration counts, hashes and axiom audits do **not** certify every later file in the integrated source tree. This supervision update publishes the D11 Euclidean heat-kernel bridge with its rerun 61-declaration audit, the execution plan and control-source fixes. The bridge's ten-file project import closure matches the audited worker by SHA-256. It does not promote new D12 mathematics or claim a fresh integrated kernel audit.
+
+## Reproduction and execution
+
+The Lean package is [release/](release/). Use the toolchain recorded in [release/lean-toolchain](release/lean-toolchain) and the mathlib revision pinned in [release/lake-manifest.json](release/lake-manifest.json). Do not run a dependency update when reproducing an existing snapshot.
 
 ```bash
-export ELAN_HOME=/data3/guoshaoyang/workdir/lean_poincare/elan
-export PATH="$ELAN_HOME/bin:$PATH"
-cd /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D6_weekly_release
-python3 tools/d6_verify.py          # hash check + fresh build + all kernel gates + axiom report
-python3 tools/d6_build_release.py   # ledger + probe + manifest + blockers + tasks + result card
+lake -d release build
 ```
 
-`tools/d6_verify.py` writes `manifest/verification.json` and
-`manifest/verified-declarations.json`; `tools/d6_build_release.py` generates
-`release/D6LedgerProbe.lean`, compiles it, and writes every release artifact plus the result
-card. Logs for every command are in `logs/`.
+The historical D6 audit tools in [tools/](tools/) can be inspected alongside their original manifests. Their environment-specific paths and baseline hashes must be understood before reuse; a historical audit should not be relabeled as a current clean rebuild.
 
-## Package layout
+The control sources in [longrun/bin/](longrun/bin/) document the deployed orchestration. They require an existing fleet layout, a configured dsh launcher, Lean packages and credentials provisioned outside Git. They are not a turnkey installer. Do not publish credentials, settings files, live logs or shared build caches. The source snapshot and worker worktrees are separate from the publication repository; Git metadata must never be synchronized with `rsync --delete`.
 
-- `release/` — the release Lake package (58 promoted/base modules + 5 drivers, byte-identical
-  promoted sources; `.lake/packages` symlinks the shared pinned mathlib prebuild).
-- `release/D6AuditReport.lean` — D6 per-declaration kernel axiom report.
-- `release/D6LedgerProbe.lean` — generated `#check` probe for every ledger/claim declaration.
-- `input/` — hashed copies of the consumed D5 card, manifests, tools and negative control.
-- `negcontrol/NegativeControl.lean` — audit negative control (proves the predicate catches
-  `sorryAx` and `native_decide`).
+## Scope of the remaining work
+
+Major open branches include analytic existence and regularity, actual Riemannian geometry/measure constructions, entropy and noncollapsing, geometric compactness and canonical neighborhoods, surgery/extinction and topology. Many underlying mathematical results are classical; their missing formalizations are not automatically "new mathematics."
+
+The old count of 22 blockers is a historical ledger count, not an exhaustive contemporary inventory or a percentage-complete denominator. D12 includes an independent semantic-ledger task to reassess this boundary from the actual Lean statements.
