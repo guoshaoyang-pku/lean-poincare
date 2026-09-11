@@ -31,6 +31,11 @@ def append_event(event, **fields):
         output.write(json.dumps(record, sort_keys=True) + "\n")
 
 def import_leader_outbox(queue):
+    # Primary controller can freeze recursive admission while existing child tasks
+    # are being consumed. The marker is deliberately explicit and reversible;
+    # outbox files remain intact for later import.
+    if (ROOT / "ADMISSION_PAUSED").exists():
+        return
     outbox_root = WORK / "leaders"
     if not outbox_root.exists():
         return
