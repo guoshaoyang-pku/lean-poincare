@@ -4,8 +4,8 @@
 
 ## Counts
 
-- total: **31**
-- open: **23**
+- total: **32**
+- open: **24**
 - documented: **1**
 - resolved_by_d6: **0**
 - resolved_in_worktree: **1**
@@ -47,6 +47,8 @@
 | `H3` | hygiene-note | informational | In Lean 4.34.0-rc2 native_decide no longer routes through ofReduceBool; it emits a private axiom <decl>._native.native_decide.ax_*. The audit catches it through the unapproved-axiom rule; the negative control confirms detection. | — |
 | `P4` | process-delivery | known-environment-limit | Prompt worktree name D6_release does not match the runtime workspace D6_weekly_release; all D6 work is in D6_weekly_release. | — |
 | `P5` | process-delivery | open | The D6 release package adds one new driver (D6AuditReport.lean) and a generated D6LedgerProbe.lean to the accepted D5 source set; promoted D1-D4 sources remain byte-identical (hash-verified). Any future release must re-run the hash check. | — |
+
+| `M8` | explicit-unproved-interface | open | The canonical M8 topological-recognition/Poincare-conclusion node has no unconditional formal proof; existing cards are partial, conditional, model, statement-only, or audit artifacts. | `L5-child-recognition-spaceform`, `L5-child-surgery-nontrivial-datum`, `L5-child-moise-geometric-realization` |
 
 ## Program-step view
 
