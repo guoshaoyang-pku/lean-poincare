@@ -1,0 +1,3 @@
+# Overnight transport recovery — 2026-09-12 00:48 +0800
+
+Two semantic-review compile gates initially failed because their fresh worktrees lacked `.lake/packages`; `lake` attempted to clone pinned mathlib/plausible and failed with RPC/HTTP2 transport errors. This was classified as transport failure, not a theorem or axiom failure. The failed package directories were preserved under timestamped `packages.transport-failure-*` names, and both worktrees were relinked to the existing D6 baseline package cache. No source, checkpoint, queue record or result card was deleted. The dispatcher remains singular; its automatic repair/gate cycle continues from the preserved task state.
