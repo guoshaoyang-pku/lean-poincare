@@ -25,19 +25,50 @@ GATE_VERSION = 2
 GATE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 PENDING_GATES = {}
 
+def append_event(event, **fields):
+    record = {"event": event, "timestamp": time.strftime("%FT%T%z"), "host": HOST, **fields}
+    with (LOGS / "events.jsonl").open("a") as output:
+        output.write(json.dumps(record, sort_keys=True) + "\n")
+
+def import_leader_outbox(queue):
+    outbox_root = WORK / "leaders"
+    if not outbox_root.exists():
+        return
+    known = {task["id"] for task in queue["tasks"]}
+    for path in sorted(outbox_root.glob("*/comms/outbox/*.json")):
+        try:
+            addition = json.loads(path.read_text())
+            tasks = addition.get("tasks", [addition])
+            if not isinstance(tasks, list):
+                raise ValueError("tasks must be a list")
+            for task in tasks:
+                required = {"id", "group_id", "deps", "lane", "acceptance"}
+                if not required.issubset(task):
+                    raise ValueError("missing required task fields")
+                if task["id"] in known:
+                    continue
+                task.setdefault("status", "queued")
+                task.setdefault("host", HOST)
+                task.setdefault("requires_lean", True)
+                task.setdefault("max_hours", 8)
+                task.setdefault("max_rounds", 6)
+                queue["tasks"].append(task)
+                known.add(task["id"])
+                append_event("task_enqueued", task_id=task["id"], group_id=task.get("group_id"), parent_node=task.get("parent_node"))
+            path.rename(path.with_suffix(".imported"))
+        except Exception as error:
+            append_event("outbox_rejected", path=str(path), error=str(error))
+            path.rename(path.with_suffix(".rejected"))
+
 def admission_limit(queue):
     policy = queue.get('concurrency', {})
-    if policy.get('mode') != 'adaptive':
-        return int(queue.get('max_concurrent', 6))
-    minimum = int(policy.get('min', 4)); target = int(policy.get('target', 14))
-    hard_cap = int(policy.get('hard_cap', max(target, 96)))
+    if policy.get('mode') != 'adaptive': return int(queue.get('max_concurrent', 6))
+    minimum=int(policy.get('min',4)); target=int(policy.get('target',14)); hard_cap=int(policy.get('hard_cap',max(target,96)))
     try:
-        load = os.getloadavg()[0]; cpus = os.cpu_count() or 1
-        reserve = float(policy.get('cpu_load_fraction', 0.35))
-        available = max(0, int((cpus * reserve - load) / max(1.0, float(policy.get('load_per_worker', 1.5)))))
-        return max(minimum, min(hard_cap, target, minimum + available))
-    except OSError:
-        return min(target, hard_cap)
+        load=os.getloadavg()[0]; cpus=os.cpu_count() or 1
+        available=max(0,int((cpus*float(policy.get('cpu_load_fraction',0.35))-load)/max(1.0,float(policy.get('load_per_worker',1.5)))))
+        return max(minimum,min(hard_cap,target,minimum+available))
+    except OSError: return min(target,hard_cap)
 
 
 def log(message):
@@ -182,8 +213,11 @@ def import_inbox(queue):
 def tick():
     queue = json.loads(QUEUE.read_text())
     import_inbox(queue)
+    import_leader_outbox(queue)
     by_id = {task["id"]: task for task in queue["tasks"]}
     active = sum(is_running(task["id"]) for task in queue["tasks"] if task.get("host", HOST) == HOST)
+    lane_limits = queue.get("concurrency", {}).get("lane_limits", {})
+    lane_active = {lane: sum(is_running(t["id"]) for t in queue["tasks"] if t.get("host", HOST) == HOST and t.get("lane", "builder").split("+")[0] == lane) for lane in lane_limits}
     for task in queue["tasks"]:
         task_id = task["id"]
         owned = task.get("host", HOST) == HOST
@@ -239,6 +273,9 @@ def tick():
     for task in queue["tasks"]:
         if active >= admission_limit(queue):
             break
+        lane = task.get("lane", "builder").split("+")[0]
+        if lane in lane_limits and lane_active.get(lane, 0) >= int(lane_limits[lane]):
+            continue
         if task["status"] != "queued" or task.get("host", HOST) != HOST:
             continue
         if any(dependency not in by_id or by_id[dependency]["status"] != "verified" for dependency in task.get("deps", [])):
@@ -279,6 +316,8 @@ def tick():
         task["status"] = "running"
         task["started_at"] = time.strftime('%FT%T%z')
         active += 1
+        lane_active[lane] = lane_active.get(lane, 0) + 1
+        append_event("task_started", task_id=task_id, group_id=task.get("group_id"), parent_node=task.get("parent_node"), lane=lane)
         log(f"LAUNCH {task_id} ({prompt.name})")
     queue["updated_at"] = time.strftime('%FT%T%z')
     save_json(QUEUE, queue)
