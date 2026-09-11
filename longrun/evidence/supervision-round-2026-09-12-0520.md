@@ -1,0 +1,7 @@
+# Supervision round summary - 2026-09-12 05:20 +0800
+
+A live queue audit briefly showed a real state transition after preparing L4 children: five existing queued L4 tasks were admitted one at a time despite ADMISSION_PAUSED, because that marker freezes recursive outbox import only. Each invocation hit QUOTA: Insufficient Balance within seconds and the worker fail-safe wrote PAUSED. The queue now has 141 total records: 92 verified, 35 queued, 12 paused, 2 blocked, 0 running. No task was deleted or reset; every failed task has last_run.json and PAUSED evidence.
+
+The dispatcher was replaced with a reviewed fail-closed version that checks all task-local logs for QUOTA/RATE_LIMIT/Insufficient Balance/Too many requests before launching any queued worker. It now emits ADMISSION_BLOCKED provider quota/rate-limit evidence detected and retains a single dispatcher PID 2660017. The old script is backed up as dispatch_loop.py.bak-20260912-0525.
+
+Quota remains unavailable; 360-1 and 360-2 still return SSH Connection closed. The transition is recorded as a control-plane incident and not as mathematical throughput. No new promotion or exact blocker closure occurred, and no unconditional Poincare theorem is claimed.
