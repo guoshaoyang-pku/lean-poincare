@@ -46,6 +46,13 @@ Continue from existing files and checkpoint.json in this worktree; do not restar
   timeout --signal=TERM --kill-after=30s "${slice}s" "$ROOT/../bin/dsh_fixed.sh" --profile headless "$context" > "$STATE/latest.log" 2>&1
   rc=$?
   printf '%s\n' "{\"task\":\"$TASK_ID\",\"ended\":\"$(date -Is)\",\"exit_code\":$rc,\"round\":$round}" > "$STATE/last_run.json"
+  # Fail closed on provider admission/quota failures. Preserve the checkpoint
+  # and partial artifacts; do not spend repeated invocations until the host
+  # side quota is explicitly restored.
+  if grep -Eq 'QUOTA:|RATE_LIMIT:|Insufficient Balance|Too many requests' "$STATE/latest.log"; then
+    printf '%s\n' "$(date -Is) provider quota/rate-limit failure; resume from checkpoint after API probe" > "$STATE/PAUSED"
+    exit 1
+  fi
   if [ "$rc" -eq 0 ]; then
     failures=0
     if python3 - "$WORK/longrun/results/$TASK_ID.md" <<'PY'
