@@ -1,4 +1,4 @@
-# Canonical research DAG (snapshot 2026-09-11)
+# Canonical research DAG (snapshot 2026-09-11 23:38 +0800)
 
 This is the authoritative planning graph. It replaces static proof-map placeholder counts. A node is complete only when its named input is constructed, compiled, consumed downstream, and independently audited.
 
@@ -23,7 +23,7 @@ Cross dependencies: M1 feeds M2/M4; M2 feeds M3/M4; M3 feeds M4/M5; M4 feeds M5;
 - D12: research tracks delivered cards, mostly compile-gated or model/conditional.
 - D13: adapters, integrated audit and cross-audit in progress; semantic promotion pending.
 - Semantic ledger: 23 open blockers; exact named blocker closures are not claimed.
-- Latest fleet snapshot: ophis-gpu 83 verified-by-compile, 1 running, 1 queued, 1 paused, 1 blocked; 360-1 13 verified and 1 blocked; 360-2 13 verified.
+- Latest reliable fleet snapshot: ophis-gpu 83 verified-by-compile, 6 task-level running, 21 queued after recursive leader import, 1 paused, 1 blocked; 360-1 13 verified and 1 blocked; 360-2 13 verified. The independent \`ai4math-swarm\` is excluded.
 - These are evidence labels and queue states, not percentages toward Poincare completion.
 
 ## Active next wave
@@ -35,3 +35,10 @@ Cross dependencies: M1 feeds M2/M4; M2 feeds M3/M4; M3 feeds M4/M5; M4 feeds M5;
 - L5 topology/audit: recognition, surgery and adversarial recheck of all blocker claims.
 
 The proof-map HTML is a visualization prototype. A future live view must be generated from queue, events, heartbeat, checkpoint and result-card snapshots.
+
+## ETA model (evidence-based)
+
+- Next 24 hours: reasonable target is additional child-task admissions and the first independently checked frontier artifacts from M0–M5. This is a throughput target, not a claim of theorem completion.
+- Several days to one week: plausible for a broader set of compile-checked local lemmas, adapters, counterexamples and conditional interfaces if leader recursion stays healthy.
+- Complete Ricci-flow mainline and independent kernel/axiom/semantic audit: still multi-month to multi-year scale. The current six running groups and 23 open semantic blockers do not support a days-level completion estimate.
+- The dominant uncertainty is useful mathematical artifact production and serial dependency closure, rather than raw DeepSeek API concurrency.
