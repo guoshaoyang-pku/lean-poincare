@@ -25,6 +25,20 @@ GATE_VERSION = 2
 GATE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 PENDING_GATES = {}
 
+def admission_limit(queue):
+    policy = queue.get('concurrency', {})
+    if policy.get('mode') != 'adaptive':
+        return int(queue.get('max_concurrent', 6))
+    minimum = int(policy.get('min', 4)); target = int(policy.get('target', 14))
+    hard_cap = int(policy.get('hard_cap', max(target, 96)))
+    try:
+        load = os.getloadavg()[0]; cpus = os.cpu_count() or 1
+        reserve = float(policy.get('cpu_load_fraction', 0.35))
+        available = max(0, int((cpus * reserve - load) / max(1.0, float(policy.get('load_per_worker', 1.5)))))
+        return max(minimum, min(hard_cap, target, minimum + available))
+    except OSError:
+        return min(target, hard_cap)
+
 
 def log(message):
     line = f"{time.strftime('%FT%T%z')} {message}"
@@ -223,7 +237,7 @@ def tick():
                 task["status"] = "queued"
                 log(f"RECOVER {task_id} worker not alive")
     for task in queue["tasks"]:
-        if active >= queue.get("max_concurrent", 6):
+        if active >= admission_limit(queue):
             break
         if task["status"] != "queued" or task.get("host", HOST) != HOST:
             continue
