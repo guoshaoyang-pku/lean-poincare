@@ -23,14 +23,13 @@ No declaration assumes its own conclusion, introduces `sorry`/`axiom`/`admit`/`u
 
 - Basic and IBP source modules compiled with Lean `v4.34.0-rc2` and mathlib pin `7974e751bece493b6ff508039423ca9fa2452fa8` (preserved child compile evidence, exit 0).
 - Basic four-theorem axiom probe passed with only `propext`, `Classical.choice`, and `Quot.sound`.
-- The IBP standalone probe was not accepted as complete: the preserved failing runs invoked `lake` from an isolated child without a default toolchain/cache sidecar. This is an environment-path blocker, so no axiom result is inferred for the IBP declaration from that failed invocation.
+- The earlier IBP standalone probe invoked `lake` from an isolated child without a default toolchain/cache sidecar and failed for that environment reason. A subsequent run from the verified pinned Lean v4.34.0-rc2 environment exited 0 and reported the IBP declaration cone as exactly `propext`, `Classical.choice`, and `Quot.sound`; both failure and successful logs are preserved.
 - The child checkpoint records `partial_artifact`, `semantic_class = model`, `compile_exit = 0`, `axiom_probe_exit = 1`, and `exact_blockers_closed = []`; this review agrees with those fields.
 
 ## Acceptance still required
 
-1. Re-run the IBP axiom probe from the pinned release environment and record its complete cone.
-2. Add a downstream Euclidean consumer transferring the compact-support identity to the Laplacian/kernel setting.
-3. Add a flat first-variation or monotonicity consumer.
-4. Obtain a separate semantic review after those consumers exist.
+1. Add a downstream Euclidean consumer transferring the compact-support identity to the Laplacian/kernel setting.
+2. Add a flat first-variation or monotonicity consumer.
+3. Obtain a separate semantic review after those consumers exist.
 
 Until these items are complete, the artifact remains partial and model-level. It supplies useful Euclidean analysis infrastructure but closes no general semantic-ledger blocker and does not bear on an unconditional Poincare proof.
