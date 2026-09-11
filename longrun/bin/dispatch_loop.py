@@ -113,6 +113,24 @@ def is_running(task_id):
     except (OSError, ValueError, KeyError):
         return False
 
+
+def provider_admission_blocked():
+    """Return true after any worker records a provider quota/admission failure.
+
+    ADMISSION_PAUSED intentionally freezes only recursive outbox imports.  A
+    separate fail-closed check is needed for already-queued tasks, otherwise
+    the dispatcher would spend one doomed invocation per queued task.
+    """
+    patterns = ("QUOTA:", "RATE_LIMIT:", "Insufficient Balance", "Too many requests")
+    for latest in STATE.glob("*/latest.log"):
+        try:
+            text = latest.read_text(errors="replace")
+        except OSError:
+            continue
+        if any(pattern in text for pattern in patterns):
+            return True
+    return False
+
 def is_terminated(task_id):
     return (STATE / task_id / "TERMINATE_REQUESTED").exists() or (STATE / task_id / "TERMINATED").exists()
 
@@ -284,6 +302,9 @@ def tick():
                 task["status"] = "queued"
                 log(f"RECOVER {task_id} worker not alive")
     for task in queue["tasks"]:
+        if provider_admission_blocked():
+            log("ADMISSION_BLOCKED provider quota/rate-limit evidence detected")
+            break
         if active >= admission_limit(queue):
             break
         lane = task.get("lane", "builder").split("+")[0]
