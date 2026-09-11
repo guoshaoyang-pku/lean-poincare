@@ -40,5 +40,5 @@ The proof-map HTML is a visualization prototype. A future live view must be gene
 
 - Next 24 hours: reasonable target is additional child-task admissions and the first independently checked frontier artifacts from M0–M5. This is a throughput target, not a claim of theorem completion.
 - Several days to one week: plausible for a broader set of compile-checked local lemmas, adapters, counterexamples and conditional interfaces if leader recursion stays healthy.
-- Complete Ricci-flow mainline and independent kernel/axiom/semantic audit: still multi-month to multi-year scale. The current six running groups and 23 open semantic blockers do not support a days-level completion estimate.
+- Complete Ricci-flow mainline and independent kernel/axiom/semantic audit: still multi-month to multi-year scale. The current four running groups and 23 open semantic blockers do not support a days-level completion estimate.
 - The dominant uncertainty is useful mathematical artifact production and serial dependency closure, rather than raw DeepSeek API concurrency.
