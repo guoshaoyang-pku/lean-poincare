@@ -113,6 +113,9 @@ def is_running(task_id):
     except (OSError, ValueError, KeyError):
         return False
 
+def is_terminated(task_id):
+    return (STATE / task_id / "TERMINATE_REQUESTED").exists() or (STATE / task_id / "TERMINATED").exists()
+
 
 def card_status(task_id):
     candidates = [WORK / task_id / "longrun/results" / f"{task_id}.md", ROOT / "results" / f"{task_id}.md"]
@@ -227,7 +230,12 @@ def tick():
         task_id = task["id"]
         owned = task.get("host", HOST) == HOST
         state = STATE / task_id
-        if task["status"] in ("verified", "blocked", "gate_failed", "needs_review", "paused"):
+        if is_terminated(task_id):
+            task["status"] = "stopped"
+            append_event("task_stopped", task_id=task_id, reason="terminate_requested")
+            save_json(QUEUE, queue)
+            continue
+        if task["status"] in ("verified", "blocked", "gate_failed", "needs_review", "paused", "stopped"):
             continue
         if owned and is_running(task_id):
             continue
@@ -290,7 +298,7 @@ def tick():
             continue
         task_id = task["id"]
         prompt = prompt_for(task_id)
-        if not prompt or is_running(task_id):
+        if not prompt or is_running(task_id) or is_terminated(task_id):
             continue
         if not (WORK / task_id).is_dir():
             log(f"WAIT_WORKTREE {task_id}")
