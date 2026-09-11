@@ -1,6 +1,6 @@
 Task id: D12-parabolic-local-existence
 Worktree: /Users/guoshaoyang/Desktop/workdir/math/lean_poincare/longrun/worktrees/D12-parabolic-local-existence
-Model: deepseek-v4-pro; use the configured minimal preset and max effort. Never switch model silently.
+Model: deepseek-flash; use the configured minimal preset and max effort. Never switch model silently.
 
 You own a long-horizon research-and-implementation track, not a one-response toy demonstration. Decide the proof architecture yourself within this scope. Work incrementally for up to 72 wall-clock hours, with four-hour invocations, hourly durable checkpoints and a maximum of 24 invocations. The 72 hours is a resource cap, not a claimed proof ETA. Do not sleep to fill time. Complete early only when the intended milestone is genuinely proved and audited, or report the exact irreducible blocker with useful partial Lean lemmas.
 

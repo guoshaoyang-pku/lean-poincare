@@ -22,7 +22,7 @@ deadline=$((started + ${TASK_MAX_HOURS:-72} * 3600))
 round=0
 failures=0
 heartbeat() {
-  printf '%s\n' "{\"task\":\"$TASK_ID\",\"pid\":$$,\"heartbeat\":\"$(date -Is)\",\"model\":\"deepseek-v4-pro\"}" > "$STATE/heartbeat.json.tmp"
+  printf '%s\n' "{\"task\":\"$TASK_ID\",\"pid\":$$,\"heartbeat\":\"$(date -Is)\",\"model\":\"deepseek-flash\"}" > "$STATE/heartbeat.json.tmp"
   mv "$STATE/heartbeat.json.tmp" "$STATE/heartbeat.json"
 }
 heartbeat

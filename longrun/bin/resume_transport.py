@@ -28,7 +28,7 @@ with (root / "dispatcher.lock").open("a") as lock:
             task["resumed_after"] = "Transport route verified by supervisor; checkpoints preserved"
             print("RESUME", task["id"])
     queue["max_concurrent"] = args.capacity
-    queue["model"] = "deepseek-v4-pro"
+    queue["model"] = "deepseek-flash"
     temporary = queue_path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(queue, indent=2) + "\n")
     temporary.replace(queue_path)
