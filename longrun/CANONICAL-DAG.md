@@ -1,4 +1,4 @@
-# Canonical research DAG (snapshot 2026-09-11 23:38 +0800)
+# Canonical research DAG (snapshot 2026-09-11 latest retry)
 
 This is the authoritative planning graph. It replaces static proof-map placeholder counts. A node is complete only when its named input is constructed, compiled, consumed downstream, and independently audited.
 
@@ -23,7 +23,7 @@ Cross dependencies: M1 feeds M2/M4; M2 feeds M3/M4; M3 feeds M4/M5; M4 feeds M5;
 - D12: research tracks delivered cards, mostly compile-gated or model/conditional.
 - D13: adapters, integrated audit and cross-audit in progress; semantic promotion pending.
 - Semantic ledger: 23 open blockers; exact named blocker closures are not claimed.
-- Latest reliable fleet snapshot: ophis-gpu 83 verified-by-compile, 6 task-level running, 21 queued after recursive leader import, 1 paused, 1 blocked; 360-1 13 verified and 1 blocked; 360-2 13 verified. The independent \`ai4math-swarm\` is excluded.
+- Latest reliable fleet snapshot: ophis-gpu 86 verified-by-compile, 4 task-level running, 38 queued, 1 paused, 1 blocked; 360-1 13 verified and 1 blocked; 360-2 13 verified. The independent \`ai4math-swarm\` is excluded.
 - These are evidence labels and queue states, not percentages toward Poincare completion.
 
 ## Active next wave
