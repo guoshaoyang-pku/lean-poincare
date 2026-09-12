@@ -61,7 +61,9 @@ launches forever, and quota-paused tasks never requeued. Fixed in `dispatch_loop
 Per host (ophis-gpu, 360-1, 360-2):
 
 1. **API key**: put your key in `~/.dsh/.credentials.yaml` (the wrapper
-   `bin/dsh_fixed.sh` takes the first `sk-*` match). The current key is balance-depleted.
+   `bin/dsh_fixed.sh` takes the first `sk-*` match). The previous key ran out of
+   balance overnight 2026-09-12 and recovered partially by 09:57; swap in your own
+   for sustained throughput.
 2. **Model**: edit the dsh headless profile `~/.dsh/profiles/headless` if your model id
    differs; update `queue.json`'s top-level `"model"` field so heartbeats/labels match.
 3. **Unblock admission**: `touch longrun/state/ADMISSION_OK`.
@@ -73,10 +75,12 @@ Per host (ophis-gpu, 360-1, 360-2):
    ophis via `bin/relay_push.sh` (rsync over tunnel port 10022); the central gate
    re-verifies everything on ophis before promotion.
 
-Expected behavior after key swap: within one tick the dispatcher resumes the 34 queued
-tasks (adaptive concurrency, lane limits in `queue.json`), and the 13 quota-paused tasks
-requeue as their markers are re-evaluated. Watch `longrun/logs/dispatch.log` for
-`RESUME`/`LAUNCH` lines.
+Expected behavior after key swap: within one tick the dispatcher resumes queued launches
+(adaptive concurrency, lane limits in `queue.json`). Tasks paused with a `provider quota`
+marker requeue automatically on the next tick; pauses from budget exhaustion or repeated
+runtime failures (e.g. `D13-upstream-api-inventory-3602` on 360-2) need manual review —
+extend `max_hours`/`max_rounds` in the queue entry and remove the `PAUSED` marker.
+Watch `longrun/logs/dispatch.log` for `RESUME`/`LAUNCH` lines.
 
 ## 5. Main controller (主控) and fable
 
