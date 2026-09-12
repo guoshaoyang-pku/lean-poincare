@@ -1,0 +1,17 @@
+Task id: L4-child-d13-semantic-audit
+Worktree: /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/L4-child-d13-semantic-audit
+Repair attempt: 1
+Read /data3/guoshaoyang/workdir/lean_poincare/longrun/state/L4-child-d13-semantic-audit/gate.json and gate-build.log. Compile from the release package, NOT the worktree root. Fix authored source or report an infrastructure blocker. Do not wait for the dispatcher: finish your own checks and write the result card.
+Do not weaken a theorem, introduce new assumptions, replace a result by a statement-only Prop, or substitute a toy theorem to satisfy the gate. Preserve definitions and target semantics. Never use sorry, axiom, unsafe, native_decide or proof_wanted. If the intended proof remains unavailable, preserve valid partial lemmas and end the task's own card with TASK_BLOCKED. Do not edit tests or negative controls.
+Original task requirements:
+Task id: L4-child-d13-semantic-audit
+Worktree: /data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/L4-child-d13-semantic-audit
+Model: deepseek-flash; use host credential reference only.
+
+Objective:
+Independent semantic audit of the D13 manifold-IBP/entropy headline layer (no source edits; read-only). For each of the 8 headline declarations (SmoothOverlapAtlas.globalWeightedIBP_of_cover_partial_ae, OverlapAtlas.halfSpaceAtlas_weightedIBP_unconditional, halfSpaceAtlas_greenIdentity, halfSpaceAtlas_laplacianIntegralZero, dilationAtlasTwo_weightedIBP_via_pou, manifoldWeightedIBP_of_atlasData, HeatKernelBridge.finiteLifetimeEntropyBridge_gaussian, HeatKernelBridge.monotoneOn_F_gaussian) expand the full statement, list every hypothesis and its domain/quantifier, and adversarially check for: conclusion-equivalent hypotheses, contradictory or vacuous hypotheses, wrong domains ((0,T) vs (0,T]), model-vs-manifold overclaims, and hidden interface fields (ManifoldAtlasData.integral_decomp etc.). Verify non-vacuity by exhibiting at least one kernel-checked instantiation per headline (the D13 model atlases). Deliverable: a JSON ledger with per-declaration verdicts, exact evidence (commands, line numbers), the list of interface fields actually assumed, and any defect found; plus a short markdown report. Report honestly whether the D13 card's 'expanded hypotheses' and 'blockers closed' claims are supported.
+
+Operate only in this isolated worktree. Read the canonical DAG, relevant D10-D13 sources and prior cards. Produce a real compiled artifact or a precise blocker split. Preserve theorem semantics; do not replace a general statement with a toy or conclusion-equivalent hypothesis. Authored Lean must contain no sorry, axiom, admit, unsafe, native_decide or proof_wanted. Build from release/ with the pinned toolchain. Record source hashes, exact compile commands and exits, #print axioms, and classify each result as proved, conditional, model, statement-only or upstream source claim. Do not modify other worktrees, queues, tests or global settings.
+
+Write checkpoint.json at least hourly and deliver longrun/results/L4-child-d13-semantic-audit.md and .json. End the markdown card with exactly TASK_DONE only for the intended acceptance milestone, otherwise TASK_BLOCKED with the smallest reproducible blocker and preserved partial artifacts. TASK_DONE requests independent acceptance and is not a Poincare proof.
+

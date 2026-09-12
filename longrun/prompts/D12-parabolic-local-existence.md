@@ -1,5 +1,5 @@
 Task id: D12-parabolic-local-existence
-Worktree: /Users/guoshaoyang/Desktop/workdir/math/lean_poincare/longrun/worktrees/D12-parabolic-local-existence
+Worktree: /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D12-parabolic-local-existence
 Model: deepseek-flash; use the configured minimal preset and max effort. Never switch model silently.
 
 You own a long-horizon research-and-implementation track, not a one-response toy demonstration. Decide the proof architecture yourself within this scope. Work incrementally for up to 72 wall-clock hours, with four-hour invocations, hourly durable checkpoints and a maximum of 24 invocations. The 72 hours is a resource cap, not a claimed proof ETA. Do not sleep to fill time. Complete early only when the intended milestone is genuinely proved and audited, or report the exact irreducible blocker with useful partial Lean lemmas.
@@ -25,3 +25,8 @@ Reuse compatible open-source libraries where useful. Record exact source URL/rev
 Collaboration: consume the preloaded source snapshot and write explicit dependency requests in checkpoint.json. Never poll the dispatcher waiting for your own acceptance. Later audit workers consume your task artifacts after relay. No shared mutable proof files.
 
 Deliver longrun/results/D12-parabolic-local-existence.md and .json inside this worktree. JSON must contain proved_declarations, expanded_hypotheses, semantic_class, exact_blockers_closed, remaining_blockers, source_hashes, compile_evidence, axiom_evidence, next_dependency_requests and actual elapsed time. An empty closed-blockers list is legitimate. End your own markdown result card with exactly TASK_DONE if all intended milestone claims hold, or TASK_BLOCKED if only partial results are obtained. A TASK_DONE card is only a request for independent acceptance, never a claim that Perelman is proved.
+
+
+SUPERVISOR UPDATE 2026-09-11: the worktree now contains the pinned Frenzymath source snapshot under `third_party/frenzymath/Poincare-Conjecture` at commit `bb91a091f0b968f8bbe8d861e025a88d82b161be`. Read `docs/UPSTREAM-INTEGRATION.md` and `third_party/frenzymath/IMPORT.md`. Reuse MorganTian, Topping, DoCarmo, Shared and other upstream packages instead of recreating geometry/Ricci-flow foundations. Do not copy admitted proofs, do not claim a named blocker closure without a constructed downstream use, and continue from the existing checkpoint/worktree rather than restarting.
+
+HIGH-FREQUENCY COORDINATION: update `checkpoint.json` at least every 30 minutes, keep `longrun/results/{task_id}.md` current, and record exact dependency requests in `next_dependency_requests`. A running task must not wait silently for another worker. If a dependency is missing, preserve a compiling partial lemma, state the exact imported module needed, and continue on an independent subgoal.

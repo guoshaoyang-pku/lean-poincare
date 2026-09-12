@@ -1,0 +1,9 @@
+Task id: L1-child-declaration-ledger-export
+Worktree: /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/L1-child-declaration-ledger-export
+Model: use configured host model only.
+
+Objective: Turn the L1 baseline declaration enumeration into the canonical machine-readable semantic ledger consumed by release cards: export baseline/audit/axiom-audit.json, declarations.tsv and dep-edges.tsv into the manifest/*-semantic-ledger.json schema used by D12/D13 (per-declaration name, kind, module, source sha256, axiom cone, downstream count, semantic class) and add a diff mode that, given a future audit run, reports added/removed/cone-changed declarations fail-closed against the allowed axiom set.
+
+Acceptance: Constructed input: an exporter script plus generated `*_semantic-ledger.json`; every declaration row carries module, kind, cone, source sha256 and downstream count. Downstream consumer: a `--diff` invocation against a second audit snapshot (produced by re-running the L1 generators, or against a synthetic mutated snapshot) that fails closed on any added declaration with an unapproved cone, any removed pre-existing declaration, and any cone change. Independent rebuild: generators + exporter run from a fresh checkout of the release tree with the pinned toolchain. Semantic review: card documents the schema mapping, the diff negative control, and the exact counts; ends TASK_DONE/TASK_BLOCKED.
+
+Work only in this isolated worktree. Do not edit queue.json or another worktree. Preserve all partial artifacts and checkpoint.json. No sorry, axiom, admit, unsafe, native_decide, proof_wanted or weakened theorem statements. Classify results as proved, conditional, model, statement-only or upstream source claim. End the result card with TASK_DONE or TASK_BLOCKED; this is independent acceptance, never a Poincare proof.
