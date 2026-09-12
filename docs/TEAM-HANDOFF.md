@@ -97,6 +97,38 @@ Switching the controller to fable therefore requires no code change in this repo
 run the controller session with the fable model and keep the same file protocol.
 Worker-side model choice is independent (section 4).
 
+### What stops naturally, and what keeps it alive
+
+| layer | stops naturally? | keep-alive mechanism |
+|---|---|---|
+| dispatcher (per host) | only on crash/reboot | `bin/watchdog.sh` via cron (every minute + `@reboot`); flock makes double-start impossible |
+| workers (L2 executors) | 4 h slice end, quota pause, 8 fast failures, budget exhaustion | dispatcher relaunches queued/resumed tasks every tick; quota pauses auto-requeue after evidence TTL |
+| leaders (小组长) | **yes** — a leader is an agent session; it ends when the session ends | `bin/leader_loop.sh` (see below) |
+| main controller (主控) | **yes** — interactive session lifecycle | run the controller itself under an outer restart loop of your harness; all state is in files (heartbeat, evidence, queue), so a restarted controller resumes cheaply |
+
+`bin/leader_loop.sh` is a model-agnostic keep-alive wrapper. It re-invokes any one-shot
+agent CLI in slices (default 4 h, total budget `LEADER_MAX_HOURS` default 168 h), with
+heartbeat at `state/leaders/<id>/heartbeat.json`, quota backoff (45 min), fast-failure
+pause after 8 consecutive crashes, and a `LEADER_DONE` stop marker. Example for the
+planned stack (controller fable 5.1; leaders Astra/Sol/Opus 5; all max effort):
+
+```sh
+LEADER_ID=L4-geometric-critical-path \
+LEADER_CMD="codex exec --model <opus5-or-sol-id>" \
+  nohup bin/leader_loop.sh >> logs/L4.leader.out 2>&1 &
+```
+
+For dsh-based leaders omit `LEADER_CMD` (defaults to `bin/dsh_fixed.sh --profile headless`).
+Child-task flow is unchanged: leaders write JSON into `comms/outbox/`, the dispatcher
+validates and imports it (freeze with `longrun/ADMISSION_PAUSED` if ever needed).
+
+Throughput note: the fleet never "slows down" on its own — throughput ends only when
+(1) the provider quota/balance dies (now auto-probed every 45 min), (2) the queue runs
+dry because no leader/controller feeds it, or (3) non-quota pauses accumulate (budget
+exhaustion / repeated failures — these need a controller decision by design). A healthy
+long experiment therefore needs: funded keys, leaders under `leader_loop.sh`, the cron
+watchdog installed, and a controller that reviews `PAUSED`/`blocked` items each cycle.
+
 ## 6. Known open items
 
 - `D12-tensor-maximum-bochner` blocked on ophis and 360-1 (mathematical blocker, see card).
