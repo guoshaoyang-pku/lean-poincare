@@ -1,0 +1,799 @@
+dsh: reasoning:
+Let me start by reading the gate.json file to understand what failed.
+dsh: reasoning:
+The gate.json isn't at that path. Let me look around. Maybe the state dir is elsewhere. Let me search.
+dsh: reasoning:
+The state dir D8-repro-archive exists but is empty? Let me check.
+dsh: reasoning:
+The gate.json for D8-repro-archive doesn't exist. But the state dir has prompt.md, heartbeat.json, latest.log, last_run.json, DONE. Let me read those.
+dsh: reasoning:
+The gate.json doesn't exist yet — this is likely a fresh repair attempt triggered by the supervisor. The task says compile gate failed attempt 1, and gate.json should have per-file exit codes. Since gate.json is missing, I need to run the compile gate myself: check every `.lean` file in the worktree compiles with `lake env lean` exit 0.
+
+Wait, the task is "D8-repro-archive" which is a reproduction archive: it contains a copy of the D6 release and repro scripts. The `repro/build` directory contains a copy of the release with 64 .lean files. Let me check the whole worktree for .lean files.
+
+Actually, note: `repro/build` may itself contain a full copy of the release (with .lake packages etc). Let's check.
+
+Let me look at the result card. The task says "Update the result card and end it with TASK_DONE." Let me find result card. Probably in longrun/results/ or release. Let me look at the worktree structure fully.
+dsh: reasoning:
+So the worktree contains a copy of the D6 release (63 .lean files + negcontrol 1 = 64) plus `repro/build` which is another copy (another 64). The task says "Fix ONLY the authored files in your worktree so that every `.lean` file compiles with `lake env lean` (exit 0)."
+
+The gate.json doesn't exist, but maybe the compile gate is run by the supervisor and the attempt-1 failure is recorded elsewhere. Let me search for gate-related files in this worktree (logs, etc.). Also check if there's a gate script. The sibling D8-blueprint-render has gate.json in state. For this task, maybe the gate result is missing because the run of the gate itself failed. Hmm.
+
+Let me check the queue.json for this task and the prompt/state. Also check `repro/report.json` and `repro/ARCHIVE.md`, and the result card `longrun/results/D8-repro-archive.md`.
+
+The key deliverable: every .lean file compiles with `lake env lean` exit 0. The worktree's `repro/build` is a copy of the release built directory. Note that `repro/build/.lake` might contain packages. Let's check the structure. Also note release dir has its own .lake? Let me check.
+
+Actually, the D6 release worktree at `release/` — is it a lake project? Let's look for lakefile.toml and .lake directories.
+dsh: reasoning:
+The task card says repro archive passed. The compile gate failed attempt 1. But no gate.json exists. Maybe the gate runs a scan of all `.lean` files in the worktree (including `repro/build/` and `release/` and `negcontrol/`), and something failed. Since the worktree includes `repro/build`, which contains a `.lake` directory. Maybe the gate ran `lake env lean` from the worktree root where there's no lakefile, causing failure for all files. Hmm.
+
+Wait — perhaps the gate.json for this task is written somewhere else, maybe in the worktree under `logs/`. Let me search all files modified recently, and search for "gate" in this worktree. Also check the `logs/` dir at the worktree root.
+
+Let me look at the worktree root logs dir and manifest.
+dsh: reasoning:
+No gate.json. The prompt says to read it. Perhaps the supervisor's compile gate ran and produced no gate.json because it crashed, or the file was cleaned. Regardless, my job: ensure every `.lean` file in the worktree compiles with `lake env lean` exit 0.
+
+But there's a subtlety: "authored files" — the D8 task added only `repro/` artifacts. The release files are copied from D6 (authored in D6 but scaffolded here). The gate likely compiles all `.lean` files found in the worktree. Since `release/` and `repro/build/` are copies, both must compile.
+
+Let me check if the environment has elan/lake available and run the gate myself. First, check `lake env lean` in release dir. Need to know where elan is. Let's check PATH and env.
+
+Also note the worktree root has `input/`, `tools/`, `manifest/`, etc. The gate likely collects all `.lean` files and runs `lake env lean` in the appropriate project directory. Let me figure out how other tasks' gate.json entries look — e.g., D8-blueprint-render gate lists files with absolute paths and exit codes. The gate runner probably finds the nearest lakefile. Let's just replicate: for each .lean file, run `lake env lean <file>` in its project dir (release or repro/build, or negcontrol?).
+
+negcontrol/NegativeControl.lean — in D6 it was compiled from release dir? In the D6 worktree, negcontrol is at top level and the per-file run for negative control was `lake env lean negcontrol/NegativeControl.lean` executed in release dir? Let's check build.sh and logs to understand. Actually in the repro card, step 12 was `lake env lean negcontrol/NegativeControl.lean`. The log 16_negative_control.log exists in repro/logs. Let's read it and the report.json to see cwd.
+
+The key question: what failed in attempt 1? Possibly the gate scanned all .lean including ones in `repro/build` while the `repro/build/.lake` is present, and something failed. Or maybe it's the two copies of ReleaseClaims etc. Let me just run the full check myself.
+
+First, check toolchain availability.
+dsh: reasoning:
+Note `lake --version` says "no default toolchain configured" — because there's no lean-toolchain in cwd (worktree root). elan needs the toolchain file or `ELAN_TOOLCHAIN` env. The gate runner probably ran `lake env lean` from the worktree root, where there's no lean-toolchain and no lakefile, which fails! That's likely why the gate failed: the gate collects `.lean` files across the worktree and runs `lake env lean` at the worktree root (no toolchain/default), causing failure for every file. But then gate.json would list all files with nonzero exit. However, gate.json is absent entirely. Maybe the gate crashed before writing.
+
+Let me check how the supervisor's gate works. Look at `/data3/guoshaoyang/workdir/lean_poincare/longrun/bin` and README. There may be a gate script.
+dsh: reasoning:
+Now I understand the gate: it walks the whole worktree (excluding `.lake`, `.git`, `.dshpkg`), finds all `.lean` files, and runs `lake env lean <abs path>` with `cwd=wt` (the worktree root) and ENV with ELAN_HOME set. At the worktree root, there's no `lean-toolchain` and no `lakefile.toml`, so `lake env lean` fails with "no default toolchain configured" for every file. That's exactly what happens when I ran `lake --version` from the worktree root.
+
+So the fix: make the worktree root a valid Lake project, or at least provide a `lean-toolchain` at the root so `lake env lean` works. Actually, even with lean-toolchain at root, `lake env lean <abs-path>` from a directory with no lakefile — Lake can still run `lean` with the toolchain if lean-toolchain is found? Let me test: In a directory with lean-toolchain but no lakefile, `lake env lean --version`. Lake will find the toolchain via elan. `lake env` sets up LEAN_PATH including `.lake/build/lib` of the current package if any. Without a lakefile, it might still work and just use the toolchain's core libs. But the files in release/ import Mathlib modules, so `lake env lean <abs file>` needs mathlib on LEAN_PATH. Without a lakefile at root, mathlib won't be found.
+
+Hmm. But wait — how did the gate pass for D8-blueprint-render? Its gate.json shows files with exit 0. Let's check that worktree root: maybe it has a lean-toolchain and lakefile at root. Let me look. Also D7 tasks passed gates. Let me inspect their structure.
+
+The key: the gate runs from worktree root. For the gate to pass, the worktree root must be a Lake package whose dependency closure includes everything imported by all .lean files in the tree, and the toolchain must match. Alternatively, `lake env lean` from root with a lakefile.toml that has the right deps and toolchain works, and imported modules resolve via the root package's deps.
+
+Let me check D8-blueprint-render root.
+dsh: reasoning:
+The passing worktrees have a worktree root `lakefile.toml`, `lean-toolchain`, `lake-manifest.json`, and `.lake -> release/.lake` symlink. That's the "Harness compile gate fix". The D8-repro-archive worktree lacks those at root, so the gate failed for every file.
+
+So the fix for D8-repro-archive is to add at the worktree root:
+- `lean-toolchain` (copy of release/lean-toolchain)
+- `lakefile.toml` with a package name and `packagesDir = ".lake/packages"` and require mathlib
+- `lake-manifest.json` (copy of release/lake-manifest.json)
+- `.lake -> release/.lake` symlink (so packagesDir resolves to the prebuilt packages)
+
+Wait — the gate walks the whole worktree and finds .lean files in `release/`, `repro/build/`, and `negcontrol/`. With the root package having the same module roots (Poincare, Probe, Ledger, Audit), running `lake env lean /abs/path/to/release/Poincare/...` should resolve imports. But careful: the root package needs `[[lean_lib]]` globs to have its own srcDir? Default `srcDir` is the package root. Since the files live under `release/`, module `Poincare.Longrun...` maps to `release/Poincare/...`? No — Lake's module resolution for the root package looks under root/srcDir (default = package dir). Module `Poincare.Basic` would map to `<root>/Poincare/Basic.lean`, which doesn't exist at the root; it's at `release/Poincare/Basic.lean`.
+
+However, when you run `lake env lean <abs-path-to-file>`, the file itself is given by absolute path and Lean compiles it. Its imports (e.g. `import Mathlib...`) must resolve via LEAN_PATH. `lake env` puts the root package's own build lib dir (`.lake/build/lib/lean`) plus deps' lib dirs on LEAN_PATH. The imported project modules (`import Poincare.Basic`) would need to be findable. Since `repro/build/.lake/build/lib/lean` contains compiled oleans from the release... Actually wait, does the gate even need project modules compiled? When compiling `release/Poincare/Longrun/Entropy/Bridge.lean`, it imports `Poincare.Longrun.Entropy.Functional` etc. Those need to be found via LEAN_PATH. `release/.lake/build/lib/lean` contains the compiled oleans (from the D6 build). The `.lake -> release/.lake` symlink at root means root's `.lake/build/lib/lean` = release's compiled output. Good.
+
+But the root package name is different, and the `[[lean_lib]]` config matters for `lake build`, not for `lake env lean` resolution of imports? Actually LEAN_PATH from lake env includes `.lake/build/lib/lean` for the root package and each dependency. That's enough for imports to resolve, regardless of lib globs. Let me verify with D8-blueprint-render: its root lakefile.toml is minimal (no lean_lib), `.lake -> release/.lake`, and the gate passed for files in release/ and negcontrol/ and blueprint_render/probe. Yes — because `lake env lean` just adds paths.
+
+Note in D8-blueprint-render, root lakefile.toml has packagesDir = ".lake/packages" and require mathlib. The `.lake` symlink points to release/.lake, whose `packages` is itself a symlink to the shared prebuilt packages. So `.lake/packages` resolves.
+
+Also there's `lake-manifest.json` at root copied from release.
+
+So my plan:
+1. Add root `lean-toolchain`, `lakefile.toml`, `lake-manifest.json`, and `.lake` symlink to release/.lake (mirroring the D8-blueprint-render fix).
+2. But wait: gate walks into `repro/build` too, which has its own `.lake` directory (excluded from walk but present). The root lakefile with `.lake -> release/.lake` doesn't affect `repro/build/.lake`. For files in `repro/build/`, `lake env lean` run from the worktree root uses the root's LEAN_PATH; imports resolve to release's oleans. The file path given is absolute under repro/build. Should be fine.
+
+3. Verify every .lean file compiles with `lake env lean` from the worktree root using the gate's exact environment. That's 128 files (64 in release + 64 in repro/build... let me count: 63 release + 1 negcontrol = 64; repro/build has 63? The find listing shows repro/build has 63 .lean files (Audit 5, D6AuditReport, D6LedgerProbe, Ledger 2, Poincare..., Probe 2, ReleaseAudit, ReleaseCheck, ReleaseClaims = 63). Plus release 63 + negcontrol 1 = 127 total.
+
+Each per-file check took ~3-4s in the D6 run (58 files = 200s). 127 files × ~4s ≈ 8-9 min. Fine; run in background.
+
+But hold on: is adding root lakefile "fixing only authored files"? The task says fix ONLY the authored files in the worktree. Hmm, the root lakefile is not an authored .lean file, but it's a harness fix that other tasks also applied (D8-blueprint-render has a comment "Harness compile gate fix"). This is acceptable and necessary: without it, `lake env lean` can't run at the root.
+
+Alternative: instead of adding a root package, could I restructure so that the gate passes? The gate's cwd is fixed at worktree root. There's no way around adding root toolchain+package config, unless... the worktree root's `release/` is not at root. So yes, root fix needed.
+
+Wait, but why did attempt 1 fail only now? The D8-repro-archive task originally ran and passed all its own checks, but the harness gate is new (added later, Sep 9 16:35 dispatch_loop.py mtime). The gate then ran and failed because of the missing root config. Sibling D8-blueprint-render was repaired with this exact fix. Let me check the D8-blueprint-render root lakefile fully and its `.lake` symlink and maybe a repair card note. Also check other D8 tasks that passed (D8-release-packaging etc.) for the same pattern.
+
+Let me check which tasks currently have gate.json ok, and compare their root setup. D8-blueprint-render gate.json ok true. D8-release-packaging gate? state dir listing earlier showed D8-release-packaging dir; let me check its gate.json. And D7-evolution-sharp-restatement, D8-verifier-evolution-sharp.
+
+Also, importantly: the repair prompt says gate.json has per-file exit codes, but the file was removed by the dispatcher after queuing repair (line 150-152 removes it). So I can't read it; I need to reproduce.
+
+Let me check the root of D8-release-packaging (may not have gate yet) and D7-evolution-sharp-restatement.
+dsh: reasoning:
+Confirmed: the passing worktrees all have root `.lake -> release/.lake`, `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`. The D8-blueprint-render one has a comment about the harness compile gate fix. D7-evolution-sharp-restatement's root lakefile.toml is 434 bytes — likely a minimal "gate fix" lakefile. Let me look at that one to copy the pattern, and check D8-blueprint-render's root lakefile (435 bytes).
+
+Note D8-blueprint-render gate has 65 files and passed; its root lakefile.toml is the minimal one.
+
+Now, one concern: the gate also walks `repro/build/` and `release/` — both contain full copies. `repro/build` also contains `.lake` which is excluded. But `repro/build` has its own `lakefile.toml`, `lean-toolchain`, `lake-manifest.json` — those are not .lean, fine.
+
+Another concern: the gate will compile the negative control `negcontrol/NegativeControl.lean`, which intentionally uses `sorry` and `native_decide` and prints PASS. It compiles (exit 0) — that's fine, though the forbidden-token scan must exclude negcontrol (D6 handled this; the card says 63 release files scanned). My job is just compile gate. But I should double check no `sorry` in authored files; the task says keep math content honest. The negcontrol intentionally has sorry to test the auditor — that's a negative control, established in D6 and accepted. Hmm, but the repair prompt says "no `sorry`, `axiom`, `unsafe`, `native_decide`, or `proof_wanted`". The negative control is a deliberate, clearly-named control that is excluded from the release scan; it was accepted in D5/D6. I should not remove it since it's part of the archive's evidence. But could the supervisor's repair loop treat it as violation? The gate only checks exit codes. The instruction says keep mathematical content honest — the negative control is honest (it demonstrates the auditor detects sorry). I'll leave it and note it in the card.
+
+Now, potential deeper issue: will compiling all files from the root work with the root lakefile? The D8-blueprint-render gate passed with files under `release/` and `negcontrol/` plus `blueprint_render/probe/`, so yes.
+
+But wait: `repro/build` files might import project modules and the compiled oleans in `release/.lake/build/lib/lean` exist. Also `repro/build/.lake/build/lib/lean` may exist. The root LEAN_PATH will include `.lake/build/lib/lean` (= release/.lake/build/lib/lean). Both copies' imports resolve to the same oleans. Fine.
+
+However, there's a subtle risk: when Lean compiles `repro/build/Poincare/Basic.lean`, it may check that the source file matches the olean? No — `lake env lean <file>` just elaborates the file and its imports; it doesn't require the file's own olean. Importing `Poincare.Basic` resolves to the olean in `.lake/build/lib/lean/Poincare/Basic.olean` from release. Fine.
+
+Another subtle risk: `lake env lean` from root may try to build dependencies? No, `lake env` just computes paths. It may need `lakefile.toml` valid and manifest resolvable. Since packages dir symlink exists and manifest matches, fine.
+
+Let me now check the exact root lakefile.toml of D8-blueprint-render and D7-evolution-sharp-restatement.
+dsh: reasoning:
+Good. Now, I also need to check if there are other .lean files in the worktree that would fail for other reasons (e.g., `input/d5-tools` might contain .lean? No, the find showed only release, repro/build, negcontrol). Let me confirm the total list of .lean files the gate would find: it excludes `.lake`, `.git`, `.dshpkg` dirs. Our find earlier excluded `./repro/build/.lake/*` only; but there might be .lean under release/.lake (excluded). Let me count precisely with the gate's algorithm.
+
+Also note: the gate walks and excludes dirs named `.lake`, so release/.lake and repro/build/.lake are pruned. Good.
+
+Let me write a script that replicates the gate exactly (same env with ELAN_HOME), but first add the root config files. Plan:
+
+1. Create `lean-toolchain` at root with `leanprover/lean4:v4.34.0-rc2`.
+2. Create `lakefile.toml` root minimal like the others (name D8ReproArchiveRoot).
+3. Copy `release/lake-manifest.json` to root.
+4. Create `.lake -> release/.lake` symlink.
+
+Then test `lake env lean` on a couple of files from root.
+
+Wait: does the root lakefile need `packagesDir = ".lake/packages"`? The `.lake` symlink resolves to release/.lake; packagesDir default is `.lake/packages`, which resolves through symlink to release/.lake/packages -> shared prebuilt. So explicit packagesDir is redundant but harmless; the pattern includes it. Keep consistent.
+
+Also the manifest file at root: `lake-manifest.json` from release. When lake reads the root lakefile with `[[require]] mathlib rev master`, it compares to manifest; if manifest's mathlib rev is 7974e... and inputRev master, that's fine — lake uses the manifest. Since the package already exists in packagesDir, no network needed.
+
+One risk: `lake env` may attempt to update the manifest or complain that the manifest is out of date because package name differs? The sibling worktrees show this works.
+
+Another risk: Lake version mismatch — the toolchain is fetched via elan. ELAN_HOME is `/data3/guoshaoyang/workdir/lean_poincare/elan`. Is the toolchain installed? Yes, sibling gates passed with same toolchain. Let me verify: `ELAN_HOME=... lake --version` in a dir with lean-toolchain.
+
+Let me implement now. Also I should verify that the root `.lake` symlink creation is allowed by the sandbox (symlink under workspace-write should be fine).
+
+Then run the full gate emulation in the background. It will take maybe 10-20 min (127 files). Note the gate timeout is 1800s per file but total may be long. I'll run it in background with output to a log.
+
+Actually, an important consideration: the first compile of a file that imports mathlib takes a few seconds since oleans are prebuilt. The D6 run took ~3.4s/file. 127 files ≈ 7-8 min. But there might be contention with other tasks. Run in background.
+
+Also: after adding root files, are the new root files "authored files"? They're config, not .lean. The card should be updated to document the harness fix. Also update `repro/report.json`? The card claims hashes of repro artifacts; if I don't modify repro artifacts, hashes stay valid. But the card's evidence table hashes for build.sh, repro_lib.py, report.json, ARCHIVE.md, scaffold.json — those remain unchanged. I'll add a section documenting the root gate fix and re-verification, then TASK_DONE at the end. The card must end with TASK_DONE (card_status checks tail 400 chars of the .md). Also maybe update the machine-readable json card.
+
+Wait: card_status scans `os.path.join(WORK, task_id, "longrun", "results", "*.md")` — the D8 card is `longrun/results/D8-repro-archive.md`. Good.
+
+Before that, let me consider: does the gate also scan `input/`? There may be `.lean` files under input (d5-manifest?). The earlier find over the whole worktree showed only negcontrol, release, repro/build. Let me double-check with the gate's exact exclusion (dirs named .lake/.git/.dshpkg pruned at any level).
+
+Let me also verify there isn't a `proof_wanted` or `axiom` in release files that the repair prompt worries about. The D6 card says forbidden scan hard 0, soft 0 on release. I'll re-run the scanner if present.
+
+Now let me check the `.lean` files count precisely and whether any of them might fail even with root config. Potential issue: `release/ReleaseClaims.lean`, `ReleaseAudit.lean`, `D6LedgerProbe.lean` print lots of output but exit 0. `negcontrol/NegativeControl.lean` uses sorry — prints warning, exit 0.
+
+Let's do it.
+dsh: reasoning:
+Confirmed: the failure is "no default toolchain configured" for every file because the root lacks lean-toolchain/lakefile. (The `head` pipeline made exit code 0 misleading; but the error is clear.)
+
+Now apply the harness gate fix mirroring the sibling tasks. Steps:
+1. `lean-toolchain` at root — copy of release/lean-toolchain.
+2. `lake-manifest.json` at root — copy of release/lake-manifest.json.
+3. `lakefile.toml` at root — minimal with name D8ReproArchiveRoot.
+4. `.lake -> release/.lake` symlink.
+
+Let me create them with write/bash. Since these files don't exist, write tool is fine. For the symlink use ln -s.
+
+Note file permission: root files should be readable by the worker (rw-rw-r--). The gate runs as the same user, fine.
+
+Let me check whether the root lakefile should declare `[[lean_lib]]` so that `lake env` doesn't complain about missing modules. Siblings prove minimal works.
+
+Do it.
+dsh: reasoning:
+Wait, the `.lake` symlink already existed? The output shows `.lake -> release/.lake` with timestamp Sep 9 20:50, which is when the repair started (heartbeat 20:50). Hmm, actually the `ln -s` command succeeded or failed? If `.lake` already existed, `ln -s` would fail with "File exists". The output shows the symlink exists now. The timestamp 20:50 might be the current time. Let me check: earlier `ls -la` at the very start of my inspection showed worktree root contents: input, logs, longrun, manifest, negcontrol, README.md, release, repro, tools — no `.lake` in the listing! Let me re-check... The first `ls -la` output:
+
+```
+drwxrwxr-x 10 guoshaoyang guoshaoyang  4096 Sep  9 15:40 .
+drwxrwxr-x 25 guoshaoyang guoshaoyang  4096 Sep  9 16:01 ..
+drwxrwxr-x  4 ... input
+drwxrwxr-x  2 ... logs
+drwxrwxr-x  3 ... longrun
+drwxrwxr-x  2 ... manifest
+drwxrwxr-x  2 ... negcontrol
+-rw-------  1 ... README.md
+drwxr-xr-x  7 ... release
+drwxrwxr-x  4 ... repro
+drwxrwxr-x  2 ... tools
+```
+
+No .lake, no lakefile.toml, no lean-toolchain, no lake-manifest.json. So the symlink is newly created at 20:50 (current time ~20:50-21:00). Good, `ln -s` succeeded.
+
+Now test `lake env lean` on a few representative files from root: a base file, a driver file, a repro/build file, and the negative control. First, quick check `lake env lean --version`? Actually `lake env lean` requires a file argument. Use `lake env lean release/Ledger/PerelmanDefinitions.lean` (small).
+
+Also verify no network access attempt: set env exactly as gate (ELAN_HOME, PATH). The gate uses ENV from dispatcher which sets ELAN_HOME and PATH. Let's emulate.
+dsh: reasoning:
+The root fix works. Now run the full gate emulation: all 127 files with the exact gate algorithm, from root, with the gate env. Run in background, save per-file exit codes to a JSON. Timeout per file 1800s as gate.
+
+I'll write a small Python script `repro/gate_check.py`? Hmm — should I add a script to the worktree? It could be considered an authored file, which is fine (it's a .py, not .lean). But maybe better to put it in /tmp to avoid altering the archive. Actually, adding a gate-check helper is useful evidence. But careful: the D8 card's artifact hashes would change if I modify build.sh etc. I can add a new file without touching existing hashed artifacts. However, adding extra files to the worktree is okay as long as no .lean is added. Hmm, but "Fix ONLY the authored files in your worktree" means don't modify files outside the worktree; it doesn't forbid adding the root config. I'll keep the check script outside the worktree in /tmp to keep the archive clean.
+
+Actually, the root lakefile.toml/lean-toolchain/lake-manifest.json/.lake are already additions to the worktree. They're needed. A checker script in /tmp is fine.
+
+Let me run the gate emulation in background, writing results to /tmp/gate_emul.json and log.
+dsh: reasoning:
+While that runs, let me plan the card update. Also, I should verify the forbidden-token scan and that no forbidden constructs were introduced by my changes (I added no .lean). Also check whether the root lakefile changes affect the `repro/build.sh` reproducibility (it wipes repro/build only, doesn't touch root files — fine). But note: the card says "No `.lean` file was added outside the disposable `repro/build/` copy" — still true.
+
+However, one thing to consider: `repro/build.sh` does `fresh_build_dir` (wipe + byte-copy release into repro/build) and `provision_packages` links `.lake/packages`. Does the root `.lake` symlink interfere with build.sh? build.sh runs commands with cwd=repro/build presumably. Let me check build.sh to ensure the root additions don't break the script (e.g., if it does `diff -r ../D6_weekly_release .` — but D6_weekly_release sibling may not exist... The card §4 says diff reported one difference. Let me check if the sibling D6 worktree exists at `../D6_weekly_release`. It does (worktrees/D6_weekly_release). My root additions now add another difference (lakefile.toml, lean-toolchain, lake-manifest.json, .lake). That's a change relative to D6 scaffold, but documented as the harness gate fix, and it doesn't modify promoted sources. The card §4 claim "diff -r ... reports exactly one difference: the new repro/ directory" is now stale. I must update that section to document the root gate fix.
+
+Also the scaffold.json says 687 files copied; now the worktree has 4 extra entries. The card should document this.
+
+Does build.sh itself do a diff check that might now fail? Let me inspect build.sh for such checks and for any step that might be affected. Also the `source_integrity` step compares release sources to D5 provenance — unaffected.
+
+Also `archive_generation` may hash the release tree — unaffected by root files.
+
+Let me read build.sh quickly (15KB). Focus on: steps list, how it runs per-file checks (cwd), whether it validates scaffold vs D6.
+dsh: reasoning:
+The forbidden-token matches are in comments/audit code, which is expected (the D6 scanner has a soft/hard distinction). Let me check the D6 scanner output from the original run (repro/logs/forbidden_scan.json) to see hard 0. Also `negcontrol/NegativeControl.lean` intentionally has `sorry` and `native_decide` — it's a negative control, not a release file.
+
+Let me check the forbidden scan json and the input scanner.
+dsh: reasoning:
+Good. Now while the gate emulation runs, let me prepare the card update. But first, let me check the progress of the background job. Actually, I shouldn't busy-poll; let me do useful work: verify the root additions don't break `repro/build.sh`'s own expectations and decide on documentation.
+
+One thing to check: `repro/build.sh` step `fresh_build_dir` wipes `repro/build` and copies from `release/`. It uses `cp -a`. Since `release/` unchanged, fine. The script may verify scaffold integrity vs `../D6_weekly_release`? Grep found no `D6_weekly_release` in build.sh. Good.
+
+Also, `repro_lib.py` might compute an archive hash of the worktree excluding some files. Let me check if archive generation walks the worktree root and would now include the new root files, changing ARCHIVE.md contents (which has a recorded sha256 in the card). If I re-run build.sh, ARCHIVE.md may change; I'm not going to re-run the full build (it takes 5 min and requires prebuilt packages; actually could run, but the root files might alter archive listing). The card's artifact hashes for ARCHIVE.md would change if regenerated. Better: do NOT regenerate repro artifacts; just verify compile gate and document the root fix in the card, updating the hash table if any artifact changed (none of the hashed artifacts change).
+
+But wait — the card says result card hash "—" for the md/json, so I can edit the card freely. The other hashes: build.sh, repro_lib.py, report.json, ARCHIVE.md, scaffold.json — unchanged. Good. I should verify their current sha256 still match the card (they should, since untouched).
+
+Also I need to update the machine-readable card `longrun/results/D8-repro-archive.json` maybe with a "gate_repair" section and TASK_DONE. The card_status checks the .md tail for TASK_DONE. The md must end with TASK_DONE.
+
+Now, is adding the root Lake project files acceptable given the card's "No modification of promoted sources" claim? Yes, they are not promoted sources; they are harness scaffolding at worktree root. I'll document as §4a "Harness compile-gate root shim".
+
+Another consideration: should the root lakefile be named with a comment stating it adds no Lean source? Done.
+
+Now, an important check: the gate's `compile_gate` excludes dirs named `.lake`, but our root `.lake` is a symlink to a dir. `os.walk` by default does not follow symlinked dirs (followlinks=False), and it lists the symlink in dirnames? Actually os.walk puts symlinks to dirs in dirnames but doesn't descend (followlinks=False). It will then try to filter dirnames: `.lake` is removed by name anyway. Good. But wait: root `.lake` symlink appears in dirnames; removed. release/.lake also removed. Fine.
+
+However, there's another subtlety: the gate's `os.walk` excludes `.lake` but the root `.lake` symlink target `release/.lake` contains no .lean files anyway.
+
+Now let me check the background job progress.
+dsh: reasoning:
+It's running (2 files done). ~2-4s each; 127 files maybe 5-10 min. Meanwhile, let me verify the card artifact hashes and prepare the card text. Also check the machine-readable card structure.
+dsh: reasoning:
+Artifact hashes match the card. The machine-readable card has a sha256 for the md card itself (`c080bb...`), which will change when I update the md. I should update that field too, or mark it as "updated by repair". Better: after editing the md, recompute its sha256 and update the json field, and add a `gate_repair` section. Also the json card might have a `verdict` and `non_claims`.
+
+Let me see the rest of the json card structure to know where to add.
+dsh: reasoning:
+Good. Now let me monitor the background gate job while preparing the card edit. Let me check progress.
+dsh: reasoning:
+Progress is slow (3 files in ~2 min?). Hmm, ~40s/file? That seems too slow. Wait, when did the job start? A few minutes ago. Let me check timing. Actually, these audit files are heavy (they print large reports). Also the first invocation may be loading oleans. Let me check elapsed time: the job started roughly when I issued it. The log shows 3 files. It might take 30+ min. Hmm.
+
+Wait — potential issue: each `lake env lean` invocation spawns lake, which reads the manifest and may check if packages need to be rebuilt/resolved. With the root lakefile requiring mathlib and manifest present, lake might try to fetch/update? It shouldn't need network since packages exist. The smoke test took 2.5s. But audit files may take longer to compile (they use Lean.Meta, compile with imports). In the D6 run, per-file checks averaged 3.4s including heavy files. The first files here are Audit/* which took 4-8s in D6.
+
+Let me measure: check mtimes or count. Let me look at the log timestamps... the script prints no timestamps. Let me check process start time and elapsed.
+dsh: reasoning:
+Wait, the process shown has elapsed 00:18, which is the `bash -c` wrapper? Actually pgrep matched the outer bash command (pid 2147327), elapsed 18s. Hmm, but the log's last write was 20:51:03 and now 20:51:06. So it's only been ~30 seconds. My earlier "few minutes" impression was wrong. Fine — 3 files in 30s ≈ 10s/file → 127 files ≈ 20 min. Acceptable.
+
+Hmm, wait: the `ps` command shows the bash wrapper still running (the heredoc + python), elapsed 18s, meaning the job started ~18s before this check. And log has 3 files. So ~6s/file. Total ~13 min. OK.
+
+While waiting, let me draft the card updates.
+
+Card additions:
+- Header: add a line about repair attempt 1 and the gate fix. Update "Generated" or add "Repaired".
+- §1 deliverables: mention root gate shim files (not hashed? can hash them).
+- New section on the compile gate: explain the harness gate runs `lake env lean <abs file>` from worktree root; D6 scaffold has no root Lake project; added root lakefile.toml/lean-toolchain/lake-manifest.json/.lake -> release/.lake; no Lean source added; all 127 .lean files exit 0.
+- Update §4 no-modification: note the root shim adds 4 non-.lean entries; promoted sources still byte-identical; `diff -r` now reports repro/ plus the 4 shim entries.
+- Update §9 evidence index with /tmp/d8_gate_emul.json? Better to copy the gate emulation results into the worktree as evidence, e.g. `repro/logs/gate_repair_per_file.json` and a log. That's an authored file addition, fine (it's evidence, not release source). But careful: adding files under `repro/logs/` — the card says logs dir has 84 files; adding a gate repair log changes nothing hashed (ARCHIVE.md doesn't hash logs dir contents? Let me check: ARCHIVE.md lists sha256 of promoted sources, pins, command table — not logs listing. The card says "Per-command logs (84 files)". Adding a file would make it 85+; I'd update the card accordingly or place evidence at worktree root under `logs/` instead (the worktree root logs/ dir holds D6 logs). Hmm.
+
+Better approach: store repair evidence in `repro/logs/repair/` subdir? That changes "84 files" claim. Or store at worktree root `logs/gate_repair/`? The root `logs/` is D6's log area (from the D6 task, copied). Adding a subdir there is fine but might confuse.
+
+Simplest: write the per-file gate evidence to `longrun/results/` next to the card? Or keep in the card as a summary table. The card is the deliverable; the supervisor's gate re-runs anyway. I think adding `repro/logs/gate_repair_perfile.json` is good evidence and I'll update the card's log count. But does build.sh truncate repro/logs on re-run (destructive scope: "truncates only repro/logs/")? Yes, a future `build.sh` run would wipe it — that's fine, it's regenerable evidence, and the card documents it as such.
+
+Hmm, but if I add files to `repro/logs/`, does that break the ARCHIVE.md hash? No, ARCHIVE.md content is static. But ARCHIVE.md may list the logs count. Let me check ARCHIVE.md for "84" or logs listing. Let me grep.
+
+Also the card md table has "Per-command logs (84 files)" — if I add 2 files, update to 86.
+
+Alternatively, place gate evidence in the worktree root `logs/` (D6 evidence dir, not part of repro artifacts): e.g., `logs/gate_repair_attempt1/`. The card can reference it. That avoids touching the repro/ artifact hashes/counts. But `logs/` at root is also D6's logs. Adding a subdirectory is clean. Hmm, but the root `logs/` isn't hashed anywhere either.
+
+Actually, wait. There's a subtlety: the compile gate excludes nothing except .lake/.git/.dshpkg, so extra JSON/log files don't matter. I'll put evidence in `repro/logs/` since it's the reproducibility archive's log area, and update the card's counts. Or simpler: put it in `longrun/results/D8-repro-archive.gate.json` next to the card — clearly a repair artifact tied to the card. I'll do that: `longrun/results/D8-repro-archive.gate.json` (per-file exit codes) and reference it in the card. It won't be wiped by build.sh.
+
+Hmm, but card_status globs `longrun/results/*.md` — extra json doesn't interfere.
+
+Also, should I add a small script `repro/gate_check.sh` to let a stranger reproduce the root-gate check? That would be nice evidence: `bash repro/gate_check.sh` runs all .lean from root. But it adds an unhashed artifact; the card can hash it. That's genuinely useful for reproducibility. I'll add `repro/gate_check.sh` (and maybe it's the script I already wrote). Then document its sha256 in the card.
+
+Wait, but "Fix ONLY the authored files" — adding new authored files is within scope; the D8 task's scope is adding repro artifacts. Good.
+
+Plan:
+1. Create `repro/gate_check.sh` — replicates the supervisor's compile gate exactly (walk, exclude .lake/.git/.dshpkg, run `lake env lean` from worktree root with ELAN_HOME), writes `repro/logs/gate_repair_perfile.json` and prints a summary. Hmm, writing into repro/logs is fine.
+   Actually keep it simple and robust: python3 embedded? A shell script calling an inline python? Let me write `repro/gate_check.py` (python3) plus mention in card. Simpler: `repro/gate_check.sh` that invokes python3 with a heredoc — ugly. I'll write `repro/gate_check.py` and a one-line wrapper? Just one python file is enough: `python3 repro/gate_check.py`. But build.sh is bash; mixing is fine.
+
+   Hmm, the D8 card lists deliverables; adding two files is fine.
+
+2. After the background emulation finishes, copy `/tmp/d8_gate_emul.json` to `repro/logs/gate_repair_perfile.json` (or have gate_check.py produce it). Better: run `python3 repro/gate_check.py` as the authoritative check (after the background one finishes, to avoid contention). That duplicates 13 min of compute. Alternatively, use the background run's result and have the script be the same algorithm. I could just run the script once — i.e., kill the background job and instead run the committed `gate_check.py`, producing the evidence file directly. That saves duplication. But the background run is already ~30s in; restarting wastes little. Actually the background job is the same algorithm; I can let it finish, then write gate_check.py that reproduces it (and note that the recorded evidence came from an equivalent run). But better evidence integrity: run the exact committed script once and use its output. Since it's only ~10-15 min, and the background job is running, let me instead:
+   - Write `repro/gate_check.py` now with output to `repro/logs/gate_repair_perfile.json`.
+   - Kill the background emulation (it's redundant) and run the committed script in background.
+   
+   Hmm, but the background run is already partway and gives an early signal. I can let it run and simultaneously... no, parallel runs would contend on CPU and both spawn lake. Better to kill it and run the real script.
+
+   Actually, I can keep the background run and use its JSON as evidence, and make `gate_check.py` byte-equivalent logic. The card can say evidence produced by `python3 repro/gate_check.py`, and I should actually run it to be honest. I'll kill and rerun.
+
+   Let me write gate_check.py now, then kill job bash-1 and run gate_check.py in background, capturing log to repro/logs/gate_repair.log (and JSON to repro/logs/gate_repair_perfile.json). Note build.sh truncates repro/logs on re-run — that's acceptable (regenerable). Alternatively output to `longrun/results/`? The card references evidence; logs dir is the natural place. I'll keep in repro/logs and note it's regenerable.
+
+Wait, one more consideration: does adding `repro/gate_check.py` change `repro/report.json`'s `artifacts` hashes or the ARCHIVE.md? No. But the card's deliverable table hash for report.json/ARCHIVE.md remain valid. Good.
+
+3. Update `longrun/results/D8-repro-archive.md`:
+   - Add a "Repair attempt 1" section describing root gate fix and the 127-file result.
+   - Update §4 diff statement.
+   - Update evidence index.
+   - End with `TASK_DONE`.
+   - Update the card md sha in json, add `compile_gate` section to json.
+
+4. Also update `longrun/results/D8-repro-archive.json` accordingly.
+
+Let me first check ARCHIVE.md's mention of file counts to keep consistency. And check whether it lists repro/ logs count.
+dsh: reasoning:
+ARCHIVE.md is a generated artifact with a recorded sha256; I should NOT modify it (it's a deliverable with hash in card). I'll document the root shim only in the result card, and note ARCHIVE.md's scaffold note is superseded by the card's new section. Actually, the card §4 references the diff claim; I'll update the card to say the diff now additionally shows the four root shim entries added by repair attempt 1. ARCHIVE.md remains byte-identical (its content is a record of the original run). Good.
+
+Now write `repro/gate_check.py`. Requirements:
+- Same semantics as supervisor gate: walk worktree root, exclude dirs `.lake`, `.git`, `.dshpkg`, find `*.lean`, sort, run `lake env lean <abs>` with cwd=worktree root, env with ELAN_HOME + PATH prepended, timeout 1800.
+- Write JSON evidence (default `repro/logs/gate_repair_perfile.json`) and print per-file + summary; exit 0 iff all exit 0.
+
+Let me make it standalone and robust: determine worktree root as parent of script dir (script at repro/gate_check.py → root = dirname(dirname(abspath(__file__)))). ELAN_HOME: use env if set, else try `<repo>/elan` (parent of worktrees dir) if exists. The supervisor uses `/data3/.../longrun/../elan` = `/data3/.../lean_poincare/elan`. So default candidate: `os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(root)))), "elan")`? Let's compute: root = .../longrun/worktrees/D8-repro-archive; repo root = .../lean_poincare; elan = repo/elan. From worktree root: ../../../elan? root/repro/gate_check.py: worktree=.../longrun/worktrees/D8-repro-archive; dirname x1 = .../longrun/worktrees; x2 = .../longrun; x3 = .../lean_poincare; so elan = x3/elan. I'll implement candidates and verify `lake` resolves.
+
+Simpler: honor ELAN_HOME if set; else if `$repo/elan/bin/lake` exists use it; else rely on PATH. I'll implement:
+
+```python
+here = os.path.dirname(os.path.abspath(__file__))
+wt = os.path.dirname(here)   # repro/ -> worktree root
+repo = os.path.dirname(os.path.dirname(os.path.dirname(wt)))  # worktrees -> longrun -> repo
+elan = os.environ.get("ELAN_HOME") or os.path.join(repo, "elan")
+env = dict(os.environ)
+if os.path.isdir(os.path.join(elan, "bin")):
+    env["ELAN_HOME"] = elan
+    env["PATH"] = os.path.join(elan, "bin") + os.pathsep + env.get("PATH", "")
+```
+
+Also allow `--out` arg and `--jobs`? Keep sequential to match gate; maybe add `--limit` no. Keep it simple.
+
+Output JSON schema:
+```json
+{"schema":"d8-repro-archive/gate-check-v1","worktree":wt,"root_package":"lakefile.toml at worktree root (added by repair attempt 1)","toolchain":open(wt/lean-toolchain).read().strip(),"cwd":wt,"files_checked":127,"exit_zero":127,"failures":[],"all_exit_zero":true,"seconds":...,"checked_at":...,"files":[{"file":rel,"exit":0}]}
+```
+
+Print failures' stderr tails.
+
+Then run it in background, output to `repro/logs/gate_repair.log` (tee?) Actually the script prints; I'll redirect stdout to repro/logs/gate_repair.log. Also the JSON goes to repro/logs/gate_repair_perfile.json.
+
+But wait: `repro/logs/` currently contains 84 files. Adding gate_repair.log and gate_repair_perfile.json = 86. The card says "(84 files)". I'll update the card to note 84 recorded run logs + 2 repair-gate logs. Or avoid confusion by writing evidence to the worktree root `logs/` directory? Hmm. The card's evidence index says `repro/logs/ (84 files)`. I'd rather not disturb the repro archive's counts. Let me place repair evidence in `longrun/results/` alongside the card: `longrun/results/D8-repro-archive.gate.json` and `longrun/results/D8-repro-archive.gate.log`. Hmm, but "results" dir is the card dir. That's acceptable: repair evidence next to the card.
+
+Actually, cleanest: put it at worktree root `logs/gate_repair/` — the root `logs/` is the D6 build logs directory (copied), but adding a subdir there mixes concerns.
+
+I'll go with `repro/logs/gate_repair/` subdirectory: `repro/logs/gate_repair/perfile.json` + `stdout.log`. Then "84 files" at top level of repro/logs stays 84 files (plus one subdir). Hmm, `find repro/logs -type f | wc -l` would be 86. The card's claim "(84 files)" was for the recorded run; I'll add "plus `repro/logs/gate_repair/` for the repair-attempt compile gate". That's clean enough and keeps gate evidence inside the repro archive.
+
+Hmm wait, does build.sh truncate repro/logs with `rm -rf repro/logs && mkdir`? Then the repair evidence would be deleted on a re-run. That's fine and I'll note it's regenerable via `python3 repro/gate_check.py`.
+
+Actually, I realize I should double check: is it OK that gate_check.py is in repro/ and thus counted by the forbidden scanner? Scanner only scans .lean. Fine.
+
+Let me also reconsider whether the root shim should be listed in the card as "not promoted source". Yes.
+
+One more important check: the root `lakefile.toml` + `.lake` symlink — could the supervisor's gate run `lake env lean` and have lake *rebuild* or *fetch* because the root package name differs from the manifest? Sibling worktrees prove it works. Also my smoke test passed.
+
+Potential issue: the gate runs as the same user; the root `.lake` symlink → release/.lake. Fine.
+
+Another potential issue: `lake env lean` may modify `lake-manifest.json` at root (e.g., normalize inputRev). The file was copied; if lake rewrites it, it's still fine. Let me check mtime after smoke test: unchanged probably.
+
+Let me now write gate_check.py, kill the background emulation, and launch the script.
+dsh: reasoning:
+Now kill the ad-hoc background job and run the committed script. Check job status first.
+dsh: reasoning:
+While the gate check runs (~10-15 min), let me prepare the card edits. I need to read the card fully first (I already did via cat, but the edit tool requires a read; I used bash cat which may count? The policy says read the file first; I'll use the read tool on the relevant portions).
+
+Let me read the card md with the read tool (it's ~9.7KB). Then plan edits:
+
+1. Header block: add `- **Repaired:** 2026-09-09T...` and change verdict? Keep verdict PASS but add "compile-gate repaired".
+
+Actually, let me add a new section right after the header quote or at the end before non-claims: "## 10. Repair attempt 1 — harness compile gate (2026-09-09T20:5x+08:00)". Then update §4 bullet about diff, §9 evidence index, and end with TASK_DONE.
+
+Wait: the card's last line must be TASK_DONE. Current card ends with §9 table. I'll append the new section and TASK_DONE.
+
+But numbering: sections 1-9 exist. I'll add "## 10. Repair attempt 1 — harness compile gate" and "## 11. Evidence of the repaired gate"? Keep it in one section.
+
+Content:
+- Trigger: supervisor compile gate (dispatch_loop.py compile_gate) runs `lake env lean <file>` with cwd = worktree root over every .lean file (excluding .lake/.git/.dshpkg). Worktree root had no Lake project, so every invocation failed with `error: no default toolchain configured` → gate failed attempt 1.
+- Fix: root shim (4 entries) mirroring the already-repaired sibling worktrees (D8-blueprint-render, D7-evolution-sharp-restatement): lakefile.toml (name D8ReproArchiveRoot, packagesDir .lake/packages, require mathlib), lean-toolchain (copy of release/lean-toolchain, leanprover/lean4:v4.34.0-rc2), lake-manifest.json (copy of release/lake-manifest.json, mathlib rev 7974e...), .lake symlink -> release/.lake. No Lean source added or changed; release/, negcontrol/, repro/build/ untouched.
+- Verification: `python3 repro/gate_check.py` → 127 files, 127 exit 0, 0 failures; record at repro/logs/gate_repair/perfile.json; stdout log. Root shim hashes.
+- Honesty: the negative control intentionally uses sorry/native_decide to prove the auditor detects them (excluded from the 63-file release scan, hard 0); the release scan is unchanged hard 0/soft 0. The four shim files are not Lean and add no axioms.
+- Update to §4 diff claim: `diff -r --no-dereference ../D6_weekly_release .` now reports `repro/` plus the four root shim entries; no promoted source differs.
+
+Also update §4 bullet and §9 evidence table (add gate record rows).
+
+Also update machine-readable json:
+- add `"compile_gate_repair": {...}` with root shim hashes, files_checked 127, all exit 0, evidence paths, trigger description.
+- update `source_integrity.scaffold_vs_d6` string to mention the four shim entries.
+- update `deliverables.result_card_md.sha256` after editing md.
+- add deliverable gate_check.py with sha256.
+- maybe update `verdict` to mention gate repair? Keep verdict and add field.
+
+Let me first read the card around the areas to edit.
+dsh: reasoning:
+Now let me check the gate job progress periodically while drafting. Let me first check progress.
+dsh: reasoning:
+It's running. Let me wait for it using job_output with wait, but that blocks. I can do useful work: compute hashes of the root shim and gate_check.py for the card. But hashes of files I might still edit (gate_check.py) should be computed after finalizing. Let me hold.
+
+Actually, one thing I should verify: is the gate check script's order/behavior truly identical to supervisor's? Supervisor uses ENV from dispatcher: ELAN_HOME=repo/elan, PATH=ELAN_HOME/bin:existing. My script does the same (env ELAN_HOME might already be set in my shell? Let me check `echo $ELAN_HOME` — probably unset; my script falls back to repo/elan). Good.
+
+Supervisor timeout 1800 per file. Mine same.
+
+Supervisor's file list excludes .lake/.git/.dshpkg. Mine same. Sorted. Same.
+
+One difference: supervisor captures with `capture_output=True, text=True` and env=ENV; mine same. Good.
+
+Now, while waiting, let me think about whether the gate might fail on some file despite the root shim. The background run will tell.
+
+Also, I should double check that my additions didn't break `repro/build.sh` behavior: The card says build.sh wipes `repro/build` and copies `release/`; it also does `provision_packages` linking `repro/build/.lake/packages` to the shared tree. The root `.lake` symlink doesn't affect it. However, one risk: `build.sh` may run `lake build` with cwd=repro/build, which has its own lakefile and lean-toolchain — fine.
+
+Another risk: `repro/build.sh` step `fresh_build_dir` might do `rm -rf repro/build` then `cp -a release/. repro/build/`. Since release/.lake/packages is a symlink to the shared prebuilt tree, cp -a preserves symlink; then provision_packages relinks. Unchanged behavior.
+
+Should I re-run `bash repro/build.sh` to prove end-to-end reproducibility still holds after the shim? It takes ~5 min and would regenerate repro artifacts, changing hashes of report.json/ARCHIVE.md (timestamps inside) — then I'd have to update the card hashes, and the archive's recorded run would differ from the original. That's risky and unnecessary: the shim is outside the build's destructive scope and doesn't affect release sources. The original recorded run remains valid. I'll note that the shim is inert with respect to `build.sh` (which uses `release/` as its package root).
+
+Hmm, but there's one subtle interaction: `lake env lean` from the root uses `release/.lake/build/lib/lean` oleans. If a future `bash repro/build.sh` rebuilds `repro/build/.lake/build`, root LEAN_PATH still points at release's oleans (unchanged). Fine.
+
+Now, let me also consider: should I add the root shim files to `repro/scaffold.json`? That file is hashed in the card; modifying it would change its hash. I'd rather not modify; document in the card.
+
+Wait, actually there's a subtlety about `repro/gate_check.py` being inside `repro/`: the D8 card §1 deliverable table lists artifacts with hashes. I'll add gate_check.py with its hash and update the md hash after editing. Fine.
+
+Now let me think about the `DONE` marker in state dir: The supervisor's `is_running` returns False if DONE exists, and card_status reads the card tail. The DONE file already exists from the first run. After my card update with TASK_DONE, the dispatcher (next loop, every 600s) will see DONE + card done → run compile_gate (which now passes) → mark verified. Good.
+
+Let me check the queue entry for this task to see status/repair_count.
+dsh: reasoning:
+My task is in repair attempt 1 (repair_count 1). Only 2 repairs allowed (repairs < 2), so I must get it right.
+
+Let me check progress of gate check again after some time. I'll wait on the background job with job_output (wait:true, timeout maybe 600s) — but I can also use the time to draft the card edits in memory. Actually, let me use job_output wait with a moderate timeout to avoid busy work; but the instructions say don't busy-poll; use wait. Let me wait up to ~10 min.
+
+Actually, I can do useful independent work: prepare the json card edit as a Python script that reads the current json, adds fields, and writes back — but I need the md sha first. Let me wait for the gate result.
+
+Let me wait on job bash-2 with timeout 600000.
+dsh: reasoning:
+Interesting! The job_output for bash-2 returned a weird payload: it looks like `pgrep -af` output captured at job start (the `sleep 2; pgrep ...` printed other running dsh processes and lake processes from other repair workers), and then SCRIPT_EXIT=0. Wait — the output shows the bash-2 command's stdout: the pgrep listing plus SCRIPT_EXIT=0. That means `python3 repro/gate_check.py` completed already with exit 0?! That seems too fast (we saw 1/127 shortly before). Hmm, but wait — the output of the bash command included the pgrep results and then SCRIPT_EXIT=0. The script redirects its output to stdout.log, so job output doesn't show per-file progress. The job completed with SCRIPT_EXIT=0.
+
+But it finished suspiciously quickly. Let me check stdout.log and perfile.json. Possibly it failed early? SCRIPT_EXIT=0 means all_exit_zero true... unless the script crashed and `echo SCRIPT_EXIT=$?` captured something. Let's check the files.
+
+Wait, actually the pgrep output shows other tasks' lake processes. The `python3 repro/gate_check.py` may have taken ~10 min? The job_output call waited up to 600s and returned when completed. Let me check the timestamps and contents.
+
+Hold on, there's something concerning: the pgrep output listed `2151085 bash -c sleep 2; pgrep...` — that's the bash-2 job itself. It also listed other tasks' dsh workers. Fine.
+
+Let me inspect stdout.log and perfile.json.
+dsh: reasoning:
+Excellent! All 127 .lean files compiled with exit 0 in 498.1 seconds. 
+
+Now let me:
+1. Verify the perfile.json summary.
+2. Verify the forbidden-token scan still holds (unchanged sources; but run the scanner on release and repro/build to be safe).
+3. Verify root shim files and their hashes.
+4. Update the card md and json.
+5. Maybe run a final quick sanity: re-run `lake env lean` on one file to make sure no transient issue? Already done in the 127.
+
+Also verify that the root shim files are consistent (e.g., `lake-manifest.json` root vs release identical; lean-toolchain identical).
+
+Let me also double check that no other repair worker's changes interfere. Different worktrees, independent. But note the gate will be run by the supervisor for my task; other workers are running concurrently and may add root shims too. Fine.
+
+Also note the concurrency: other repair workers are compiling; the supervisor's gate run may be slow due to contention, but that's out of my control.
+
+Let me now check forbidden scan and hashes.
+dsh: reasoning:
+All good. Now compute hashes:
+- root lakefile.toml, lean-toolchain, lake-manifest.json (and .lake symlink target).
+- repro/gate_check.py
+- repro/logs/gate_repair/perfile.json, stdout.log
+
+Then update the card.
+
+Also, I want to double-check that `negcontrol/NegativeControl.lean` still intentionally uses sorry (negative control). Confirm the scanner excludes it (we scanned release and repro/build only, hard 0). The negcontrol is the only file with forbidden constructs and it's the deliberately named negative control that proves the auditor detects `sorryAx`/`native_decide`; its output shows PASS for the audit. This is honest and established. I'll mention in the card that the negative control is the single intentional `sorry`/`native_decide` carrier and is excluded from the release scan (as in D5/D6).
+
+Now, one more consideration: the repair prompt says "Fix ONLY the authored files in your worktree". I've added root shim files. Also, should I check that no other authored .lean files were added by the D8 task that could fail? The worktree has only release/repro-build/negcontrol .lean files. The D8 task added no .lean. Good.
+
+Now update the card md. Edits:
+
+1. Header: add repaired line and update scope note.
+2. Deliverables table: add gate_check.py row and gate evidence rows (perfile.json, stdout.log). Note the card md/json hash rows stay "—".
+3. §4: update scaffold-vs-D6 diff claim.
+4. New §10: repair attempt 1 detail.
+5. §9 evidence index: add rows.
+6. End with TASK_DONE.
+
+Let me make the edits carefully with the edit tool. First read lines 31-162 to see exact text of §4 and §9 (I have §9 from read; need §4 exact text). I read the card earlier via cat but the edit tool requires the read tool — I did read lines 1-30 and 150-162. I need to read the §4 region (lines ~100-150) with the read tool before editing there.
+dsh: reasoning:
+I need to see §4 (lines ~85-103). Let me read that region.
+dsh: reasoning:
+Now make the edits.
+
+Edit 1: header add repaired line.
+
+Current:
+```
+- **Generated:** `2026-09-09T07:54:00Z`
+- **Verdict:** **REPRO ARCHIVE PASS — ...
+```
+New:
+```
+- **Generated:** `2026-09-09T07:54:00Z`
+- **Repaired:** `2026-09-09T20:59:45+08:00` (repair attempt 1: harness compile gate, see §10)
+- **Verdict:** **REPRO ARCHIVE PASS — ...
+```
+
+Edit 2: deliverables table add rows after scaffold record row:
+```
+| Compile-gate checker (repair 1) | `repro/gate_check.py` | `<hash>` |
+| Compile-gate evidence (repair 1) | `repro/logs/gate_repair/perfile.json` | `<hash>` |
+| Compile-gate stdout (repair 1) | `repro/logs/gate_repair/stdout.log` | `<hash>` |
+```
+
+Edit 3: §4 diff bullet update:
+```
+- `diff -r --no-dereference ../D6_weekly_release .` reports the new `repro/` directory
+  plus the four root compile-gate shim entries added by repair attempt 1 (§10:
+  `lakefile.toml`, `lean-toolchain`, `lake-manifest.json`, `.lake` symlink); no scaffolded
+  D6 file differs, and every promoted source is byte-identical to D6.
+```
+
+Edit 4: §9 evidence index add rows:
+```
+| Compile-gate record, all 127 `.lean` files (repair 1) | `repro/logs/gate_repair/perfile.json` |
+| Compile-gate checker (reproducible) | `repro/gate_check.py` |
+```
+
+Edit 5: Append §10 + TASK_DONE at end.
+
+§10 content (concise but complete):
+
+```
+## 10. Repair attempt 1 — harness compile gate
+
+**Trigger.** The supervisor's compile gate (`bin/dispatch_loop.py::compile_gate`) walks the
+whole worktree, collects every `.lean` file (skipping `.lake`, `.git`, `.dshpkg`), and runs
+`lake env lean <absolute file>` with the **worktree root** as cwd. The D6 scaffold places
+the Lake package in `release/`, so the root had no `lean-toolchain`/`lakefile.toml`; every
+one of the 127 invocations therefore failed with
+`error: no default toolchain configured` (reproduced locally). No source was at fault.
+
+**Fix (worktree root only, mirroring the already-verified sibling repairs
+`D8-blueprint-render` / `D7-evolution-sharp-restatement`).** A four-entry shim package:
+
+| shim entry | content |
+| --- | --- |
+| `lakefile.toml` | package `D8ReproArchiveRoot`, `packagesDir = ".lake/packages"`, requires mathlib |
+| `lean-toolchain` | byte-copy of `release/lean-toolchain` (`leanprover/lean4:v4.34.0-rc2`) |
+| `lake-manifest.json` | byte-copy of `release/lake-manifest.json` (mathlib rev `7974e751…`) |
+| `.lake` | symlink → `release/.lake` (pinned prebuilt mathlib + project oleans, read-only) |
+
+The shim adds **no Lean source** and writes no promoted file: `release/`, `negcontrol/` and
+the regenerable `repro/build/` copy are untouched (hashes unchanged). `repro/build.sh` is
+inert with respect to it — the script always uses `release/` as its package root.
+
+**Verification.** `python3 repro/gate_check.py` reproduces the supervisor gate exactly and
+records every exit code:
+
+| item | value |
+| --- | --- |
+| `.lean` files checked (63 `release/` + 63 `repro/build/` + 1 `negcontrol/`) | **127** |
+| exit 0 | **127** |
+| failures | **0** |
+| wall clock | 498.1 s |
+| toolchain | `leanprover/lean4:v4.34.0-rc2` |
+| record | `repro/logs/gate_repair/perfile.json` |
+
+Honesty re-check after the repair: forbidden-token scan (`input/d5-tools/scan_forbidden.py`)
+over `release/` and `repro/build/` — 63 files each, **hard 0, soft 0** (exit 0). The only
+`sorry`/`native_decide` carrier in the worktree is the deliberately named negative control
+`negcontrol/NegativeControl.lean`, which exists to prove the D6 auditor detects `sorryAx`
+and `native_decide`; it is excluded from the release scan, exactly as in D5/D6. The repair
+adds no `sorry`, `axiom`, `unsafe`, `native_decide` or `proof_wanted`.
+
+TASK_DONE
+```
+
+Wait: the last line should be TASK_DONE. Also the prompt says "Last line: TASK_DONE or TASK_BLOCKED with the card path." Ambiguous: "TASK_DONE with the card path"? It says end it with TASK_DONE; last line: TASK_DONE or TASK_BLOCKED with the card path. I'll make the last line `TASK_DONE — longrun/results/D8-repro-archive.md`. Hmm, card_status checks tail 400 chars for "TASK_DONE" — fine either way. To satisfy "with the card path", I'll write the final line as:
+
+`TASK_DONE — longrun/results/D8-repro-archive.md`
+
+Hmm, but the instruction says "Last line: TASK_DONE or TASK_BLOCKED with the card path." I'll include path on the same line.
+
+Now compute hashes first, then do edits. Let me get sha256 of gate_check.py and evidence files.
+dsh: reasoning:
+Now perform the card edits. I'll use edit tool for targeted changes.
+
+Edit 1: header.
+dsh: reasoning:
+Now edit the evidence index and append §10. The end of the file is:
+
+```
+| D6 release manifests / verification | `manifest/` |
+```
+
+Append rows and section. Use edit on the last line.
+dsh: reasoning:
+Now update the machine-readable card json:
+- add `compile_gate_repair` section
+- update `source_integrity.scaffold_vs_d6`
+- add gate_check.py deliverable
+- update `deliverables.result_card_md.sha256` after recomputing md hash
+- maybe update `verdict`
+
+I'll do this with a Python script that loads, modifies, and dumps preserving key order (Python dicts preserve insertion order; json.dump with indent=2). But careful: re-dumping the whole json will reformat it (original was likely generated by json.dump indent=2? Let me check the original formatting: earlier `python3 -c` dump used its own formatting. Let me look at raw file head to match style.
+
+Let me read the first lines of the json raw.
+dsh: reasoning:
+Formatting: indent=1 (single space), trailing newline. I'll load, modify, and dump with indent=1, ensure_ascii? Original has non-ascii? "µ" maybe not in json. Use `json.dump(d, fh, indent=1)` then `fh.write("\n")`.
+
+Changes:
+1. `verdict`: append "... and all 127 worktree .lean files compiling from the worktree root".
+2. `deliverables`: add `compile_gate_checker` and `compile_gate_record` entries.
+3. `source_integrity.scaffold_vs_d6`: update.
+4. Add top-level `compile_gate_repair` after `required_gates` or before `non_claims`. I'll insert after `additional_gates` (position matters only aesthetically). Simpler: assign new key at end (appears after evidence_index). Better to place logically: rebuild dict order? Simplest is to add at end; but nicer to insert after "additional_gates". I can construct a new ordered dict by iterating and inserting after a key. Let me do that.
+5. `deliverables.result_card_md.sha256`: set to new md sha (computed after md edit; the md is final now except maybe more edits — I'm done with md).
+6. `evidence_index`: add gate entries.
+7. Maybe add `repaired_at`.
+
+Let me compute md hash and write the script.
+dsh: reasoning:
+Wait — the md sha computed BEFORE I made further edits? No: I made all md edits (header, deliverables, §4, §9+§10) before computing the hash in this script. The script read the md at that moment. But then I don't edit the md again... Let me double check: after the §10 edit, did I edit the md? No. So md_sha e48e00... is current. But wait, the deliverable table inside the md lists hashes of gate_check.py etc. but not its own hash. Fine.
+
+However, there's an ordering problem: the json's `deliverables.result_card_md.sha256` is now the hash of the md, and the md doesn't contain the json hash. Good, no circularity.
+
+Now verify:
+1. JSON parses.
+2. md tail contains TASK_DONE within last 400 chars.
+3. The md table's sha for gate_check.py etc. matches actual files.
+4. Card_status would return done.
+
+Also, potential concern: the `deliverables.result_card_md.sha256` in json must match the md as it stands NOW. Yes.
+
+But hold on — I should double-check the md content around the edits for correctness and the fact that the deliverables table rows were inserted correctly (I added 3 rows before the result card row). Let me read the edited regions.
+
+Also, I should double check the md hash again after any further edits. I'll avoid further md edits unless needed.
+
+Let me view the card md fully (162 + ~60 lines). Read in chunks.
+dsh: reasoning:
+Card looks good. Now let me do a final independent verification of the supervisor's exact gate function, to be extra sure it will pass. I can literally import and call `compile_gate` from dispatch_loop.py — but that would write gate.json into the state dir, which is outside my worktree (workspace-write policy allows only the worktree). Let me check: the DSH policy says workspace-write allows modifications under the session workspace `/data3/.../worktrees/D8-repro-archive`. Writing to `/data3/.../longrun/state/D8-repro-archive/gate.json` is outside → denied. So I shouldn't call compile_gate directly (it would try to write gate.json and fail). But I can replicate its logic exactly (which gate_check.py does) — done, 127/127 exit 0.
+
+Actually, let me import the module and monkeypatch? Not needed. My gate_check.py mirrors it; the only difference is the `ENV` construction and the output file. The critical part (cwd=wt, env with ELAN_HOME, command) is identical.
+
+Wait, one difference: the supervisor's ENV is `dict(os.environ)` with ELAN_HOME = `os.path.join(os.path.dirname(ROOT), "elan")` = `/data3/.../lean_poincare/elan`, and PATH prepended. My gate_check.py: if `ELAN_HOME` is already set in env, uses it; else repo/elan. In the supervisor context, os.environ likely doesn't have ELAN_HOME (the dispatcher sets it only for subprocess env, and the worker is launched by worker_loop.sh which may export it?). Let me check worker_loop.sh — if it sets ELAN_HOME, then the dsh worker has ELAN_HOME set, and the supervisor's ENV would override with repo/elan anyway. My script honors an existing ELAN_HOME — could differ if the environment has a different ELAN_HOME. Let me check the current env: `echo $ELAN_HOME`. Earlier `which lake` showed `/data3/.../elan/bin/lake`, so PATH includes it. If ELAN_HOME is set to something else, my script would use it while the supervisor uses repo/elan. Let me check.
+
+Also, to be maximally faithful, I could change gate_check.py to always prefer repo/elan exactly like the supervisor. But then the card hash for gate_check.py changes and I'd need to re-run it (13 min) or at least re-verify. Let me check the env first.
+
+Actually, if ELAN_HOME is unset or equals repo/elan, no difference. Let me check.
+dsh: reasoning:
+ELAN_HOME is exactly `/data3/guoshaoyang/workdir/lean_poincare/elan` — identical to what the supervisor uses. So my gate_check.py env is identical to the supervisor's.
+
+Note: the dsh process env has ELAN_HOME set (probably from the parent environment). Good.
+
+Now, one more thought: the supervisor's gate will run `lake env lean` from the worktree root. But other concurrent workers are also running; the supervisor runs gate sequentially per task. It will take ~8-13 min for my task's 127 files. Fine.
+
+Now, there's an important detail: the dispatcher's `compile_gate` only runs when `DONE` exists and card_status returns "done". DONE exists (from first run). card_status: it globs `worktrees/D8-repro-archive/longrun/results/*.md` — there's only `D8-repro-archive.md` (and no other .md? Let me check: longrun/results has D6-weekly-release.md and D8-repro-archive.md. The glob `*.md` includes both! card_status iterates over all cards and checks each tail for TASK_BLOCKED/TASK_DONE. D6-weekly-release.md — does its tail contain TASK_DONE? Let me check. If the D6 card tail contains TASK_DONE, it returns ("done", D6 card) too — either way status is "done". If D6 card contains TASK_BLOCKED in tail, then iteration order matters: glob order (arbitrary but likely alphabetical: D6-weekly-release.md before D8-repro-archive.md), so if D6 card tail has TASK_BLOCKED, it would return blocked! Let me check the D6 card tail.
+
+Actually the original run already passed card_status (it reached compile_gate), so it's fine. But let me verify anyway.
+dsh: reasoning:
+Good: D6 card has no TASK_DONE/BLOCKED in tail, so card_status will return done via D8 card.
+
+Now, let me consider whether the supervisor's gate will actually pass given that it uses `os.walk` without following symlinks. Root `.lake` symlink is filtered by name. But what about `repro/build/.lake`? Also filtered. What about the `release/.lake/packages/mathlib` etc.? `.lake` pruned at release level. Good.
+
+But wait: there may be .lean files inside `.lake` directories under release/.lake/build? Those are oleans/traces, not .lean sources... Actually mathlib package has .lean files under `.lake/packages/mathlib/Mathlib/...` — but those are pruned because `.lake` is pruned. Good.
+
+What about symlinks inside the worktree other than .lake? `release/.lake/packages` is a symlink inside `.lake` (pruned). Any other symlinks that os.walk would descend into? os.walk with followlinks=False doesn't descend into symlinked dirs, but it lists them in dirnames and they aren't filtered unless named .lake. If there's e.g. a symlink dir named something else, os.walk would list it in dirnames but not descend; however, the gate's filtering only removes .lake/.git/.dshpkg. It wouldn't descend anyway (followlinks=False). So no extra files.
+
+Let me verify there are no other symlinked dirs in the worktree that could cause issues: `find . -type l`. Quick check.
+
+Also, the number of .lean files the supervisor finds: 127 (matches my script). Verified.
+
+Now, the final concern: is my worktree in a state where the supervisor's gate passes *right now*? The root shim is present. But other concurrent repair workers might do things to my worktree? No, each worker has its own worktree.
+
+One risk: the root `lakefile.toml` file has mode `-rw-rw-r--`? I created it via write tool; check permissions. If it's 0600, the supervisor (same user) can still read. Fine.
+
+Another risk: the root `lean-toolchain` copied with mode 0600 (`-rw-------`), readable by owner (same user). Fine.
+
+Another potential issue: when the supervisor runs the gate, it runs `lake env lean` for 127 files sequentially. The root package requires mathlib. `lake env` might decide the manifest is out of date and try to update the manifest from the network (fetch). In my run it didn't (498s, no network). Good.
+
+Now let me also consider whether the addition of root `lakefile.toml` could cause `lake build` in `release/` to behave differently. No, build.sh cds into release/repro build dirs.
+
+But wait — one subtle issue: `repro/build.sh` step 3 (`fresh_build_dir`) does `cp -a` from `release/` to `repro/build/`. If it copies `release/.lake` (symlinked packages), that's existing behavior. My root `.lake` symlink is outside release/, so not copied. Fine.
+
+Now, should I also update `repro/ARCHIVE.md`'s scaffold note? It's a generated artifact with a recorded hash; modifying it would invalidate the card's hash table. Better to leave it and the card §10 explains the deviation. I noted ARCHIVE.md remains as recorded. Good.
+
+Hmm, but one inconsistency: ARCHIVE.md line 195 says "the only reported difference is the new repro/ directory" — now stale. The card §4/§10 supersedes it. I could add a note in the card explicitly that ARCHIVE.md is the recorded artifact of the original run and its scaffold note predates repair 1. Let me add one sentence to §10 or §4. That's an md edit → json md hash must be updated again. It's worth it for honesty. Let me add to §4 after the diff bullet:
+
+"- `repro/ARCHIVE.md` is the recorded artifact of the original end-to-end run and its scaffold note predates repair 1; the authoritative current scaffold delta is this section plus §10."
+
+Then recompute md hash and update json.
+
+Let me do that edit.
+dsh: reasoning:
+Now final verification pass:
+
+1. Confirm all 127 .lean files still exit 0 after all changes (no .lean changed, root shim unchanged since the run; gate_check.py unchanged since the run; only md/json edited). The perfile.json evidence is still valid because the shim and .lean files haven't changed since. Let me verify shim hashes match the card (lakefile.toml, lean-toolchain, lake-manifest.json) — they do as computed. But wait: did any `lake env lean` invocation rewrite `lake-manifest.json` at root? Let me re-hash to confirm it still matches `cbc45e...`. Also confirm the release/repro-build files untouched: source_integrity from original run; but let me re-run the integrity check quickly? `repro_lib.py integrity` is fast. Actually, the supervisor only cares about compile gate. But for honesty, let me re-run the D5 provenance integrity check on release and repro/build to confirm promoted sources unchanged. That's the `integrity` subcommand; it's fast (hash 63 files). Let me check its usage from build.sh.
+
+Actually, I already ran the forbidden scan (fast) on both trees after my changes — that only checks tokens. Let me run the integrity check too, to confirm no source changed. Let me find the exact command in build.sh step 4.
+
+2. Verify card_status done: tail has TASK_DONE. Yes.
+
+3. Verify no forbidden tokens introduced: gate_check.py contains the words "sorry"? It mentions nothing forbidden. lakefile.toml doesn't. Fine.
+
+4. Verify the state `DONE` file exists (it does).
+
+5. Double-check that the supervisor gate's file walk won't pick up any newly added .lean — I added none.
+
+6. One more consideration: the supervisor's gate excludes `.git`; is there a `.git` in the worktree? Possibly the worktree is a git repo? `ls -la` didn't show .git at root. The find with -maxdepth showed none. Fine.
+
+Let me run the integrity check. Find the command in build.sh around step source_integrity_prebuild.
+dsh: reasoning:
+Source integrity confirmed after the repair.
+
+Now let me re-verify the root shim hashes and that the root manifest wasn't rewritten. And do a final quick single-file compile to prove the state right now (after all edits) still compiles. Then confirm the card tails and files.
+
+Also, I should think about whether to update `repro/logs/gate_repair/stdout.log`'s recorded time/hash in the card — unchanged since the run (I haven't re-run). Good.
+
+One thing: I edited gate_check.py? No, not since the run. Good, hash 45a23c... matches.
+
+Let me verify all card-listed hashes against actual files programmatically.
+dsh: reasoning:
+All hashes verified. Now let me do a final end-to-end sanity: run the supervisor's exact gate logic one more time but only on a small sample? The full 127-file run already passed and nothing relevant changed since. But to be safe against a subtle issue (e.g., root manifest rewritten during the run, or the `lakefile.toml` being consumed differently now), let me:
+
+1. Re-hash shim files (compare to card values).
+2. Compile a few representative files again: one release driver (D6AuditReport.lean, heavy), one repro/build file, one negcontrol, one deep Poincare file.
+
+Actually, since the supervisor will run the full gate anyway and it takes ~8 min, a sample check is a good final confirmation. Let me run a quick sample of 5 files.
+
+Also, I should double check that the `.lake` symlink is intact and points to release/.lake, and that `release/.lake/build/lib/lean` oleans exist.
+
+Additionally, let me consider whether adding `repro/logs/gate_repair/` subdirectory could affect `repro/build.sh`'s step 12 (`negative_control`) or the logs count check. build.sh step `phase_fresh_build_dir` checks `find "$BUILD" -name '*.lean' -not -path "$BUILD/.lake/*" | wc -l` = 63. My changes don't add .lean. Good.
+
+Let me also run `bash -n repro/build.sh` to make sure nothing is broken (it's unchanged).
+
+Then final: update the goal? No goal exists (this is a repair worker session; no create_goal needed — the user didn't ask for a goal and it's a bounded task).
+
+Wait, the system prompt says to use goal tools for long-running objectives; this is a repair task, probably single-turn-ish. I'll not create a goal.
+
+Final answer: report TASK_DONE with card path.
+
+Let me run the sample compile.
+dsh: reasoning:
+All good. Shim hashes match the card values exactly.
+
+Final checks:
+- `bash -n repro/build.sh` (unchanged, but quick).
+- Ensure card md last line TASK_DONE (yes).
+- Ensure no new .lean files added (find count 127 same as before).
+- Ensure no `sorry`/`axiom`/etc. added to any Lean source (I added none; scanner confirmed).
+- Ensure the state DONE file still exists.
+- Maybe touch nothing else.
+
+Let me run a final consolidated verification.
+dsh: reasoning:
+Everything is in order. Let me also consider whether to leave the stale `state/D8-repro-archive/gate.json` absent — the dispatcher will regenerate it when it runs the gate. Fine.
+
+One more consideration: The task says "Update the result card and end it with TASK_DONE." Done: md ends with `TASK_DONE — longrun/results/D8-repro-archive.md`. The last line contains TASK_DONE with the card path. Good.
+
+Should I also verify the machine-readable card is still valid and has no dangling keys? Done.
+
+Is there anything else in the worktree that the supervisor's gate would find and fail? The gate only runs .lean files. All 127 pass.
+
+Let me double-check the one thing I might have missed: the supervisor's `compile_gate` writes to state dir and `ENV` includes `ELAN_HOME`. It will run with cwd=wt. The root lakefile requires mathlib with rev "master"; the manifest pins rev 7974e. `lake env` should not need network. Verified locally.
+
+Potential race: concurrent workers are compiling heavy mathlib; the supervisor's gate for my task may take longer, but timeouts are 1800s per file, not total. Fine.
+
+One more possible concern: my `lakefile.toml` has `name = "D8ReproArchiveRoot"` but no `[[lean_lib]]`; `lake env` works (verified). Good.
+
+Also I should double check there are no leftover `.lake`-related locks or partially written files from the killed emulation job. The killed job was a python process running `lake env lean` on release files; killing it might leave a `lake` child? I killed job bash-1; the pgrep afterwards showed other tasks' lake processes and my new script's. Let me make sure no orphan lake process from my killed job is still running that could interfere. Check for processes with cwd in my worktree.
+
+Actually, `job_kill` cancels; but the subprocess `lake env lean` might have been orphaned. If it's still running, it could hold resources but not break anything. Let me check and clean up any stragglers belonging to my worktree. Use pgrep -af 'D8-repro-archive' to see.
+dsh: reasoning:
+No orphaned gate processes (the only match is my own dsh worker session and the pgrep itself). Clean.
+
+Now, the final response should end with TASK_DONE and the card path. The instructions for the worker: "Update the result card and end it with TASK_DONE. Last line: TASK_DONE or TASK_BLOCKED with the card path."
+
+Let me write a concise summary of what was wrong and what I did, ending with the required last line.
+
+Summary:
+- Gate failure cause: harness gate runs `lake env lean <abs file>` with cwd = worktree root; the D6-scaffolded worktree had no root Lake project → all 127 invocations failed with "no default toolchain configured". No source defect.
+- Fix: added root shim (lakefile.toml, lean-toolchain, lake-manifest.json, .lake -> release/.lake), mirroring sibling repairs; added repro/gate_check.py; no .lean changes; no promoted file changes (D5 provenance 53+5 byte-identical after repair; forbidden scan hard 0/soft 0).
+- Verification: 127/127 .lean exit 0 (498.1 s), evidence repro/logs/gate_repair/{perfile.json,stdout.log}.
+- Cards updated (md + json) with §10 repair section, hashes refreshed.
+
+Last line: TASK_DONE — `longrun/results/D8-repro-archive.md`
+## Repair summary — D8-repro-archive (attempt 1)
+
+**Root cause (not a source defect).** The supervisor gate (`bin/dispatch_loop.py::compile_gate`) walks the worktree, collects every `.lean` file (skipping `.lake/.git/.dshpkg`), and runs `lake env lean <absolute file>` with **cwd = worktree root**. The D6-scaffolded worktree put the Lake package in `release/`, so the root had no `lean-toolchain`/`lakefile.toml`; all 127 invocations failed with `error: no default toolchain configured` (reproduced locally before fixing).
+
+**Fix (worktree root only, mirroring the already-verified sibling repairs `D8-blueprint-render` / `D7-evolution-sharp-restatement`):**
+- `lakefile.toml` — root package `D8ReproArchiveRoot`, `packagesDir = ".lake/packages"`, requires mathlib
+- `lean-toolchain` — byte-copy of `release/lean-toolchain` (`leanprover/lean4:v4.34.0-rc2`)
+- `lake-manifest.json` — byte-copy of `release/lake-manifest.json` (mathlib rev `7974e751…`)
+- `.lake` → `release/.lake` symlink (pinned prebuilt mathlib + project oleans, read-only)
+- `repro/gate_check.py` — committed checker reproducing the gate exactly
+
+No Lean source was added or modified; `release/`, `negcontrol/` and `repro/build/` are byte-unchanged.
+
+**Verification.**
+- `python3 repro/gate_check.py`: **127/127 `.lean` files exit 0, 0 failures** (63 `release/` + 63 `repro/build/` + 1 `negcontrol/`), 498.1 s; record at `repro/logs/gate_repair/perfile.json`.
+- Post-repair integrity: D5 provenance re-check 53 promoted + 5 base sources byte-identical; forbidden-token scan on `release/` and `repro/build/`: 63 files each, **hard 0 / soft 0**. The only `sorry`/`native_decide` carrier remains the deliberately named negative control.
+- Both cards updated: `§10 Repair attempt 1`, refreshed hashes, machine-readable `compile_gate_repair` record; every hash in the cards re-verified against disk.
+
+TASK_DONE — `longrun/results/D8-repro-archive.md`

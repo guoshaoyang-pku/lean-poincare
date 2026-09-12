@@ -1,0 +1,341 @@
+dsh: reasoning:
+Let me start by understanding the task. I'm in a coordination/integration task on ophis-gpu. I need to:
+
+1. Read the pinned Frenzymath snapshot in `third_party/frenzymath/Poincare-Conjecture`
+2. Read the local D12 result cards and `docs/UPSTREAM-INTEGRATION.md`
+3. Produce a precise, compile-checked adapter plan
+4. Where feasible, create a small Lean compatibility module mapping local D12 objectives to upstream modules
+5. Continue from checkpoint.json if present
+6. Update checkpoint.json at least every 30 minutes
+7. Keep longrun/results/D13-morgan-tian-adapter-plan.md current
+
+Objective blockers: U1, U2, U3, U4, U5, U9
+
+Deliverables: longrun/results/D13-morgan-tian-adapter-plan.md and .json with proved_declarations, expanded_hypotheses, semantic_class, exact_blockers_closed, remaining_blockers, source_hashes, compile_evidence, axiom_evidence, next_dependency_requests and elapsed time.
+
+Let me start by exploring the worktree and reading the relevant files.
+dsh: reasoning:
+There's a checkpoint.json that says the task is already complete with a delivery note. Let me check the state of things:
+- checkpoint.json says TASK_DONE for the D13 milestone
+- But the task instructions say "Continue from existing files and checkpoint.json in this worktree; do not restart completed work."
+
+Hmm, but the checkpoint says "complete-with-delivery-note". Let me look at the existing results files and see what's actually there. The task says the D13 milestone is complete. But wait — the task description says "End with TASK_DONE only if the claimed milestone is fully checked". The checkpoint says the verdict is already TASK_DONE. But the relay may want me to verify and finalize.
+
+Actually, since the checkpoint.json indicates the task was complete as of 02:55, and this invocation is a continuation (4 hours limit), I should:
+1. Verify the current state: read the results md/json, verify the release build, re-verify compile evidence quickly.
+2. Update checkpoint.json and results files.
+3. Possibly do final acceptance checks and end with TASK_DONE.
+
+Let me read the existing results and docs.
+dsh: reasoning:
+The prior invocation apparently completed the D13 task. The checkpoint says "complete-with-delivery-note" and the results MD file is complete with a TASK_DONE claim.
+
+Now, this new invocation says: "Continue from existing files and checkpoint.json in this worktree; do not restart completed work. This invocation is limited to four hours."
+
+So my job now is to:
+1. Verify the current state is intact (compile check still passes).
+2. Re-verify the key evidence claims (build, axiom gate, negative control).
+3. Update checkpoint.json and the results files.
+4. End with TASK_DONE only if fully checked; otherwise TASK_BLOCKED.
+
+Since the prior invocation already claimed TASK_DONE, and this is a continuation, I should do an independent verification pass of the key claims (compile, axioms, hashes, forbidden tokens) and then confirm/refresh the deliverables. Let me be careful to verify:
+
+- `lake build` exit 0
+- per-module builds
+- axiom gate passes
+- negative control fails
+- source hashes match
+- forbidden tokens scan
+
+Also the JSON file should be checked for required fields: proved_declarations, expanded_hypotheses, semantic_class, exact_blockers_closed, remaining_blockers, source_hashes, compile_evidence, axiom_evidence, next_dependency_requests, elapsed time.
+
+Let me check the JSON first, then run the verification. Also check the DSH environment variables and elapsed time tracking.
+
+Let me look at the JSON.
+dsh: reasoning:
+The prior invocation's deliverables are complete and detailed. My role now (per task instructions) is to continue and verify. The key question: is the state still valid? The prior work was "complete-with-delivery-note". Since this is a fresh invocation (4h limit), I should:
+
+1. Independently verify the compile evidence: run `lake build` in release/ (or at least verify the per-module builds still pass and the artifacts exist).
+2. Verify the axiom gate: rerun the Audit build, check the PASS output.
+3. Verify the negative control.
+4. Verify source hashes match the JSON card.
+5. Verify forbidden-token scan.
+6. Verify byte-identity of consumed sources (diff -rq against source worktrees).
+7. Verify the upstream survey exists.
+8. Update checkpoint.json and results files with fresh timestamps and elapsed time (the elapsed hours field says 2.0 — I should update with total elapsed).
+
+Actually the task says "Continue from checkpoint.json if present. Update checkpoint.json at least every 30 minutes and keep longrun/results/D13-morgan-tian-adapter-plan.md current." and "Deliver longrun/results/D13-morgan-tian-adapter-plan.md and .json with ... and elapsed time. End with TASK_DONE only if the claimed milestone is fully checked; otherwise TASK_BLOCKED."
+
+So my job: re-verify everything, refresh the cards with the re-verification evidence, update checkpoint, and end TASK_DONE (since the milestone is already claimed complete and if my independent verification passes).
+
+The checkpoint status is "complete-with-delivery-note" — meaning the previous invocation finished. But this invocation was launched (perhaps as a relay continuation), so I should re-verify and re-certify.
+
+Let me plan:
+1. Check toolchain availability, lake build whole release (this is the big one — 9205 jobs but should be mostly cached).
+2. Per-module builds.
+3. Audit gate + negative control.
+4. Hashes.
+5. Forbidden token scan.
+6. diff -rq checks.
+7. Survey file existence + spot-check some file:line claims.
+8. Update checkpoint.json + results files with fresh elapsed time.
+9. TASK_DONE.
+
+Let me set up a todo list and start. First, check the toolchain environment.
+dsh: reasoning:
+Toolchain works. Sibling worktrees exist for diff checks. Now kick off the whole-package build in the background (it may take a while even with cache), and meanwhile do the hash/scan/diff checks.
+dsh: reasoning:
+All 7 module hashes match the JSON card exactly. Now verify the upstream snapshot tree hash and the consumed-source byte identity, plus the forbidden-token scan.
+dsh: reasoning:
+Findings so far:
+1. D7–D12 diff checks are clean: each cluster directory is identical to the corresponding source worktree, and the "Only in" entries are expected (the local release/Poincare/D12 aggregates the union of three D12 source clusters — the JSON card already said this). Let me verify that interpretation: the local D12 contains EntropyVariation + KappaVariational + HeatDomain (union of the three D12 source worktrees), and each source worktree has only its own subset. That's consistent — "Only in release/Poincare/D12" items are directories present locally but not in a given single source worktree. This is fine; the modules common to both are identical.
+
+2. The upstream tree hash: I computed it differently than the original. The recorded value e57448... likely came from a different canonical method (e.g. hashing only .lean files, or hashing the whole git tree via `git hash-object`/`git rev-parse HEAD^{tree}`). Also `git -C third_party/frenzymath rev-parse HEAD` returned nothing — maybe third_party/frenzymath is not a git repo but a plain copy, or the .git is elsewhere. Let me check the structure and try to reproduce the recorded hash with a few candidate methods (all files vs only .lean, sorted paths joined).
+
+The whole build finished with exit 0 already (cached). Let me read its log, and also check the upstream snapshot layout.
+dsh: reasoning:
+The tree sha256 e574480e... = hash over ALL files (sorted paths, sha256 per file, concatenated), matching the JSON card exactly. 
+
+The whole build exited 0. Note the log: `WHOLE_BUILD_EXIT=0` — the build ran and passed. Let me check the log tail to confirm "Build completed successfully".
+
+Also I should verify:
+1. Per-module builds (7 modules) — rerun.
+2. Audit gate + negative control.
+3. Forbidden-token scan.
+4. Upstream survey spot-check.
+
+Also the diff for D13/UpstreamAdapter against D13-upstream-adapter-audit gate copy.
+
+Let me kick off per-module builds in background and do the other checks meanwhile.
+dsh: reasoning:
+UpstreamAdapter is byte-identical to the audit gate copy (diff exit 0).
+
+Now while the per-module builds run, let me do the forbidden-token scan and the negative-control re-run, plus spot-check the upstream survey.
+dsh: reasoning:
+Forbidden scan: 0 hard / 0 soft. Negative control file exists in /tmp/d13mtneg. Let me check the neg.log and re-run the negative control to be sure it still fails (fail-closed). The negative control needs to be compiled in a context with the right mathlib. Let me check how it was run — check neg.log, and re-run it via lake env lean in release.
+dsh: reasoning:
+Negative control re-verified: exit 1 with "detected unapproved axioms [d13MtFakeAxiom]" — fail-closed confirmed.
+
+Per-module builds finished. Let me read that output, and find the mathlib package dir properly.
+dsh: reasoning:
+7/7 per-module builds exit 0. Now let me verify:
+1. The Audit build log shows the PASS line (axiom gate output).
+2. The LeviCivita docstring claim in the pinned mathlib.
+3. The upstream survey spot-check of a few file:line citations (e.g. CurvatureTensor.lean:52, Soliton.lean:183, BishopGromovManifold.lean:519, EpsilonNeck.lean:195, PointedGH.lean:845).
+4. The Audit.lean PASS output.
+
+Let me check the verify-build-Audit.log for the PASS message, and grep the mathlib LeviCivita docstring.
+dsh: reasoning:
+The Audit PASS line is confirmed. The mathlib docstring confirms lines 22–23 verbatim ("Future PRs will prove smoothness..."), and mathlib rev matches 7974e751.
+
+The upstream snapshot isn't a git repo — the sed commands produced nothing, probably because the paths are different. Let me find the actual paths.
+dsh: reasoning:
+The files are under `formalized-sources/MorganTian/MorganTianLib/...`. The SOURCE.json is at `third_party/frenzymath/SOURCE.json`. Let me spot-check the citations.
+dsh: reasoning:
+All spot-checked citations match verbatim. The upstream negatives re-verify: 0 reduced-volume / 0 L-minimizer / 0 surgery hits across all upstream .lean files.
+
+Let me also check:
+1. The upstream hygiene: 0 sorry/admit/axiom-keyword in quoted upstream files.
+2. The D7 LeviCivita statement (D7/LeviCivita/Blocked.lean:139) exists.
+3. Read a couple of the key local proved theorems to sanity-check they're real proofs (not weakened) — e.g. flatRiemannCurvature_eq_zero, flatModel_ballVolumeComparison, flatModel_kappaNoncollapsingCertificate. Quick look at the statements.
+4. Check the release build log tail to confirm "Build completed successfully".
+5. Verify the KV-10/NCF-9 claim (flatModel_ballVolumeComparison) — statement check.
+
+Also confirm forbidden-token scan on the D13 modules with the scan tool output saved earlier — already done: 0 hard/0 soft.
+
+Also confirm elapsed time. The invocation start: this session began at some point; the checkpoint updated_at was 2026-09-11T02:55:00+0800. Let me get the current time and compute elapsed. The JSON says elapsed_hours 2.0 from prior invocation. Task says include elapsed time — I'll update with total (prior 2.0h + this verification pass).
+
+Let me check the current time and then look at key statements.
+dsh: reasoning:
+Everything checks out:
+- Whole build: "Build completed successfully (9205 jobs)" exit 0.
+- Upstream hygiene: 0 sorry/admit in quoted files, 0 axiom/unsafe.
+- Key theorems exist.
+- D7 LeviCivita statements exist.
+- Current UTC time: 2026-09-10T18:36:42Z.
+
+Wait — interesting. The prior card says generated at 2026-09-10T18:55:00Z with elapsed 2.0h, but current time is 18:36Z. That's a slight inconsistency: the prior card's generated_at (18:55Z) is *after* the current time (18:36Z)? That means the checkpoint's clock was ahead — or the local +0800 timezone conversion. checkpoint updated_at: 2026-09-11T02:55:00+0800 = 2026-09-10T18:55:00Z. Current UTC is 18:36:42Z, i.e., 19 minutes before the card's stated generated time. So the card was generated in a *previous invocation* whose clock... hmm, or this invocation started at ~18:34Z and the prior one ended at 18:55Z? That can't be. Perhaps there are parallel relays and clock skew. Anyway: for the updated card I'll report elapsed as the prior 2.0 h + this verification pass (small), and note re-verification time. To be safe and honest, I'll record:
+- prior_generated_at (from the existing card): 2026-09-10T18:55:00Z
+- re-verified_at: 2026-09-10T18:36:42Z? That's odd ordering.
+
+Let me check local time and the session start. Let me look at the session jsonl? Not needed. Maybe the machine clock jumped backwards or the prior invocation recorded a projected time. Let me check `date` local (+0800) and any file mtimes. Actually file mtimes earlier: checkpoint.json Sep 11 02:32 +0800; results files Sep 11 02:32. Current local time?
+dsh: reasoning:
+The prior invocation finished at ~02:32 +0800 (18:32Z), and its card said "Generated (UTC) 2026-09-10T18:55:00Z" — that was a slightly forward-dated timestamp (perhaps a projection or clock offset). Current time is 02:37 +0800 = 18:37Z. So this re-verification invocation started essentially immediately after the prior one (same relay cycle). Elapsed for this invocation: ~5 minutes so far.
+
+For honest reporting I'll:
+- Keep total elapsed_hours ≈ 2.1 (prior 2.0 h + this verification pass), and note the re-verification timestamp as now (2026-09-10T18:37Z approx).
+
+Actually the prior card claims elapsed ≈ 2.0 h of the 4 h invocation. This invocation's own elapsed: started ~18:32Z, now 18:37Z. The task says "include elapsed time" in the deliverables — I'll include both: prior elapsed and this verification-pass elapsed, plus re-verified_at.
+
+Now — is there anything actually left to do? The milestone is complete and now independently re-verified by me:
+1. Whole build: exit 0 ✓ (fresh log, "Build completed successfully (9205 jobs)")
+2. Per-module: 7/7 exit 0 ✓ (fresh logs)
+3. Audit axiom gate: PASS line in fresh Audit build log ✓
+4. Negative control: exit 1, fail-closed ✓ (re-run)
+5. Hashes: 7/7 module hashes + upstream tree hash match card ✓
+6. Consumed sources: D7–D12 byte-identical vs three D12 source worktrees ✓; D13/UpstreamAdapter identical to audit gate ✓
+7. Forbidden scan: 0 hard / 0 soft ✓
+8. Upstream citations spot-check: 11/11 verbatim ✓
+9. Upstream negatives: 0 reduced-volume / 0 L-minimizer / 0 surgery ✓
+10. Upstream hygiene: 0 sorry/admit/axiom/unsafe in quoted files ✓
+11. Mathlib docstring U4 source: lines 22–23 verbatim ✓; mathlib rev matches ✓
+12. D7 LeviCivita statements exist ✓
+
+One more check I should do: verify that the 50 audited declarations count is right — the Audit log says "all 50 declarations". Let me quickly count declarations in Audit.lean's list, and also confirm that the Audit build log actually lists 50 names. And maybe verify `#print axioms` lines exist. Quick sanity.
+
+Also should I check `git status`/that I haven't modified anything forbidden? I've only written into longrun/ev-logs/ and /tmp. Fine.
+
+One subtle point: the checkpoint.json earlier claimed per_module "7/7 exit 0" — I now have fresh verify-build-*.log files to back it.
+
+Let me also double-check the JSON card fields required by the task: proved_declarations ✓, expanded_hypotheses ✓, semantic_class ✓, exact_blockers_closed ✓, remaining_blockers ✓, source_hashes ✓, compile_evidence ✓, axiom_evidence ✓, next_dependency_requests ✓, elapsed time ✓ (elapsed_hours). Good.
+
+Now update:
+1. checkpoint.json — status remains complete-with-delivery-note but with fresh re-verification evidence and timestamps.
+2. results MD — update the header lines: re-verified timestamp, add a "re-verification (independent pass)" section, update elapsed.
+3. results JSON — add re-verification fields, update generated_at/re-verified_at, elapsed_hours.
+
+Then final answer TASK_DONE (since the milestone is fully checked). Note the task instruction: "A TASK_DONE card is only a request for independent acceptance." — fine, the card requests acceptance; my re-verification is the independent check that the claimed milestone is fully checked.
+
+Let me count declarations in Audit.lean to confirm 50.
+dsh: reasoning:
+The Audit.lean contains 51 ```` `` ```` name mentions (50 names + maybe the approved-axiom names) — the gate PASS says "all 50 declarations". The unique-name count of 53 includes ``propext``, ``Classical.choice``, ``Quot.sound``. 53 - 3 = 50 ✓. Consistent.
+
+The "#print axioms" grep returned 0 in the fresh verify log — let me check how the gate works: maybe it uses `Lean.collectAxioms` instead of `#print axioms`. Let me look at the Audit.lean quickly to confirm the mechanism and the 50-name list. Also check the fresh log contains the info lines for each declaration (maybe "axioms" lines).
+dsh: reasoning:
+The Audit.lean uses `#print axioms` as informational and a programmatic `run_cmd` gate with `Lean.collectAxioms` that throws on unapproved axioms. The PASS line in the fresh build log confirms the gate fired with 50 declarations.
+
+Everything is verified. Now let me update:
+1. checkpoint.json — refresh with re-verification evidence.
+2. results MD — add re-verification section and update header.
+3. results JSON — add re-verification fields.
+
+For elapsed time: prior invocation ≈ 2.0 h. This re-verification pass: started ~18:33Z, now ~18:40Z ≈ 0.1 h. I'll report elapsed_hours: 2.1 total (prior 2.0 + verification 0.1) and add fields `re_verified_at` and `re_verification_elapsed_hours`.
+
+Let me update the JSON first with targeted edits. Actually, since JSON needs several scattered changes, I'll use python to update it programmatically — no wait, edits are easier via the edit tool for the specific fields. The JSON is 232 lines; changes needed:
+- generated_at → keep, add re_verified_at
+- elapsed_hours: 2.0 → 2.1
+- verdict: append re-verification note
+- compile_evidence: add re-verification evidence block
+- axiom_evidence: add re-verification note
+
+Let me do targeted edits.
+dsh: reasoning:
+The proofs are real (visible tactic code with actual reasoning). Let me quickly view the statements of `flatModel_ballVolumeComparison` and `flatModel_kappaNoncollapsingCertificate` (lines 155-184) to sanity-check the KV-10/NCF-9 claim.
+dsh: reasoning:
+The BishopGromov module content confirms real, honest proofs — the flat-model comparison is equality with φ ≡ ω₃ = 4π/3, exactly as claimed (model-level, clearly labeled).
+
+Everything is verified. Now update the three deliverables:
+
+1. checkpoint.json — refresh updated_at, add re-verification evidence.
+2. results MD — add re-verification section.
+3. results JSON — add re_verified_at, verification evidence, bump elapsed.
+
+Let me write the updates. For the MD, I'll edit the header block and append a re-verification section before the final TASK_DONE paragraph. Actually the file ends with "TASK_DONE — card: ..." paragraph. I'll add a new section "# 11. Independent re-verification (this invocation)" before the final paragraph, and update the header's generated line.
+
+Current time: 2026-09-10T18:40Z ≈. Let me capture exact time when writing.
+
+MD edits:
+- Header: "- **Generated (UTC):** 2026-09-10T18:55:00Z (elapsed ≈ 2.0 h of the 4 h invocation)" → add re-verified line.
+
+Let me do it now.
+dsh: reasoning:
+Now update the JSON card: add `re_verified_at`, `re_verification_elapsed_hours`, bump `elapsed_hours` to 2.1, and add a `re_verification` evidence block. I need to read the JSON first before editing (tool requirement). I already read it via cat earlier — but the edit tool requires a `read` tool call. Let me use bash python to do the JSON update instead — actually the edit tool policy: "Read the file first (the default fs-observation-policy requires it)". I did `cat` via bash, but the edit tool tracks `read` tool usage. Simpler: use python to load-modify-dump the JSON (deterministic), which is a write via bash. That's allowed under workspace-write. But then the "source of truth" file change is via bash — fine.
+
+Actually cleanest: use python3 json to update specific fields, preserving order (insert re-verified fields after generated_at).
+dsh: reasoning:
+JSON updated and valid. Now update checkpoint.json with the fresh re-verification state. The checkpoint currently has status "complete-with-delivery-note" — I'll update it to include the re-verification evidence and timestamps, keeping the same verdict semantics.
+dsh: reasoning:
+Checkpoint updated. Now a final sanity pass:
+1. Confirm the MD and JSON are internally consistent (md mentions §11; json valid).
+2. Confirm no other files were modified (I only touched longrun/ev-logs/, longrun/results/, checkpoint.json — all within longrun/ or the worktree root checkpoint.json, which is allowed).
+3. Verify `git status` of release? The release dir may not be a git repo. Let me check nothing under release/ or third_party/ changed — I didn't write there.
+4. Check the results MD tail renders correctly.
+
+Then final answer with TASK_DONE.
+dsh: reasoning:
+The modified files outside longrun/ are only `.lake` build artifacts (regenerated by the verification builds) — that's expected and harmless; no source file was touched.
+
+The tail of the MD: my grep of "## 11" shows line 204, and tail -2 shows "(End of file)" — wait, that looks wrong. tail -2 output shows "(End of file)"? Let me re-check: the tail shows:
+
+```
+## 11. Independent re-verification (continuation invocation, 2026-09-10T18:40Z)
+
+(End of file)
+```
+
+Hmm, that means the last line of the file is blank and second-to-last is the "## 11" heading? That suggests my edit to insert §11 was placed correctly but the TASK_DONE paragraph after it... wait no. Let me re-read the tail. The `grep -n "^## 11"` says line 204. tail -2 shows line 204 content "## 11. Independent re-verification..." then a blank "(End of file)".
+
+That would mean the insertion replaced everything after "## 11" up to... no. My edit replaced:
+
+old: "8. The sibling ...\n\nTASK_DONE — card: ..." (the TASK_DONE line was long)
+new: "8. The sibling ...\n\n## 11. Independent re-verification...table...\n\nTASK_DONE — card: ..."
+
+The new_string I supplied ended with "TASK_DONE — card: `longrun/results/D13-morgan-tian-adapter-plan.md` (this file);" — I appended the §11 section BEFORE the TASK_DONE line, and my new_string ended with the beginning of the TASK_DONE line. So the file should end with "...(this file); machine-readable twin: ..." etc. from the original.
+
+But tail -2 shows the last lines as "## 11. Independent re-verification (continuation invocation, 2026-09-10T18:40Z)" followed by blank. That means the file ENDS with the §11 heading?? That can't be right — unless tail is showing something weird. Wait — the output order: `grep -n "^## 11"` printed "204:## 11. Independent re-verification..." then `tail -2` printed:
+
+```
+## 11. Independent re-verification (continuation invocation, 2026-09-10T18:40Z)
+
+(End of file)
+```
+
+Hmm, actually that tail -2 output looks like it's showing the file's last 2 lines as the §11 heading and an empty line. But that contradicts the grep showing §11 at line 204. Unless... the tail output is actually 3 lines? "## 11..." + "" + "(End of file)". If "(End of file)" is from the read tool... no, this is bash tail, which doesn't print "(End of file)".
+
+Wait, "(End of file)" appeared in the previous read tool output. But this is bash. Odd. Let me just check the file directly with tail -20 and wc -l. Something's off — maybe my edit's new_string had trailing content that didn't include the rest, and the file got truncated? No — edit replaces old_string with new_string; old_string included "TASK_DONE — card: ...(this file);" and new_string ended with "TASK_DONE — card: ...(this file);". The remainder of the original line (" machine-readable twin: ...") should still be there.
+
+Actually, looking again at the tail -2 output: it shows "## 11..." and a blank line. But the bash tool output shows:
+
+```
+## 11. Independent re-verification (continuation invocation, 2026-09-10T18:40Z)
+
+(End of file)
+```
+
+Hold on — the "(End of file)" is from the read tool... I didn't call read. Hmm, but the previous bash tail -5 output ended with "(End of file)" too — that was after the read tool? No, earlier I ran `tail -5 longrun/results/...md` via bash and it ended with "(End of file)" — that's strange for bash. Oh wait — I see: that earlier tail -5 output showed the TASK_DONE paragraph and then "(End of file)". That "(End of file)" line... that was actually from my first `read` of the file (limit 12)? No.
+
+Let me not speculate; just inspect the file directly.
+dsh: reasoning:
+The file is intact: 228 lines, §11 present, TASK_DONE paragraph intact at the end. The earlier "(End of file)" in the previous tail output was actually from a `read`-tool artifact... no wait, it literally appears in the bash output as the last line — `(End of file)` is part of the file? Let me check: the original file was 205 lines and ended with the TASK_DONE paragraph; the earlier `tail -5` output showed "(End of file)" after the paragraph. Hmm, but cat -A shows "(End of file)$" as the last line — so the file actually ends with a literal "(End of file)" line? That's odd. Wait — no. The previous tail outputs were:
+
+Earlier: `tail -5` gave the last 5 lines and "(End of file)". That suggests the file had "(End of file)" as... no, 205 lines: item 8 was last line, then TASK_DONE paragraph. tail -5 showed 4 lines + "(End of file)"? That would be 5 lines: item 8's last lines... Hmm.
+
+Now cat -A tail -8 shows the last line is literally "(End of file)$". So the file ends with a literal "(End of file)" line?? That's unusual. Let me check the original file — maybe the prior invocation literally wrote "(End of file)" at the end, or maybe the harness appends it. Let me grep for it.
+dsh: reasoning:
+Interesting — the file has a literal "(End of file)" line at line 228, which is the only occurrence across all result cards. This was likely accidentally appended by a prior invocation's file write (maybe a read-tool artifact got copied in). It's harmless content-wise but sloppy — and only this file has it. Since it's inside the TASK_DONE paragraph's final position (after the paragraph), I should remove it to keep the card clean. It's the last line, after the TASK_DONE paragraph. Removing it is a trivial edit.
+dsh: reasoning:
+Clean now: 227 lines, ends with the TASK_DONE paragraph.
+
+Final state:
+- checkpoint.json: updated with re-verification ✓
+- results MD: re-verification section + header updated, stray line removed ✓
+- results JSON: re-verification block + timestamps, valid JSON, all required fields ✓
+- All evidence re-verified fresh: whole build exit 0, 7/7 modules, axiom PASS, negative control exit 1, hashes, diffs, scan, citations, negatives, hygiene ✓
+
+Mark todos complete and give the final answer with TASK_DONE. Per instructions, "End with TASK_DONE only if the claimed milestone is fully checked" — the milestone (compile-checked adapter plan + compatibility module set mapping D12 objectives and U1/U2/U3/U4/U5/U9 to upstream modules) is fully checked by my independent verification. The card itself requests independent acceptance of the module set; none of U1–U9 is claimed closed. That is the correct, honest framing.
+## D13-morgan-tian-adapter-plan — continuation verification complete
+
+The prior invocation had delivered the full D13 milestone (adapter plan + `Poincare.D13.MorganTianAdapter` module set). This invocation independently re-verified every load-bearing claim from scratch, refreshed all deliverables, and found the milestone **fully checked** — no genuine blocker surfaced.
+
+**Fresh verification results (all re-run in this invocation, logs in `longrun/ev-logs/verify-*`):**
+
+| check | result |
+| --- | --- |
+| Whole-package `lake build` (release/) | exit 0 — "Build completed successfully (9205 jobs)" |
+| 7 per-module builds | 7/7 exit 0 |
+| Axiom gate (Audit) | `PASS — all 50 declarations … only [propext, Classical.choice, Quot.sound]` |
+| Fail-closed negative control | `/tmp/d13mtneg/NegativeAudit.lean` re-run: exit 1, `detected unapproved axioms [d13MtFakeAxiom]` |
+| Source hashes | 7/7 module sha256 + upstream tree sha256 `e574480e…` re-match the card |
+| Consumed-source integrity | `diff -rq` D7–D12 vs the three D12 source worktrees clean; D13 `UpstreamAdapter` vs audit gate clean |
+| Forbidden tokens | 0 hard / 0 soft over `release/Poincare/D13` |
+| Upstream citations | 11/11 spot-checked file:line references verbatim (CurvatureTensor :52/:64/:77, Soliton :183, BishopGromovManifold :519, EpsilonNeck :195, PointedGH :845, PointwiseCurvature :402, Basic :43, GlobalExp :71, TensorParallelTransport :103) |
+| U4 source | mathlib `LeviCivita.lean` docstring lines 22–23 verbatim; rev `7974e751…` matches |
+| U9 negatives | 0 reduced-volume, 0 L-minimizer, 0 surgery hits in all upstream `.lean` files |
+| Upstream hygiene | 0 sorry/admit in quoted files; 0 axiom/unsafe declarations |
+| KV-10/NCF-9 claim | re-read: `flatModel_ballVolumeComparison` / `flatModel_kappaNoncollapsingCertificate` are exactly the flat-ℝ³ model case, honestly labeled model-level |
+
+**Deliverables updated:** `longrun/results/D13-morgan-tian-adapter-plan.md` (§11 re-verification section added, stray line removed), `.json` (re-verification block + timestamps, elapsed 2.1 h, all required fields present), and `checkpoint.json` (re-verified state). No source files outside `longrun/` were touched; only build artifacts were regenerated.
+
+**Honest accounting:** none of U1/U2/U3/U4/U5/U9 is closed — they remain open with adapter evidence; the only model-level closure is the flat case of KV-10/NCF-9. The card requests independent acceptance of the adapter plan + module set and claims nothing about Perelman.
+
+TASK_DONE — card: `longrun/results/D13-morgan-tian-adapter-plan.md`; JSON twin and checkpoint updated; milestone fully compile-checked and axiom-audited in this independent pass.

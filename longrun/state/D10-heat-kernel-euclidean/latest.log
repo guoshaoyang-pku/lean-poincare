@@ -1,0 +1,453 @@
+dsh: reasoning:
+The gate.json isn't at that path. Let me look around.
+dsh: reasoning:
+The worktree README is a copy of D6 release README. Hmm — this looks weird. The worktree seems to be a copy of a previous release worktree, not the D10 worktree... Let me check what the task actually is. The state dir has prompt.md, heartbeat.json, last_run.json, latest.log. Let me read those.
+dsh: reasoning:
+The result card exists: D10-heat-kernel-euclidean.md/.json. Let me read the result card and see what the task did. Also there must be authored Lean files. Let me find them.
+dsh: reasoning:
+The result card claims everything is done and TASK_DONE. But the gate failed. There's no gate.json at the stated path. The last_run.json says exit_code 0 at 09:21:02, and DONE marker was created at 09:21. So the previous worker claimed done, but the compile gate failed on attempt 1.
+
+Wait — the gate.json path might be created by the supervisor at a different time. Let me check the harness/supervisor scripts for where gate.json is written. Let's look at the parent longrun dir.
+dsh: reasoning:
+Let me first reproduce the compile. Run each lean file with `lake env lean`. Let me set up the environment.
+
+Also note the D10 result card claims success, and gate failed on attempt 1. Perhaps the gate failed because the D10 files were compiled but `release/Poincare/D10/HeatKernelEuclidean/AxiomAudit.lean` requires the .olean files to exist in the right place, or the gate runs from a different directory, or maybe the gate checks *all* .lean files in the worktree (including the D6 ones under release/) which may fail because of missing `.lake` build for those.
+
+Wait — actually the gate would check all `.lean` files. Note the timestamps: AxiomAudit.lean modified at 09:19, and the previous run's logs show it compiled at 09:19-09:20. Hmm, but the last_run.json says exit code 0 at 09:21. So the worker thought it succeeded.
+
+The gate.json may have been created after the last_run.json — actually the prompt says "The compile gate failed (attempt 1)". But no gate.json exists now; maybe the supervisor writes gate.json to the state dir only on failure and it got removed? The heartbeat.json timestamp 09:22:02 and latest.log 09:22. So the current run started at 09:22. gate.json may be missing because... hmm.
+
+Let me check the supervisor scripts in /data3/guoshaoyang/workdir/lean_poincare/longrun/bin.
+dsh: reasoning:
+Let me look at the supervisor/dispatch loop to see how the gate is run, so I know exactly what the compile gate checks.
+dsh: reasoning:
+So the compile gate walks the whole worktree and runs `lake env lean <file>` from the worktree root (`cwd=wt`), for every `.lean` file (excluding `.lake`, `.git`, `.dshpkg`). This includes the D6 release files, negcontrol, etc. That's a LOT of files (~60+). The gate.json was deleted after the repair prompt was written (line 150-152), so it no longer exists — that's why I can't read it. But the gate "ok" was False.
+
+Important: `cwd=wt` (the worktree root), NOT `release/`. The D10 result card says the per-file gate was run with `cd release`. From the worktree root, `lake env lean <path>` would fail because there's no `lakefile` at the worktree root! Wait, actually does `lake env lean` from a directory without a lakefile fail? Let's check. Actually `lake env lean file.lean` from a non-package dir falls back to the default toolchain? Hmm, it uses the elan toolchain and the ambient Lean search path... Actually `lake env` without a lakefile will try to find a lakefile upward; if none, it may error "no lakefile found".
+
+Hmm, but the D6 release files also are in the worktree and the gate would have run on them too. Those were presumably fine in the D6 worktree? Actually the D6 worktree had them under `release/` too and the gate ran from `wt`. Let me test.
+
+Let me just reproduce: run `lake env lean` on one of the D10 files from the worktree root and see.
+
+Given the gate walk includes all .lean files, I need every one to compile with `lake env lean <abs path>` from cwd=worktree root. Let me first test with an existing D6 file to see whether it works from root.
+
+Set up env: ELAN_HOME and PATH.
+
+Let me check what ENV the dispatch loop uses.
+dsh: reasoning:
+70 `.lean` files in the worktree (excluding .lake). The gate runs `lake env lean <abs file>` with cwd = worktree root. There is no lakefile at the worktree root — let me check. `ls -la` earlier showed no lakefile.toml at root. So `lake env lean` from root... Let me test it right now.
+
+Note the D6 release had the same structure and presumably passed the gate in D6's own run (the gate may have been run the same way and worked). Let's check D6 worktree state, and check if the D6 gate.json exists for D6_weekly_release.
+
+Let me just test.
+dsh: reasoning:
+Interesting: `lake env lean` from the worktree root fails because there's no toolchain file at the root, so elan has no default toolchain configured. This is why the gate fails for *all* 70 files. Hmm, but wait — actually it says "no default toolchain configured". So the gate would report every file exit 1.
+
+Hmm, but hold on. Maybe the intended fix is to add a `lean-toolchain` file and `lakefile.toml` at the worktree root? That seems off. Or maybe the D6 release worktree also fails? Let me check how other tasks' gate.json look — e.g. D10-maximum-principle-rn state dir. And check what the D9-parabolic ones have (those were modified 09:12/09:17 today, similar recent wave).
+
+Let me check the D9 states' gate.json for a passing task to see the file list and whether files at root compiled.
+dsh: reasoning:
+D9-sobolev-parabolic-estimates passed the gate with 69 files, and D7-heat-kernel-existence passed with 116 files. So `lake env lean` from the worktree root works for those worktrees. Why? Maybe those worktrees have a `lean-toolchain` at the root, or the root has a `lakefile.toml`. Let me check D9-sobolev-parabolic-estimates worktree root.
+dsh: reasoning:
+So the passing worktrees have a root-level `lakefile.toml`, `lean-toolchain`, `lake-manifest.json`, and `.lake -> release/.lake` symlink. D10-heat-kernel-euclidean lacks these. That's the fix: create the root-level lake package files (this is "authored file" adjacent — these are package config files, needed for the gate to pass).
+
+Actually wait: "Fix ONLY the authored files in your worktree" — means don't touch accepted D6 sources. Adding root lakefile is infrastructure.
+
+Let me look at those root lakefiles to copy the pattern.
+dsh: reasoning:
+The fix is clear. Let me create the root-level lakefile.toml, lean-toolchain, lake-manifest.json (copy from release/), and `.lake -> release/.lake` symlink in the worktree root.
+
+But wait — the gate also compiles all 70 .lean files including D6 release ones and negcontrol/NegativeControl.lean. The negcontrol/NegativeControl.lean intentionally... let me check it. In D6 its log showed exit 0 for negative control. Let me check the D9 gate file list to see what files are checked and whether negcontrol is included.
+
+Also note: `lake env lean negcontrol/NegativeControl.lean` — in the D6 README it was `lake env lean ../negcontrol/NegativeControl.lean` from release/. The negative control presumably uses `sorry` in a way that produces a warning? Let's read it.
+
+Let me check the D9 gate files list to see which files were included and their paths.
+dsh: reasoning:
+The negative control file uses `sorry` and `native_decide`, but those produce warnings not errors, so exit code 0. The gate runs it from root — will it work? It imports `Lean.Util.CollectAxioms` which is in the Lean core, and mathlib is required for the toolchain resolution... Actually `lake env lean` just needs the toolchain. Fine.
+
+So the primary fix: add root-level lake package files so `lake env lean` works from the worktree root.
+
+Now, hold on. Is it possible the gate failed for a different reason, e.g. some D10 file doesn't compile? We can't see gate.json (deleted). Let's just set up root lake files and then run the full gate ourselves over all 70 files, fixing any actual failures.
+
+Let me create:
+- lean-toolchain (copy of release/lean-toolchain)
+- lake-manifest.json (copy of release/lake-manifest.json)
+- lakefile.toml (root workspace, following the D9-sobolev pattern)
+- .lake symlink -> release/.lake
+
+Careful: `lake env lean` from root with root lakefile will use `packagesDir = ".lake/packages"`, and the `.lake` symlink points to release/.lake, so packages resolve. That's exactly the D9 pattern.
+
+Also: does the root lakefile's presence change how `release/` package builds? No, release/ has its own lakefile.
+
+One more concern: the gate excludes `.lake` directories from the walk (dirnames filtered). Good.
+
+Let me also verify that all D10 files currently compile from release/. The previous run's logs show exit 0 for those 6 files at 09:19. But AxiomAudit.lean was modified at 09:19 (after others at 09:16). Let's just run them.
+
+Plan:
+1. Create root lakefile.toml, lean-toolchain, lake-manifest.json, .lake symlink.
+2. Test `lake env lean` on a D10 file from root.
+3. Run full gate over all 70 files from root, capture exit codes.
+4. Fix failures (only authored D10 files — the D6 ones compiled before presumably; but if any D6 ones fail, need to think. They're not authored by me; the gate requires all. But D9's identical set passed, so likely fine.)
+5. Verify no forbidden tokens in D10 files.
+6. Update result card.
+7. End TASK_DONE.
+
+Let me create the files. First check lake-manifest and whether `lake env lean` from root may try to re-resolve/update. With `lake-manifest.json` present and packagesDir pointing at the shared prebuilt dir, it should be fine offline.
+
+Let me look at the root lake-manifest.json of D9 to see if it's identical to release's.
+dsh: reasoning:
+Now let me create the root-level files in the D10 worktree.
+dsh: reasoning:
+Now the root-level `lake env lean` works. Now run the full gate: all .lean files from the worktree root, exactly as the dispatch loop does. Let me write a small script mirroring it, in background since it may take a while.
+
+Actually, I should mirror exactly:
+- walk wt, skip dirnames .lake/.git/.dshpkg
+- files sorted
+- subprocess.run(["lake","env","lean",f], cwd=wt, env=ENV, capture_output=True, text=True, timeout=1800)
+
+Let me write that to a file in the worktree (e.g. logs or a temp) and run it. But careful: writing a .py file in the worktree is fine (gate only looks at .lean). But should I add extra files to the worktree? The task says fix only authored files; adding a helper script may pollute. I could put it in /tmp. The policy allows platform temp areas. Let me put it in /tmp.
+
+Actually, sandbox: workspace-write — /tmp may be writable. Let's try. Otherwise put it in worktree/logs.
+
+Let me run it in the background with output captured.
+dsh: reasoning:
+While that runs, let me inspect the D10 authored Lean files for forbidden tokens and correctness. Let me read them.
+
+Also check the .json result card.
+dsh: reasoning:
+The forbidden tokens appear only in comments/docs. Good — the scan script is comment/string aware.
+
+Now let's check the gate run progress. Meanwhile, let me read the other D10 files briefly to make sure they compile and mathematics is sound. Actually the gate run is the key check. Let me check on it.
+
+Actually a subtle issue: `lake env lean` from worktree root — the root lakefile defines module name `PoincareRelease` etc., but there are no lean_lib targets, so `lake env` just sets up env. When compiling `release/Poincare/D10/HeatKernelEuclidean/Basic.lean` from root, the import resolution uses LEAN_PATH including the root package's build dir (`.lake/build/lib/lean`) — which through the symlink is `release/.lake/build/lib/lean`. That contains the D10 oleans built earlier? Let's check that the D10 modules' oleans exist there.
+
+Wait but there's a subtlety: from root, `lake env lean release/.../HeatEquation.lean` importing `Poincare.D10.HeatKernelEuclidean.Basic` will find the olean in `.lake/build/lib/lean`. Good. But if the root lakefile lacks a `lean_lib`, does `lake env` still add `.lake/build/lib/lean` to LEAN_PATH? For the file to compile at all (the earlier Basic.lean test passed), it must. Basic.lean imports only mathlib. Let's verify HeatEquation compiles from root — the gate run will tell us.
+
+Let me check the background job.
+dsh: reasoning:
+Interesting. There are failures in the D6 `Poincare/Longrun/...` files because the oleans aren't built in `release/.lake/build/lib/lean`. Wait, but D9's gate passed with all these files. So in D9's worktree, `.lake/build/lib/lean` contained all oleans — presumably because the D9 worker ran `lake build` for the whole package (or the whole `Poincare` lib) first.
+
+In our D10 worktree, the previous worker only built the 6 D10 modules (logs show "2852 jobs"), so `Poincare/Longrun/*.olean` etc. may be missing. Actually wait: `release/.lake/build/lib/lean/Poincare/...` — let me check what exists.
+
+The gate compiles each .lean file individually from `wt` root. For files that import sibling modules in the same package, the oleans must exist. If they don't, the gate fails.
+
+Hmm, but is that "fixing only authored files"? The gate is a compile gate — it requires all .lean files to compile. The standard fix used by other workers (D9) is to run a full `lake build` so all oleans exist. Let me check D9's `.lake/build/lib/lean` — but D9's `.lake` symlink points to its release/.lake, which is separate from ours? Let me verify: our `release/.lake/packages -> /data3/.../poincare-lab/.lake/packages` (shared). Build dir is local per worktree.
+
+Let's check what's in our `release/.lake/build/lib/lean/Poincare/`.
+dsh: reasoning:
+Confirmed: D10's build only has D10 oleans; the D6 base package (Poincare/Longrun, Stage1, Stage6, Probe, Ledger, Audit, ReleaseCheck, etc.) was never built in this worktree. That's why the gate fails.
+
+The fix: run a full `lake build` from `release/` (or from root) so all oleans exist, matching D9's pattern. That is what the D9 worker did (their gate lists all those files at exit 0).
+
+Let's check the D10 background gate job is still running; it's reporting failures but continuing. I'll let it finish to get the full list, but I already know the fix: full build. Actually the build may take a while (2852 jobs already did D10 part; the full D6 package is ~60 files + mathlib deps already prebuilt). Let's check whether `release/.lake/packages` mathlib is prebuilt (yes, shared prebuild).
+
+Wait, but there's a concern: does running `lake build` from `release/` produce oleans in `release/.lake/build/lib/lean/Poincare/...`? Yes.
+
+Let me kill the current gate job first (it's just going to churn through failing files quickly since olean missing errors are fast). Actually, let it finish — it's quick (each failure 0.5s). Files that need big compilation might take long though. Let me check status.
+
+Meanwhile, start the full build in the background from release/. Actually careful: concurrent `lake build` and `lake env lean` runs could conflict on the build dir. Better to wait for the gate run to finish (should be fast) then run the build.
+
+Let me check the job.
+dsh: reasoning:
+All 20 "base" files that are non-D10 and depend on oleans failed because their dependencies' oleans are missing. The 6 D10 files passed! Let me verify:
+
+Let me list which passed. 70 total, 50 bad — so 20 passed, including the 6 D10 files (Basic, GaussianIntegral, Mass, HeatEquation, Semigroup, AxiomAudit), negcontrol, D6AuditReport? no that failed. Let's list the passing ones.
+
+Fix: run `lake build` from release/ so all modules get built. Then re-run gate.
+
+Note: the D6 package's `defaultTargets` include Poincare, Probe, Ledger, Audit, ReleaseCheck, ReleaseAudit, D6AuditReport. `lake build` will build all of these. The D6LedgerProbe.lean isn't in defaultTargets but is a standalone file — the gate compiles it directly with `lake env lean`, which imports... let me check it. It's a generated probe with `#check`s; it may import Ledger/Probe modules. Fine once built.
+
+Let me now run the full build. Use `lake build` in release/. Check first whether it needs network (no, manifest pins everything and packages are prebuilt).
+
+Let me kick it off in background with a log.
+dsh: reasoning:
+All 6 D10 files pass. The failures are all missing-olean cascades. So the previous worker's mistake was not doing a full `lake build`.
+
+Now run the full build. Let me do it in the background from `release/`. Note: with the root lakefile in place, running `lake build` from `release/` uses release's lakefile. Good.
+
+Actually, alternatively run `lake build` from the worktree root — but the root lakefile has no lean_lib targets, so `lake build` there builds nothing. Must run from release/.
+
+Let me start the build.
+dsh: reasoning:
+While the build runs, let me read the rest of the D10 files to verify the math content is honest and check the result card JSON. Let me read GaussianIntegral, Mass, HeatEquation, Semigroup, AxiomAudit.
+
+Given the compile gate passed for those 6, the main remaining risk is honesty (no sorry/axiom etc.). Let me inspect.
+dsh: reasoning:
+This is a legitimate audit file. It has no forbidden tokens except in comments.
+
+Now let me read the other files quickly to verify no `axiom` declarations etc. Let me grep for actual declarations: `^axiom`, `sorry`, `native_decide` etc. as code (not comments). The scan script is comment-aware. Let's run the scan script from the input tools on the D10 dir, from release/.
+
+Also let me check the result card JSON.
+
+And let me verify the claim in the result card about "no sorry etc." by running the forbidden-token scan.
+
+Let me check the build progress in the meantime.
+dsh: reasoning:
+The scan confirms zero forbidden tokens. The result card JSON claims compile gate `cwd = release` and that's why it passed for the 6 files but the real gate runs at worktree root over all 70 files.
+
+Now check the build job.
+dsh: reasoning:
+Full build succeeded. Now re-run the gate script (mirroring dispatch_loop) to verify all 70 files pass from the worktree root.
+dsh: reasoning:
+While the gate re-runs, let me examine the D10 Lean files for mathematical content (spot-check) and also look at the remaining claims in the result card to update it.
+
+Let me read GaussianIntegral.lean, Mass.lean, HeatEquation.lean, Semigroup.lean.
+dsh: reasoning:
+This looks like legitimate math. Note the `iteratedFDeriv_two_exp_norm_sq` statement uses `![v,v]` (Fin 2 vector). It's proved.
+
+Let me check the remaining files: Mass, HeatEquation, Semigroup. Also check the gate re-run progress.
+dsh: reasoning:
+All good and honest. Let me check HeatEquation.lean too, then check gate re-run.
+dsh: reasoning:
+All solid. Now check the gate re-run.
+dsh: reasoning:
+The full gate now passes: GATE_OK, all 70 files exit 0.
+
+Wait — important: `lake env lean` from the root will place oleans where? When compiling an individual file, Lean writes oleans to the directory of the source. Not an issue.
+
+Another important consideration: the dispatch loop's gate writes gate.json if it doesn't exist. But there's a subtlety — after repair, dispatch removes gate.json and re-queues. When the worker finishes and DONE is set, dispatch re-runs the gate fresh. Since gate.json doesn't exist (removed), it will re-run and now pass. 
+
+But hold on: will `lake env lean <file>` from the worktree root be affected by the fact that the root lakefile requires mathlib and the packages dir? We validated. And crucially, all oleans are now built in release/.lake/build, and .lake symlink exposes them at root. Good.
+
+But there's a risk: the dispatch gate might run while... no, it's fine. Also, `lake env lean` may decide the package needs updating and try to re-fetch (needs network)? It didn't in our run.
+
+Now let me also double-check: is `lakefile.toml` at the root going to break anything? E.g. the D6 scaffold established things under release/. Adding a root package is precisely what D7/D9 worktrees did. Fine.
+
+One more: The gate walk skips `.lake` dirs. But our root `.lake` is a symlink to `release/.lake`. os.walk by default doesn't follow symlinks (followlinks=False), so `.lake` at root is just a dir entry; `dirnames` filter removes `.lake` anyway. But wait — os.walk yields the symlinked dir in dirnames and, since followlinks=False, won't descend. And it's filtered. Good.
+
+However! There's a subtle risk: the walk includes `release/.lake` — filtered by name `.lake`. Good.
+
+Now: the DONE marker in state dir. The state dir has DONE (created at 09:21 by the worker). The dispatch loop checks `DONE` exists and card status "done" → runs gate. The repair prompt was written and gate.json deleted. Now, after I finish, I should keep DONE. Let me check if DONE still exists (yes, 09:21). I should not remove it.
+
+Should I also check the card status: `card_status` scans `longrun/results/*.md` for "TASK_DONE" in the last 400 chars. The card ends with TASK_DONE. Good.
+
+Now let me also double check the `logs` directory isn't part of the gate (only .lean). Fine.
+
+Next: update the result card (md + json) to reflect the actual gate (worktree-root, all 70 files), the root lakefile fix, and my verification. Let me also re-run the AxiomAudit and forbidden scan to have fresh evidence, and save logs.
+
+Let me:
+1. Re-run AxiomAudit (from release/) and capture output.
+2. Re-run forbidden scan and save JSON.
+3. Re-run full build already done (8952 jobs, exit 0) — log at /tmp/d10_full_build.log; copy into logs/.
+4. Save the gate run output into logs/.
+5. Update result card md/json.
+
+Also check state: the previous card claims `distinct_cones [list len 30]` — let me verify the #print axioms output from the audit run shows the right cones.
+
+Let me re-run the audit now from release/ and capture to logs. Note: running `lake env lean Poincare/.../AxiomAudit.lean` from release/ — since the file was already built, it will re-elaborate. That's fine, ~2.5s.
+
+Also: I should be careful with file permissions — few files are `-rw-------`. Results card md is `-rw-------`. I can write to it as I'm the owner.
+
+Let's do the evidence runs.
+dsh: reasoning:
+- Audit exit 0, 30 declarations PASS.
+- Build exit 0 (8952 jobs).
+- Gate: 70 files all ok.
+
+Now re-run the forbidden scan and save it, plus negative control, and the 6 per-file compiles from release/ (fresh logs). Let me redo those quickly and save logs with the same names as the card references.
+
+Let me also capture per-file timings for release-relative and root-relative runs. The card's section 5 table references `lake env lean` per file. I'll update it to reflect the worktree-root gate (70 files) and keep a per-file table for the 6 authored files.
+
+Let me run the 6 files individually from release/ recording exit codes and seconds, and the negative control.
+dsh: reasoning:
+Everything checks out. Now update the result card (md + json) to describe:
+- The gate failure cause: root-level lake package files missing → `lake env lean` from the worktree root (gate cwd) failed with "no default toolchain configured" for every file, and even after adding the root package, 50 files failed on missing oleans because only the 6 D10 modules had been built.
+- The fix: added root `lakefile.toml`, `lean-toolchain`, `lake-manifest.json`, `.lake -> release/.lake` symlink (no Lean sources touched); ran full `lake build` (8952 jobs, exit 0) so the base D6 modules' oleans exist.
+- Verification: mirror of the dispatch compile gate over all 70 .lean files with cwd = worktree root, exit 0 for every file.
+- Keep all the math content claims.
+
+I should update both the .md and the .json. Let me look at the full JSON structure first to edit minimally but accurately. Let me dump the whole JSON.
+
+Actually, given the size (11.8 KB), let me read it in full (it's JSON with nested structure; read tool gives line numbers).
+
+Let me read it.
+dsh: reasoning:
+I need to update:
+1. `generated_utc` — set to the current UTC time (repair pass).
+2. `compile_gate` section — replace with the actual worktree-root gate: cwd = worktree root, 70 files, all exit 0, log path; keep the per-file release-relative table as secondary.
+3. `lake_build` — full `lake build` 8952 jobs.
+4. Add a `repair` section documenting the gate failure cause and fix.
+5. `scaffold_note` — mention root package files added.
+
+Let me get current UTC.
+
+Also for the .md: update the "Compile gate" section and add a repair note; update the scaffold note; keep everything else. Also update the hash table? The D10 files are unchanged, so hashes stay the same. Let me verify the hashes still match.
+
+Let me compute sha256 of the 6 files.
+dsh: reasoning:
+All good. Now update the result card JSON and MD.
+
+For the JSON, I'll update:
+- generated_utc → current, plus add `repaired_utc`.
+- compile_gate → new structure with `gate_cwd`, `gate_files`, `files_ok`, `real_gate_exit_all_zero`, `per_file_authored` and `lake_build` (full, 8952 jobs), `warnings`.
+- add `repair` object.
+- scaffold_note update.
+
+Let me write the new JSON file completely (write tool) — it's cleaner. But first, the file was read, so write is allowed.
+
+Let me construct the JSON carefully preserving all math content.
+
+Also note `distinct_cones` list truncates some lines; keep as-is since it's evidence from the audit output. Maybe better to re-derive from the fresh audit log: extract all "#print axioms" lines from logs/D10_heat_kernel_axiom_audit.out. Let me generate the JSON with a script to be precise? A Python script writing the JSON would be cleaner and avoids manual mistakes. But the card is authored content. I'll write with python for machine parts... Actually, simpler: use the write tool with the full content. It's long but manageable.
+
+Actually, let me use a Python script to generate the JSON so that the `distinct_cones` list is exactly the fresh audit output lines and the compile_gate per-file exit codes come from the gate JSON. That's more reliable. I'll write the script in /tmp and run it. The final content is still authored by me.
+
+Let me do that.
+dsh: reasoning:
+Now update the .md card. I need to:
+1. Update the header (generated date, add repaired note).
+2. Replace section 5 (Compile gate) with the actual harness gate description.
+3. Add a section about the repair (attempt 1 gate failure, root cause, fix, verification).
+4. Update the scaffold note at the end.
+5. Keep TASK_DONE as last line.
+
+Let me edit specific parts.
+
+First, section 5 lines 161-197. Let me replace that whole block.
+
+Current text:
+
+```
+## 5. Compile gate
+
+Per-file gate (`cd release`), logs `logs/D10_heat_kernel_lean_*.{out,err}`:
+
+| file | command | exit | seconds |
+| --- | --- | --- | --- |
+| `Basic.lean` | `lake env lean Poincare/D10/HeatKernelEuclidean/Basic.lean` | 0 | 2.4 |
+...
+| `AxiomAudit.lean` | `lake env lean Poincare/D10/HeatKernelEuclidean/AxiomAudit.lean` | 0 | 2.5 |
+
+No warnings, no `stderr` beyond the sandbox's `landlock-run` notice.
+
+Package build (`cd release`):
+
+```
+lake build Poincare.D10.HeatKernelEuclidean.Basic \
+           ...
+```
+
+exit 0, `Build completed successfully (2852 jobs)`
+(`logs/D10_heat_kernel_lake_build.log`). The per-file `lake env lean`
+invocations resolve the sibling imports from the `.olean` files produced by this
+build, exactly as the D10 sibling task does.
+
+Forbidden-token scan (`input/d5-tools/scan_forbidden.py Poincare/D10/HeatKernelEuclidean`,
+comment/string aware): **6 files scanned, 0 hard matches, 0 soft matches**, exit 0
+(`logs/D10_heat_kernel_forbidden_scan.json`).
+
+Negative control: `lake env lean ../negcontrol/NegativeControl.lean`, exit 0
+(`logs/D10_heat_kernel_negative_control.log`).
+```
+
+Replace with updated content.
+
+Also update section 6's file table to add "unchanged by repair" maybe, and the header's generated date. And section 8 reproduction — update to include root-cwd gate.
+
+Let me make the edits.
+dsh: reasoning:
+Now update section 6 (files produced) to note unchanged-by-repair, and add the root package files. And update section 8 reproduction. Let me read the current state of those sections.
+dsh: reasoning:
+Also section 4 mentions "Log: logs/D10_heat_kernel_axiom_audit.out (full #print axioms transcript)." Fine.
+
+Section 4 says "distinct axiom cones observed: 1". Let me verify from the fresh audit output that all 30 lines are the same cone. The JSON reconstructs lines from the audit output (30 lines). Let's confirm all are `[propext, Classical.choice, Quot.sound]` (some wrapped).
+
+Also the D10 card's §4 mentions negative control `../negcontrol/NegativeControl.lean` run from `release/` — consistent.
+
+Let me verify the audit lines.
+dsh: reasoning:
+The `print_axioms` output wraps long lines, so some entries got split. The audit file `logs/D10_heat_kernel_axiom_audit.out` has wrapped lines: e.g.
+
+```
+info: file:49:0: '...' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+```
+
+So my `cones` extraction picks only the line starting with "depends on axioms", truncating. In the original JSON, the same truncation happened. It's evidence text; better to normalize properly by joining wrapped continuation lines. Let me improve: parse the audit log into logical entries (join lines that don't start with "info:").
+
+Let me fix the JSON card entries to be full normalized cone strings: e.g. for each declaration, `"name depends on axioms: [propext, Classical.choice, Quot.sound]"`.
+
+Let me update the card JSON accordingly.
+dsh: reasoning:
+Entries 0? The audit out file lines must not start with "info:". Let me check the file format. Earlier `tail` showed lines ending with `]`, and `head` of build log showed "info: ...". But the redirect `> ../logs/...out` from `lake env lean` — for `#print axioms` from an `import`ed module, output may be plain without "info:" prefix? Let me look at the audit out file directly.
+
+Also I just overwrote distinct_cones with empty list. Need to fix.
+dsh: reasoning:
+No "info:" prefix — that's only in the lake build log. Let me redo with correct parsing of the .out file.
+dsh: reasoning:
+The last "entry" absorbed the PASS line. Let me filter to only lines containing "depends on axioms:" as the start of an entry, and continuation lines only if the previous entry hasn't got a closing "]" yet. Simpler: parse by regex on the raw text: find all occurrences of `'NAME' depends on axioms: [ ... ]` allowing newlines inside brackets. Use regex with DOTALL non-greedy up to `]`.
+
+Pattern: `'([^']+)' depends on axioms: \[(.*?)\]`
+
+Then normalized entries: `'name' depends on axioms: [propext, Classical.choice, Quot.sound]`.
+
+Also verify the D10AxiomCheck PASS line count.
+dsh: reasoning:
+The card JSON is good. Now let me do the final end-to-end check: re-run the harness gate mirror once more (after all edits — the edits are only to md/json/logs, not .lean, so it should still pass, but let me be safe and quick since files are cached: it took about 2 min). Actually the previous gate run took ~2.5 min. Let me run it once more in background as the final verification, and meanwhile review the md card.
+
+Wait — one concern: the gate mirror I wrote walks the worktree including `longrun/results/*.md` (not .lean) — fine.
+
+Another concern: Does the gate skip `.lake`? In my script yes. The real gate also skips `.lake`, `.git`, `.dshpkg`. Good.
+
+One more important consideration: the real gate runs `lake env lean <file>` where `<file>` is an absolute path (from os.walk with wt). My mirror used absolute paths too. Good.
+
+Another potential issue: when the real gate runs, will `lake env` try to write to `.lake` and conflict with concurrent things? No.
+
+Also, will the real gate's `lake env lean` from the worktree root produce oleans in the *source directories*? No, only stdout.
+
+But hmm, there's one more risk I should double check: the real dispatch gate runs with `capture_output=True` and a 1800s timeout per file. Fine.
+
+Let me now also consider: the previous worker's `DONE` marker exists in the state dir. The dispatch loop will check `card_status` → done, then `compile_gate` → gate.json doesn't exist → run the walk → should be ok → promote. Good.
+
+Additionally, I should consider whether the repair prompt file `prompts/REPAIR_D10-heat-kernel-euclidean.md` exists and whether the queue task is `queued` with repair_count 1. Let me check queue.json for the task status, to make sure my job is to finish and let the dispatcher promote.
+dsh: reasoning:
+The task is "running" with repair_count 1. The dispatcher will re-check when DONE exists and card says TASK_DONE, then run the gate.
+
+Hmm, note: `is_running()` returns False only if DONE exists. The dispatch loop's condition is `done = os.path.exists(state/tid/DONE)` and `t["status"] in ("running","queued")`. status is "running" and DONE exists → it will check card_status and run gate. 
+
+But careful — the DONE file was created at 09:21 by the previous worker (the one that finished). Since status "running" and DONE present, the loop will do the check on each pass. Good.
+
+Now, while the final gate runs, let me review the updated md card fully to make sure it's coherent. Let me read the top part and section 5.
+dsh: reasoning:
+Good. One nuance: the claim "the worktree root had no lean-toolchain... so `lake env lean` from the root exited 1 on every file" — I verified with Basic.lean. All 70 would fail the same way since it's a toolchain resolution error before file processing. That's accurate.
+
+Also I should double-check the D7/D9 comparison claim (mentioned D7-heat-kernel-existence uses root lakefile — yes, verified earlier).
+
+Now, one more thought about robustness: is there anything else in the harness gate that could fail? The gate walks and may pick up `.lean` files that get created later. Currently 70.
+
+Wait — one thing to check: my `cp` of lake-manifest.json to root; is the root `lakefile.toml` name "PoincareRelease" the same as a package name in the manifest? That's fine.
+
+Another consideration: `lake env lean` from the root might update the root `lake-manifest.json` or try to fetch mathlib if the manifest is stale. It didn't. 
+
+Also, is there a risk that running `lake build` from release/ with the root package present changes behavior? No.
+
+Now let's wait for the final gate run and then finish. Let me also double check the last file bytes of the md card (TASK_DONE last line).
+
+Let me also verify the state dir heartbeat — the harness updates it. Fine.
+
+One more important consideration: should I remove the `DONE` marker? No — it signals completion; the dispatcher uses it.
+
+Let me check the final gate job.
+dsh: reasoning:
+Final gate: GATE_OK again. Update the logs with this final run (it's the same content; the log file I saved was from run 2). Let me refresh logs/D10_worktree_root_gate.log and .json with run 3 to be the latest evidence. Actually run 2 and run 3 are identical in outcome. But timestamps in the json differ. Let me overwrite with run3.
+
+Then final verification of the md card tail, and a last overall check of the worktree state.
+
+Also I should double check: the `logs/` dir is a sibling of release in the worktree; gate ignores non-.lean. Fine.
+
+Let me finalize.
+dsh: reasoning:
+Everything is in place:
+- Root lake package files added (lakefile.toml, lean-toolchain, lake-manifest.json, .lake symlink).
+- Full `lake build` exit 0 (8952 jobs).
+- Harness-gate mirror over all 70 .lean files with cwd = worktree root: all exit 0, GATE_OK.
+- 6 authored D10 files unchanged (hashes match original card).
+- Forbidden token scan: 0 matches.
+- Axiom audit: 30/30 only [propext, Classical.choice, Quot.sound].
+- Negative control exit 0 detects sorryAx and native_decide.
+- Result card md + json updated; md ends with TASK_DONE.
+
+One last sanity check: confirm no forbidden tokens were introduced into .lean files (none touched), and that the card JSON is valid (done).
+
+Let me do a final quick check that the D10 .lean hashes match the card values, and list the root files.
+TASK_DONE — `/data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D10-heat-kernel-euclidean/longrun/results/D10-heat-kernel-euclidean.md`

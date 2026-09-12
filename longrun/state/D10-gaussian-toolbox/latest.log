@@ -1,0 +1,868 @@
+dsh: reasoning:
+The gate.json isn't at that path. Let me look around the state dir.
+dsh: reasoning:
+The gate.json doesn't exist at that path. Let me look at prompt.md, latest.log, heartbeat.json for details.
+dsh: reasoning:
+The gate.json is missing. Let me look for it elsewhere, maybe there's a gate script somewhere. Let me search the longrun directory for gate.json files or the harness scripts.
+dsh: reasoning:
+The gate.json doesn't exist for this task. Let me check the queue.json and results to understand what the task is. Also, let me see what the D10 task actually involves. The task id is D10-gaussian-toolbox. Let me look at the worktree input directory and see recent changes (git status). This is a fresh worktree based on a release of the Poincaré project; the D10 task appears to be new work about a "Gaussian toolbox".
+
+Wait — the worktree contains `input`, `release`, etc. But the D10 task probably expects new files to be authored. Let me check git status and recent modifications.
+dsh: reasoning:
+Let me look at the result card for D10-gaussian-toolbox, and figure out what files were authored. The task says "authored files in your worktree". The D10 task likely authored new files. Let me read the result card.
+dsh: reasoning:
+Now I understand. The previous run authored files under `release/Poincare/D10/GaussianToolbox/`. The compile gate failed at attempt 1 — but gate.json is missing. Let me verify whether the D10 files actually exist in the worktree and figure out which ones fail.
+
+Wait — the find earlier for `*.lean` excluding `.lake` returned files starting with `release/...`. I limited output to head -50. Let me check the D10 directory.
+dsh: reasoning:
+Note the `.lake` in the worktree root was modified at 10:36 (recently). Perhaps the gate attempt cleared/relinked packages. The card says `.lake/packages` should be a symlink to `release/.lake/packages`, but now it's a real directory. Let me check whether mathlib is present there.
+
+The gate.json is missing, so I need to determine failures myself. Let me run the gate commands on all files. First check that `lake env lean` works at all.
+
+Let me start by running the D10 files. But first, understand the environment; check whether lake is on PATH.
+dsh: reasoning:
+/tmp/d10logs was cleared (fresh container maybe). Let me try running the gate myself. But first, note that `.lake/build/lib/lean` in worktree root doesn't exist? The earlier listing of the worktree root showed `.lake` with only config and packages. So the symlink `.lake/build` is gone. That means when compiling `release/Poincare/Longrun/...` imports, Lean won't find the oleans unless it falls back to... Hmm.
+
+Actually when running `lake env lean release/Poincare/D10/GaussianToolbox/Basic.lean` from the worktree root, LEAN_PATH includes `.lake/build/lib/lean` of the root package and packages. Import `Poincare.Longrun.Entropy` or whatever dependencies... Let me check what Basic.lean imports.
+
+Actually, wait. The D10 files probably import only Mathlib. Let me check. But the gate is over ALL 68 .lean files in the worktree, excluding .lake. Hmm, in the prior run, the card says "A faithful re-run ... compiled all 68 .lean files of the worktree with exit 0". So all 68 files, including all the release scaffold files. Those need oleans for imports.
+
+But now the .lake at root was recreated at 10:36 (gate attempt 1, presumably by the dispatcher which ran `lake update`/`lake exe cache get`?). Let me check if `.lake/packages/mathlib` has oleans.
+
+Let me just try running the gate on one file to see. First, the D10 files.
+dsh: reasoning:
+So mathlib oleans are missing in `.lake/packages/mathlib/.lake/build/lib/lean`. The prior worktree root `.lake/packages` was a symlink to `release/.lake/packages` which was a symlink to the D6 package cache with prebuilt oleans. Now the dispatcher's gate attempt at 10:36 seems to have re-run `lake` (maybe `lake exe cache get` or a build), which created a fresh `.lake/packages` directory with mathlib source but no oleans (or maybe downloading is in progress?).
+
+Wait, the gate probably ran `lake build` or `lake update`... Anyway, the gate failed with attempt 1. My job is to fix the authored files so that every .lean compiles. But the failure here is environmental: mathlib isn't built. Hmm, but the instruction says the compile gate failed — fix ONLY the authored files in the worktree so every .lean file compiles with `lake env lean`.
+
+The gate.json is missing, which is odd. Perhaps the gate report is written elsewhere. Let me search for recent files modified around 10:37 under the longrun directory.
+
+Actually, before that: the packages directory at root was created at 10:36. Maybe there is a `lake exe cache get` that needs to run, or the D6 cache at `/data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages` still has oleans. Let me check.
+dsh: reasoning:
+The gate attempt at 10:30-10:37: the root `.lake` config was rebuilt — probably the gate ran `lake ...` which regenerated `.lake/packages` as real directories (perhaps `lake update`?). This destroyed the symlinks that the D10 worker created. That's the environmental breakage.
+
+Let me look at the supervisor log and dispatch log to see the gate command and what happened.
+dsh: reasoning:
+The D10-gaussian-toolbox was launched at 08:57 presumably and finished at 09:35 with exit 0, but its gate failed (11 minutes later? no—the repair was queued at 10:37:33). Hmm, the gate presumably ran at ~10:37 and failed. Interesting: the gate for other tasks runs around 5 minutes after launch. The gate attempt for gaussian took maybe a while.
+
+Key: the gate presumably rebuilt `.lake/packages` at the worktree root, wiping the symlink. But wait, the gate is supposed to run `lake env lean` per file, which shouldn't create `.lake/packages`. Unless the gate first runs `lake exe cache get` or `lake build`? Or the gate runs `lake update`?
+
+Actually, look at the `.lake/config` — it has `lakefile.olean` configs for two lakefile hashes (1 and 5). The gate might have run `lake build` on the root package, which resolved dependencies: it created `.lake/packages` as actual directories? Lake normally creates symlinks to package sources in the manifest cache dir (`~/.lake/packages`), not copies. Hmm, but `.lake/packages/mathlib` is a real directory. Let me check if it has a `.lake/build`. It said no. Maybe lake *cloned* mathlib there (since the manifest points to a git rev). Let me look at how the other (verified) worktrees handle this — e.g., D10-bochner-euclidean which passed at 10:25. Let me inspect its root `.lake`.
+
+Actually, the important thing is not to diagnose the harness, but to make the gate pass. The gate runs `lake env lean <file>` for every .lean file in the worktree (excluding .lake). For that to work, the imports need to resolve. The previous D10 worker created symlinks: `.lake/packages` → `release/.lake/packages` and `.lake/build/lib/lean` → `release/.lake/build/lib/lean`. The gate attempt may have run something like `lake build` which replaced those symlinks.
+
+Let me look at another worktree that passed its gate most recently, e.g. D10-bochner-euclidean, and compare the `.lake` layout.
+dsh: reasoning:
+Good — the verified worktrees have `.lake/packages` as a symlink to the poincare-lab cache AND a real `.lake/build` directory. Our worktree's `.lake/packages` is a real directory (created at 10:36) and there's no `.lake/build`. So the gate attempt wiped it. But interestingly, the gate ran in this worktree at 10:37:33? Actually the repair was queued at 10:37:33; the gate may have run at ~10:27 after the worker finished at 09:35... hmm, the timestamps: `.lake` modified 10:36.
+
+Wait: the D10-gaussian worker finished at 09:35 (last_run ended 09:35:23 exit 0). Then the gate attempt ran — probably at ~09:36 or later. The dispatch log shows PROMOTE at 10:25:59 for D10-bochner-euclidean and REPAIR D10-gaussian-toolbox at 10:37:33. The gate likely ran around 10:25-10:35 and produced `.lake` at 10:36... Hmm, and no gate.json was written for this task — maybe because the gate crashed.
+
+Let me look at the gate script to understand what it does. It's in `/data3/guoshaoyang/workdir/lean_poincare/longrun/bin`.
+dsh: reasoning:
+Key insight: `compile_gate` runs `lake env lean <file>` with cwd=worktree. It writes gate.json, then `write_repair_prompt` + `os.remove(gpath)` — so gate.json is deleted when the repair is queued! That's why gate.json doesn't exist. So I can't read the per-file exits. I must reproduce the gate myself.
+
+Now, the crucial environmental issue: the root `.lake/packages` is now a real directory without mathlib oleans, and `.lake/build` is missing. Wait — but how did the gate run? The gate ran `lake env lean` on each file. Lake regenerates `.lake/config` and possibly resolves packages. Note that the original worker's setup had `.lake/packages` → symlink to `release/.lake/packages`. The gate ran `lake env lean` with the root lakefile that `require`s mathlib. Lake saw the manifest and... hmm, `.lake/packages` in Lake is normally a symlink into the manifest's package cache (`~/.lake/packages` or the `packagesDir`). If `lake env` finds a `lakefile.toml` with a require and `.lake/packages/mathlib` exists (as a symlink to a package dir with a valid lakefile), it uses it directly. But if the symlink target didn't match the manifest? Hmm.
+
+Actually, look: `.lake/packages` now contains real dirs (aesop, batteries, ..., mathlib). Perhaps the gate's `lake env lean` triggered lake to *materialize* packages from the manifest into `.lake/packages` by copying/symlinking from a shared cache. Let me check if these are real dirs or symlinks.
+
+Wait earlier `ls -la .lake/packages` showed `drwxrwxr-x` for each — real directories. And their mtimes... mathlib dir mtime? Let me check whether `.lake/packages/mathlib` is a full clone. Also check whether the old symlink target `release/.lake/packages` had mathlib as a real dir with build artifacts (we saw it does: `release/.lake/packages/mathlib/.lake/build/lib/lean/Mathlib`).
+
+So possibility: the gate ran `lake env lean` and lake, seeing root package config invalid (hash mismatch), rebuilt config and re-fetched dependencies from the manifest, replacing the symlink farm with real dirs from some cache — but the mathlib dir fetched has no prebuilt oleans, so nothing compiles.
+
+Hmm wait, but other worktrees have `.lake/packages` symlink to `/data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages`, and their `.lake/build` real dir. That's the layout that works. In our worktree the previous worker chose a different layout: `.lake/packages` → `release/.lake/packages` → `/data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages`. Both should work.
+
+Why did lake replace the symlink? Possibly because the gate ran `lake env lean` and the lakefile.toml at root requires mathlib with `rev = "master"` — lake checks out from `packagesDir` (`~/.lake/packages` by default, i.e., `/data3/guoshaoyang/.lake/packages`?) Hmm. Actually lake's default packages dir is `~/.lake/packages`. But in this environment ELAN_HOME and maybe LAKE_HOME differ.
+
+Actually, Lake (v4.34) stores packages in `.lake/packages` of the *root package*, as symlinks to `~/.lake/packages/<name>` (the shared cache). Wait no: Lake's default `packagesDir` is `~/.lake/packages`, and the root `.lake/packages` contains symlinks into it. Actually I recall in Lake, `lake update` clones dependencies into `~/.lake/packages/<pkg>` and creates symlinks in `.lake/packages/<pkg>`.
+
+Let me check `ls -la .lake/packages` more carefully for symlink vs dir, and check the mathlib dir. Also check `release/.lake/packages` state.
+
+Actually, the environment variable `LAKE_HOME`? Let me check. And check `/data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages/mathlib/.lake/build/lib/lean` — that's the shared cache with oleans. Note the manifest rev is `7974e751bece...` while the "master" rev in lakefile.toml. Hmm, lakefile.toml requires mathlib rev "master", but lake-manifest.json pins the rev. Lake would use the manifest rev.
+
+Let me diagnose: check `ls -la .lake/packages` with inode info, and see if `.lake/packages/mathlib` is a git checkout with the right rev, and if `.lake/packages/mathlib/.lake` exists.
+dsh: reasoning:
+So lake materialized real package checkouts into root `.lake/packages` at 10:36 — these are git clones from the manifest (in `~/.lake/packages` cache probably, or fetched). They have no build artifacts.
+
+The gate attempt probably first ran some build step? No, the gate only runs `lake env lean`. Hmm, but `lake env lean` itself, when the package config is stale, will run `lake` configuration which may fetch dependencies if the manifest requires it. Actually Lake typically does NOT clone on `lake env lean` unless packages are missing. The previous layout had `.lake/packages` as a symlink, so packages existed. Unless... the symlink target `release/.lake/packages` was relative/wrong? `.lake/packages` → absolute path to poincare-lab. Should be fine.
+
+Wait, but actually the previous D10 worker's card said `.lake/packages` is a symlink to `release/.lake/packages` (which is itself a symlink to poincare-lab). The gate ran at ~10:27-10:36 and replaced it. What could trigger that? Maybe the worker's final state didn't match the card (the card was written at 09:35, and it claimed symlinks). Then the gate ran and lake, checking the manifest, found `.lake/packages/mathlib` symlink pointed to a dir whose git rev differs? No, it was the same rev.
+
+Alternatively: the gate command ran from the worktree root, and `lake env lean <f>` where `<f>` is an absolute path with `.lake` excluded... Lake when computing the package config sees the root lakefile.toml requiring mathlib rev "master". The manifest pins rev. Since `.lake/config` had entries (before) probably fine.
+
+Hmm, maybe the actual issue is that the gate ran a *concurrent* `lake` on many worktrees, and the `.lake` dirs got clobbered... Anyway, root cause analysis of the harness isn't needed. What I need: make every .lean file compile with `lake env lean` from the worktree root.
+
+Options:
+1. Restore the symlinks: `.lake/packages` → `/data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages` and `.lake/build/lib/lean` → `release/.lake/build/lib/lean`. This is what other verified worktrees do. But if the gate's `lake env lean` re-materializes `.lake/packages`, the symlink would be replaced again and compilation would fail. Yet other worktrees pass the gate with that layout, so lake must be satisfied with the symlink there. Why did it clobber ours?
+
+Difference: our root lakefile.toml description differs, but that doesn't matter. Hmm, maybe the difference is that the root `lakefile.toml` requires mathlib with `rev = "master"` while the manifest pins a rev. Lake compares the manifest with the lakefile's requirements; if they're inconsistent, it might error or update. For D10-bochner-euclidean, let me check its lakefile.toml and manifest. If identical, then the clobbering reason is something else.
+
+Actually wait — maybe the previous worker's card is inaccurate, and the symlink was never there; `release/.lake/packages` symlink exists (we saw it). But `.lake/packages` at root being a real dir of fresh clones at 10:36... it was created by the gate run. And `.lake/build` doesn't exist. In the other worktrees, `.lake/build` is a real directory containing oleans. Let me check if `.lake/build/lib/lean` in D10-bochner-euclidean is a symlink.
+
+Also — the root cause might be that the previous worker's symlink `.lake/packages` pointed to `release/.lake/packages`, which is a *relative-ish* symlink? No, it's absolute (/data3/.../poincare-lab/.lake/packages). Fine.
+
+Hmm, actually: maybe the gate produced a partial gate.json and the repair prompt deleted it, but before that the gate deleted the whole `.lake`? No, compile_gate doesn't delete.
+
+Actually, maybe the *harness* (not dispatch_loop) runs a preliminary `lake build`/`lake update` before the gate. Something like a "sanitizer" that removes symlinks for security? Look at `.lake/config/1` and `/5` — two config hashes. Let me check whether other worktrees' `.lake/config` was also regenerated recently. In D10-bochner-euclidean, `.lake` dirs are from Sep 9 11:48, but the worktree dir mtime was 09:03. So no regeneration there.
+
+Let me look for the actual gate harness. Maybe there's another script outside longrun, e.g. `/data3/guoshaoyang/workdir/lean_poincare/*.py`. Let me search for "compile_gate" or gate.json writers.
+dsh: reasoning:
+Very useful! D10-bochner-euclidean's root lakefile.toml has a `[[lean_lib]]` clause and the `.lake/build` holds the build. Its `.lake` layout: `build` real dir, `config` real dir, `packages` symlink.
+
+Our worktree's lakefile.toml is different (written by the previous D10-gaussian worker): it lacks the `[[lean_lib]]` and says `.lake/build/lib/lean` symlink to release's. That may be the anomaly.
+
+Let me look at D10-bochner-euclidean's `.lake/build/lib/lean` to see if it contains symlinks or real oleans, and its config. Also check the D10-gaussian `.lake/config/1` and `/5` hashes.
+
+Actually the key question remains: why did the gate clobber `.lake/packages` in our worktree? Maybe because the previous worker's `.lake/packages` symlink pointed to `release/.lake/packages` which itself is a symlink chain; lake may have decided the package was "missing" since `release/.lake/packages/mathlib` has no `.lake/build`? No — the symlink exists as a directory.
+
+Hmm, actually there might be a different reason: `release/.lake/packages` → `/data3/.../poincare-lab/.lake/packages`. But that shared packages dir has mathlib at a *different git rev* than the manifest? If lake checks the manifest's rev against the package's git HEAD, a mismatch would cause lake to fetch. The previous D10 worker's own run evidently succeeded (per card, exit 0 for all 68 files), so the rev must match. Unless the shared cache changed between 09:35 and 10:36 (e.g. a concurrent task ran `lake update` on poincare-lab's packages, moving mathlib to a new rev!). That's plausible: the other worktrees symlink to this shared cache; if some other process updated mathlib there, all symlinked worktrees would suddenly mismatch, and lake would re-clone into `.lake/packages` (real dirs) per the manifest. Hmm, but lake clones to `~/.lake/packages` and symlinks, not real dirs...
+
+Let me check `git -C .lake/packages/mathlib log -1 --format=%H` and the same for the shared cache. And check mtimes are all 10:36 (copy time). Actually all files in the fresh clone are 10:36 — consistent with a fresh checkout at 10:36.
+
+Wait, actually! Look at `.lake/packages/mathlib/.git` — it exists. If Lake "materialized" the package, it may have used `git worktree` or copied from `~/.lake/packages`. Let me check `git rev-parse HEAD` in both.
+
+And importantly: is there a `~/.lake/packages` (i.e., /data/home/guoshaoyang/.lake/packages) with the cache? Let me check.
+
+The practical goal: make the gate pass. The gate runs `lake env lean` on all 68 .lean files. That requires:
+1. mathlib oleans on LEAN_PATH
+2. the scaffold's own oleans (release/Poincare/... imports) on LEAN_PATH
+3. all 68 files elaborated successfully.
+
+Given the gate will run fresh in this same environment (from the root), whatever I set up must survive a `lake env lean` invocation. The other verified worktrees use this layout successfully, so I should replicate it exactly:
+
+- root `lakefile.toml` like D10-bochner-euclidean's (with `[[lean_lib]] name = "Poincare", srcDir = "release", globs`)
+- `.lake/packages` symlink → shared poincare-lab packages
+- `.lake/build/lib/lean` containing (symlinks to) the oleans — i.e., a working build dir.
+
+But our `release/.lake/build/lib/lean` should contain all the D6 oleans plus D10 ones. Let me check whether `.lake/packages/mathlib` at the shared cache has oleans — yes we saw `Mathlib` dir. And the root `.lake/packages` symlink to poincare-lab would then resolve Mathlib imports.
+
+But wait, why is the current fresh `.lake/packages/mathlib` missing `.lake/build`? Because it's a fresh clone without cache. So I could just use the shared cache symlink (as other worktrees do).
+
+However, there's a risk: if `lake env lean` decides the package revs are stale and re-materializes. Let's test empirically after setting up. Let me look at the D10-bochner worktree's lakefile and check whether `lake env lean` there works right now (it was verified at 10:25). That tells me the current state of the shared cache is fine for that layout.
+
+Let me also check the `.lake/config` in D10-bochner-euclidean, and check `git status` of the shared mathlib clone vs manifest rev.
+
+Let me run a test: from D10-bochner-euclidean, `lake env lean` on one of its files.
+dsh: reasoning:
+Interesting: D10-bochner's build lib/lean has the D6 oleans but where are its D10 BochnerToolbox oleans? Let me find its authored dir.
+
+Also note the D10-bochner worktree has no `.lake/build/lib/lean/Poincare/D10/`? The listing shows Audit, D6AuditReport..., Ledger... Let me look. Actually the listed dirs are the D6 ones. Let me find the BochnerToolbox dir name.
+
+Also, where is ~/.lake? Not present. So the fresh clones came from somewhere else — maybe lake uses `packagesDir` relative to something. Anyway.
+
+Let me check the D10-bochner file layout.
+dsh: reasoning:
+Key: "the four worktree-root build-infrastructure files (`lean-toolchain`, `lakefile.toml`, `lake-manifest.json`, `.lake → release/.lake`)". So D10-bochner uses `.lake → release/.lake` (a symlink of the whole `.lake` dir), not individual symlinks! And its lakefile.toml has the `[[lean_lib]]` clause.
+
+But wait: in D10-bochner, `ls -la .lake` showed a real dir with `build`, `config`, `packages → poincare-lab`. Hmm, that contradicts "`.lake → release/.lake`". Unless... `release/.lake` itself is the real thing with those contents. Let me check: is `.lake` a symlink in D10-bochner? The earlier `ls -la .../D10-bochner-euclidean/.lake/` with trailing slash followed the symlink and showed contents: `drwxrwxr-x 4 ... .` — a symlink followed by ls shows the directory. Right! I used `ls -la .../.lake/` with trailing slash, which resolves the symlink. So no info. Let me redo without trailing slash.
+
+Also for our worktree: `ls -la .../D10-gaussian-toolbox/.lake` (no slash earlier: "drwxrwxr-x 4 ... ." it printed `.lake:` header as a directory). Hmm, in my second command I did `ls -la /data3/.../D10-gaussian-toolbox/.lake .../release/.lake` and it showed both as directories. A trailing-slash-less `ls -la` on a symlink shows `lrwxrwxrwx`. It showed `drwxrwxr-x`, so `.lake` in our worktree is a real directory, not a symlink. Let me verify for D10-bochner without trailing slash.
+
+Also, the `find` in D10-bochner build showed `ReleaseAudit.ilean.hash`, `ReleaseCheck.olean` at top-level — this is a real build dir at root `.lake/build/lib/lean`, containing links... wait, "11" link count on files, meaning hard links (cp -al). Ah: the scaffold was created with `cp -al` (hard-link copy), so file link counts are 11.
+
+Let me check D10-bochner's `.lake` without trailing slash.
+dsh: reasoning:
+There it is. In verified worktrees, root `.lake` is a symlink to `release/.lake`. In our worktree, root `.lake` is a real directory that got re-created (by lake at 10:36) because... hmm, why? Because the previous worker had `.lake` as a real dir with sub-symlinks, and during the gate, lake regenerated config/packages. But why would it fail? Possibly because `.lake/packages` symlink → `release/.lake/packages` → shared cache, and `.lake/build` symlink → `release/.lake/build/lib/lean`... wait, the card says `.lake/build/lib/lean` symlink, but `.lake/build` itself may not have existed as a directory. If `.lake/build/lib/lean` was a symlink pointing to release's, and lake needs `.lake/build/lib/lean/.trace` etc., it should be fine.
+
+Actually the crucial detail: the root lakefile.toml in our worktree requires mathlib rev "master" and has no `[[lean_lib]]`. When lake configures the root package, it writes `.lake/config/...`. The config hash depends on lakefile content. Our root lakefile (from the gaussian worker) probably got configured for the first time during the gate — and `lake` decided to materialize packages because the `.lake/packages` symlink layout didn't match what Lake expects for its manifest resolution? Hmm, but other worktrees work.
+
+Hmm, whatever. Actually wait, I bet the reason is different. Let me compare the D10-gaussian root lakefile (no lean_lib, custom description) with D10-bochner's. The gaussian one has `require mathlib rev master`. Both are the same otherwise. The `[[lean_lib]]` matters for `lake build` but not env.
+
+Let me test the hypothesis: the previous worker set `.lake/packages` → `release/.lake/packages`, and `release/.lake/packages` → poincare-lab shared. That's a valid symlink chain. But maybe the previous worker pointed `.lake/packages` to `release/.lake/packages` **relatively**, and a symlink `.lake/packages -> release/.lake/packages` resolves relative to `.lake/`, i.e. `.lake/release/.lake/packages` — nonexistent! Then Lake sees missing packages and re-clones. That's a very plausible bug. But then how did the worker's own gate recheck pass with exit 0 for all 68? Hmm, maybe the worker's checks ran before creating the symlink or with a different arrangement.
+
+OK. The fix is clear regardless: replicate the verified layout:
+1. Remove the bogus real `.lake` dir.
+2. Create symlink `.lake -> release/.lake`.
+3. Ensure `release/.lake/packages` → shared cache (already exists), and `release/.lake/build/lib/lean` has the D6 oleans + our D10 oleans.
+4. Ensure `release/.lake/config` etc. work with root lakefile.toml.
+
+But careful: `release/.lake` is the release package's own build dir; making root `.lake` a symlink to it means root `lake env lean` uses release/.lake/config for the root package config, and root `.lake/build` = release/.lake/build. The D10-bochner worker did exactly this. Since lakefile hashes differ, the config subdirs may differ; lake will add new config dirs (5/ etc. exist). That's fine.
+
+But will `lake env lean` at the root regenerate/overwrite `release/.lake/packages` (which is a symlink to poincare-lab shared)? It survived in D10-bochner for a long time, so yes.
+
+Wait: D10-bochner's `release/.lake/packages` symlink → poincare-lab `.lake/packages` and root `.lake` → `release/.lake`; so root `.lake/packages` = poincare-lab packages, which has mathlib with oleans. Good.
+
+Now: does `release/.lake/packages` exist with oleans in our worktree? We saw: yes, `release/.lake/packages` → `/data3/.../poincare-lab/.lake/packages`, and `release/.lake/packages/mathlib/.lake/build/lib/lean/Mathlib` exists. 
+
+But hmm, there's a subtlety: our root `.lake` real dir was created by lake from the root lakefile, and the fresh packages were checked out at root `.lake/packages`. If I delete root `.lake` and symlink to release/.lake, then `lake env lean` will use release/.lake/config for the root package. Those config dirs 1 and 5 exist (from D6 release config). Fine.
+
+Next: our release/.lake/build/lib/lean must contain:
+- the D6 scaffold oleans (yes, it's the same as D6's release build)
+- the D10 GaussianToolbox oleans (Basic.olean etc.) — the worker's card says they were produced under `release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox/`. But the gate may have deleted/cleaned? Let me check. Actually, the gate runs `lake env lean <file>` without `-o`, so it doesn't need own oleans unless files import each other. Let me check if Basic/Convolution/Multivariate import each other.
+
+Let me check imports of the D10 GaussianToolbox files, and whether their oleans exist. Also, when compiling e.g. `Multivariate.lean` which imports `Poincare.D10.GaussianToolbox.Basic`, Lean needs Basic.olean on LEAN_PATH. If the gate runs files in sorted order, `Basic.lean` might come before `Multivariate.lean` alphabetically (Basic < Convolution < Multivariate < PrintAxioms), so Basic.olean would be needed but `lake env lean Basic.lean` doesn't produce an olean unless -o is passed. Hmm! In the gate, `lake env lean f` without `-o` does NOT write oleans (Lean by default doesn't emit olean unless `-o`? Actually `lean file.lean` does produce nothing; lake env lean just runs lean). So if Multivariate imports Basic, the gate would fail unless a prebuilt Basic.olean exists on the search path. The worker's card says they produced oleans with `-o` under release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox/. If those still exist, fine.
+
+Let me check.
+
+Also check whether the D10 files import other project modules (e.g. Poincare.Longrun...). Let me read them.
+
+Plan:
+1. Read the four D10 files to understand content and imports.
+2. Check oleans exist.
+3. Rebuild the root `.lake` symlink layout.
+4. Run the full gate myself over all 68 files and fix any failures.
+5. Also scan for forbidden tokens in authored files.
+6. Update the result card and JSON.
+
+Let me first read the files.
+dsh: reasoning:
+Interesting — grep for "^import" found nothing because files use `public import` with leading space? No, the head shows `public import Mathlib...` at column 0. grep pattern "^import" doesn't match "public import". Let me grep for "import".
+
+Also: the D10 oleans are gone (release/.lake/build/lib/lean/Poincare/D10 doesn't exist). Hmm, the card said they were created. They may have been deleted by the gate? Or the release build dir was reset. Let me check what's in `release/.lake/build/lib/lean/Poincare/`.
+dsh: reasoning:
+Right. So the D10 GaussianToolbox oleans are missing — the gate's compile of `Convolution.lean` would fail with "unknown module prefix 'Poincare.D10.GaussianToolbox'" unless Basic.olean exists. In the previous run, the worker had built them with `-o`, but something (the gate run? or a cleanup) removed them. Hmm, actually maybe the worker never put them there and the card was aspirational, or the gate's lake invocation with the fresh cloned packages caused lake to clean `release/.lake`? Unlikely.
+
+Anyway, the fix requires: after (or as part of) making the environment work, build the D10 oleans into `release/.lake/build/lib/lean/` so that dependent files (Convolution, Multivariate, PrintAxioms) resolve. But wait — will the gate itself create them? The gate runs `lake env lean <file>` on each file, sorted:
+1. `release/Poincare/D10/GaussianToolbox/Basic.lean`
+2. `release/Poincare/D10/GaussianToolbox/Convolution.lean` — needs Basic.olean
+3. `Multivariate.lean` — needs Basic.olean
+4. `PrintAxioms.lean` — needs all three
+
+Without `-o`, running lean on Basic.lean doesn't create an olean... Actually, does it? `lean foo.lean` with no `-o` does not write an olean. So the gate depends on pre-existing oleans. Therefore I must pre-build the oleans with `-o`, as the previous worker did.
+
+But there's a subtlety: if the gate runs in a fresh container where `.lake` symlink changes are preserved... The worktree persists, so my prebuilt oleans persist. But if the gate runs lake and lake decides to rebuild/reconfigure `release/.lake`, my oleans under release/.lake/build/lib/lean might survive (they're not touched unless cleaned).
+
+Hmm, but there's a risk that the harness, between now and the gate, recreates root `.lake` like it did (if lake decides the root `.lake` symlink is wrong). Let me understand why it happened. Let me look at the fresh clones: are they *copies* or *checkouts*? `.lake/packages/mathlib/.git` exists as a real dir. If Lake had followed the symlink to the shared cache, it wouldn't recreate. The original `.lake` was a real dir (per the worker's card: root `.lake/packages` → symlink...). Actually wait, maybe the worker's `.lake` was a real dir with `packages` symlink and `build` symlink. During the gate, lake ran and saw root lakefile.toml requiring mathlib with a *different* config hash than `.lake/config` (because the worker's `lakefile.toml` was new/edited last at 09:02), so it reconfigured and in doing so re-resolved packages... but a symlinked `.lake/packages` pointing at the right place should still be used.
+
+Hmm — unless `.lake/packages` symlink pointed to `release/.lake/packages` which pointed to poincare-lab, and the release package's manifest there differs... no.
+
+Actually! Here's a thought: `lake env lean` computes the package configuration. For the root package, it needs `lake-manifest.json`. The root manifest exists. Lake's `MaterializedPackage` resolution: if `.lake/packages/mathlib` exists (even as symlink) it uses it. That should work.
+
+Unless the symlink target didn't exist at gate time: `release/.lake/packages` → poincare-lab. Since `release/.lake` is a real dir, and its `packages` symlink exists (we saw it). Hmm, unless the gate deleted `release/.lake/packages`?? No.
+
+Wait, look at the order: the fresh root `.lake/packages` dirs were created 10:36. The `release/.lake/packages` symlink target still exists. Actually, maybe what happened is this: at 10:36, the *harness* (not the gate) ran something like a "worktree sanitize" that removed symlinks (to prevent sandbox escape) and materialized packages. The DSH sandbox note "landlock-run: partial enforcement" suggests commands run under a sandbox. If the sandbox denies writing through symlinks pointing outside the workspace... Hmm, `.lake` was a real dir so fine.
+
+I can't fully determine it. The safest approach: mimic exactly the layout of the verified worktrees (D10-bochner-euclidean), which passed the gate under the same harness hours ago:
+- root `.lake` → `release/.lake` (relative symlink)
+- root `lakefile.toml` = same as theirs
+- `release/.lake/packages` → poincare-lab shared
+- `release/.lake/build/lib/lean` containing D6 oleans + prebuilt D10 oleans.
+
+Also the root `lake-manifest.json` should be a copy of `release/lake-manifest.json`? Let me check theirs vs ours.
+
+Then I'll run the full gate myself.
+
+Additionally, I need to check the actual content compiles: the worker's files may have errors. Since Basic.lean couldn't even resolve Mathlib just now, I haven't seen its errors. Let me first restore the environment, then compile each file with `-o` in dependency order, capturing errors.
+
+Let me look at the verified worktree's lakefile (done) and manifest comparison, then rebuild.
+
+Steps:
+1. Move the bad root `.lake` out of the way (delete it).
+2. `ln -s release/.lake .lake`.
+3. Ensure root lakefile.toml matches the proven one (with lean_lib). Actually careful: `[[lean_lib]] name = "Poincare", srcDir = "release", globs = ["Poincare.+"]` — that's what makes `lake build` able to build the release package; for `lake env lean` it also adds the package's own `lib` dirs to LEAN_PATH. Keeping it identical to the verified worktree is best.
+4. Write root `lake-manifest.json`? Compare.
+
+Let me diff our root files vs D10-bochner's root files.
+dsh: reasoning:
+Both have config dirs 1 and 5 (root lakefile hash and release lakefile hash presumably). Interesting that gaussian's `.lake/config` got regenerated at 10:36 (during gate) even though the layout is a real dir.
+
+Now the difference: gaussian's root lakefile.toml has no `[[lean_lib]]` and a different name. Note the config hash subdirs "1" and "5" correspond to lakefile hashes. In bochner: config/1 and config/5 (from Sep 9 11:48, i.e., inherited from scaffold). In gaussian: same numbers but regenerated 10:36. Hmm, if the hash numbers are the same as bochner's, then the root lakefile of the gaussian worktree produced hash 5 and 1? Wait, bochner's root lakefile differs from gaussian's, so hashes should differ. But both have 1 and 5. Odd. Maybe config dirs are named by something else (e.g. package index/level). Anyway.
+
+Key question: does the gate's lake invocation mutate root `.lake` in a way that breaks the symlink layout? Let me just set up the layout like bochner and run the full gate myself; then check if the layout is intact afterwards. If lake rewrites `.lake` (replacing symlink), then I'd need a different approach. But since bochner passed, the layout should be stable.
+
+Wait, actually there's an important consideration: if root `.lake` → `release/.lake`, then `lake env lean` in the root uses the release package config?? Lake computes the workspace from cwd: it reads root `lakefile.toml` (name PoincareWorktree, requires mathlib, lean_lib Poincare srcDir release). The `.lake` dir is where it puts config/build. Since `.lake` is a symlink to release/.lake, the config/build land there. The root `lean_lib Poincare` with srcDir release means `lake build` builds the release sources. `lake env lean X` uses LEAN_PATH from the root package + dependencies: root package's lib dir = `.lake/build/lib/lean` = release/.lake/build/lib/lean. Plus mathlib's `.lake/build/lib/lean` via packages. 
+
+For our worktree, `release/.lake/build/lib/lean` contains the D6 scaffold oleans, so imports like `Poincare.Longrun.Basic` resolve. Good.
+
+Now, about `lake env lean` and the fresh root `.lake/packages` clones: those were materialized because the root `.lake` was a real dir without valid config for the new lakefile maybe, and lake decided to fetch packages via its package cache. Where is the package cache? Not `~/.lake`. Maybe `LAKE_PACKAGES_DIR`? Not in env. Hmm. Lake's default is `~/.lake/packages`. `/data/home/guoshaoyang/.lake` doesn't exist. But ELAN_HOME is `/data3/.../elan`... Maybe HOME is `/data/home/guoshaoyang`? Let me check `echo $HOME`. Possibly HOME=/data3/guoshaoyang? Then `~/.lake/packages` = /data3/guoshaoyang/.lake/packages. Let me check.
+
+Anyway, let's proceed:
+
+1. `rm -rf .lake` (real dir with fresh clones) — safe? It's build infra, not authored. But careful: is `.lake` under the sandbox workspace? Yes, worktree root is the workspace, so deleting is allowed.
+
+Actually, wait. Should I worry that the gate harness will reject/wipe symlinks? The DSH sandbox gives workspace-write. Symlinks inside workspace are fine.
+
+2. `ln -s release/.lake .lake`.
+3. Update root lakefile.toml to match bochner's.
+4. Verify `lake env lean` on a D6 file compiles (env OK).
+5. Compile the four D10 files in order with `-o` to populate oleans; fix errors.
+6. Run full gate.
+
+But hold on: `release/.lake/build/lib/lean` is shared/writable? It's a real dir in this worktree (not a hardlink? The `cp -al` scaffold hardlinked files with the D6 release — link count 11). Writing new oleans there is fine. However: `release/.lake/packages` is a symlink to the shared poincare-lab packages (read-only shared). Fine.
+
+Another concern: root `lakefile.toml` with `[[lean_lib]] name = "Poincare" srcDir = "release" globs = ["Poincare.+"]` — when lake computes the config, it may want to write `.lake/build/lib/lean/Poincare.olean` etc. Not an issue for env.
+
+Let me also check HOME.
+dsh: reasoning:
+The `release/.lake/build/lib/lean` contains only 61 oleans for the D6 scaffold (top-level modules, no Longrun? Let me check `Poincare/`). Earlier listing showed `Poincare/` with Basic.olean, Longrun, Stage1, Stage6, and count 61 total. So scaffold modules have oleans.
+
+Where did the fresh clones come from? Not a package cache in HOME. Lake may have cloned from the *source* dir of the symlinked package (i.e., it copied `poincare-lab/.lake/packages/mathlib` to root `.lake/packages/mathlib` because the manifest hash/lakefile didn't match). Hmm, whatever.
+
+Actually, here's a likely explanation for the clobbering: the previous worker's root `lakefile.toml` lacked `[[lean_lib]]`. When `lake env lean` runs, lake needs to load the workspace. The root package's `lakefile.toml` "requires mathlib rev master", and lake compares the manifest to the requirements. Because the *root lakefile.toml* was modified at 09:02 (after the scaffold), the config was stale (`.lake/config` had no entry for the new hash, or the old entry `1`/`5` corresponded). Lake then re-resolved: it found `.lake/packages/mathlib` pointing (through 2 symlinks) to a directory that is NOT under its expected packages dir, so it may have decided to re-materialize. Hmm, but bochner's identical setup (symlink chain) works...
+
+Difference: bochner's `release/.lake/packages` → poincare-lab; root `.lake` → release/.lake. So root `.lake/packages` resolves to poincare-lab packages — a *single* symlink hop from root `.lake`. In gaussian's layout, root `.lake/packages` was itself a symlink → release/.lake/packages → poincare-lab. Two hops. Lake may check `isSymlink`/realpath consistency? Hmm.
+
+Actually, more likely: lake's `lakefile.toml` at root declares `require mathlib rev="master"`. The *manifest* is `lake-manifest.json`. Lake compares manifest entries to the requires: for a `git` require, if the manifest entry's `rev` differs from the lakefile's `rev`, Lake errors or re-fetches, requiring a `lake update`. In the manifest, mathlib's `rev` is the pinned SHA, while lakefile says `rev = "master"`. Lake compares the *inputRev* field in the manifest. Let me check the manifest package entry for `inputRev`. In the D6-era manifests, entries have `"rev"`, `"inputRev"`, etc. Let me check. If `inputRev` is "master" it matches.
+
+OK, I'll stop theorizing. Practical approach: reproduce the bochner layout and verify by running the gate. If lake clobbers it again, I'll investigate further with the actual error output.
+
+Let me start. First, establish the correct layout:
+
+```
+cd worktree
+rm -rf .lake
+ln -s release/.lake .lake
+```
+
+But `release/.lake/packages` currently is a symlink to `/data3/.../poincare-lab/.lake/packages` — good. `release/.lake/build/lib/lean` has D6 oleans. Good.
+
+Then update root lakefile.toml to bochner's version.
+
+Then test `lake env lean release/Poincare/Basic.lean` (a scaffold file) to confirm LEAN_PATH works.
+
+Actually careful: `lake env lean <file>` where the file is inside the root package. Lake computes LEAN_PATH including root's build lib. Should work.
+
+Let me do it.
+dsh: reasoning:
+Now update the root lakefile.toml to match the verified one (with lean_lib). Let me read the current one with line numbers, then write the proven version.
+dsh: reasoning:
+The environment works now. Next, compile the D10 files in order with `-o` to populate oleans, and catch errors. Let me first check the D10 files' content for anything obviously wrong, but better to just compile.
+
+Note: when compiling with `lake env lean`, LEAN_PATH includes `.lake/build/lib/lean`, so `-o release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox/Basic.olean` will work.
+
+Let me create the output dir and compile Basic first.
+dsh: reasoning:
+Basic.lean compiles. Now Convolution and Multivariate (depend on Basic), then PrintAxioms.
+dsh: reasoning:
+All four D10 files compile cleanly, and the axiom output is as the card claims.
+
+So the gate failure was purely environmental (the `.lake` layout). But wait — will the gate pass now? The gate runs `lake env lean <file>` for all 68 .lean files, including scaffold files in `negcontrol/` (which intentionally contain sorry — but those still compile, just with warnings; sorry doesn't cause non-zero exit). And the gate does not pass `-o`, but I prebuilt the D10 oleans, so dependent files resolve.
+
+Important: the gate walks the worktree with `os.walk`, skipping `.lake` dirs — including root `.lake` which is now a symlink. Does `os.walk` follow symlinks? By default `os.walk(followlinks=False)`, so it will NOT descend into the `.lake` symlink. Good. It also skips `release/.lake` by name. 
+
+Now let me run the full gate myself, exactly as `compile_gate` does: `os.walk` (followlinks=False), skip `.lake`, `.git`, `.dshpkg` dirs, all `*.lean`, sorted, `lake env lean <abs path>` with cwd=worktree, ELAN_HOME set and PATH prepended. Note: it passes the **absolute** path `f` to lean. Let me replicate exactly with a Python script and capture outputs. This is the authoritative check.
+
+68 files, each may take ~10-60s. Some (D6LedgerProbe etc.) take a while. This could take a long time — the prior gate took ~10 min? Let's run it in the background, writing per-file logs. Actually let me first quickly run the non-D10 files in parallel? No — the gate is sequential. But I should replicate it faithfully. Timeout is 1800s per file in the harness.
+
+Actually, my goal: all files exit 0. Let's run the exact gate script in background. Given the environment, mathlib oleans exist, so most files should compile quickly (imports from oleans). Files that import project modules need project oleans — present (61 oleans). But do all 68 files' imports resolve? Some files import PdeApi/GeometryApi probe modules etc. Those oleans exist. Fine.
+
+One risk: `release/Poincare/D10/GaussianToolbox/PrintAxioms.lean` requires the D10 oleans, which I just built. Good.
+
+Another risk: the gate might run `lake env lean` which triggers lake config rebuild and clobbers things (as happened). Let's see. My test runs just now didn't clobber. The gate runs from cwd=worktree with ENV from dispatch: ELAN_HOME set, PATH includes elan/bin. Same as my shell effectively.
+
+Let me write the gate replication script to /tmp (writable?) — earlier /tmp/d10logs didn't exist but /tmp should be writable. Let me put logs in the worktree's `longrun/logs/`? That would add files but they're not .lean so they don't affect the gate. Actually the prior worker put logs in `longrun/logs/`. Hmm, worktree already has a `logs/` dir at root. I'll use `/tmp/d10gate`. Let me check /tmp writability.
+
+Actually the harness said "Some platform temporary areas may also be writable." /tmp/d10logs didn't exist, but that doesn't mean /tmp isn't writable. Let me test.
+
+I'll run the full gate in the background and meanwhile inspect the D10 files for honesty (forbidden tokens) and check the JSON card.
+
+Let me first check for forbidden tokens with the provided scanner (input/d5-tools/scan_forbidden.py) and grep.
+dsh: reasoning:
+The forbidden token scan on the authored files: the "matches" are only docstring/comment mentions and `#print axioms` commands, which are fine (the scanner presumably has heuristics). Let me run the provided scanner to be sure. Also let me now launch the full gate replication in the background.
+
+Let me write the gate script and run it in background.
+dsh: reasoning:
+While the gate runs, let me inspect the authored files for mathematical honesty and check the result JSON card, then update the card as needed.
+
+Let me read the JSON card and the four Lean files. Start with Basic.lean.
+dsh: reasoning:
+Basic.lean is honest and compiles. Note line 86: `integrable_rpow_mul_exp_neg_mul_sq` — check that the `s := (n : ℝ)` with proof `0 ≤ n` — fine.
+
+Wait — one concern about `integral_moment_succ` for n=0? It's fine.
+
+Now, let's check the gate job progress. Meanwhile read the other files. Let me check Convolution.
+dsh: reasoning:
+Convolution.lean looks fine. One honesty check: line 44, the statement uses h : a + b ≠ 0 but the identity `-(a t²) + -(b (x-t)²) = -((a+b)(t - bx/(a+b))²) + -((ab/(a+b))x²)` requires `a+b ≠ 0` only, yes.
+
+Now let me check the gate progress.
+dsh: reasoning:
+Only 1 done so far, 0.8s each — should be fast. Let me read Multivariate and PrintAxioms while waiting.
+dsh: reasoning:
+Multivariate.lean looks honest. Note `integral_gaussianVec_eq_pi_rpow` — rpow with `π ^ ((n:ℝ)/2)`. Fine.
+
+Now check the gate progress again.
+dsh: reasoning:
+Progress: 23/68, all ok so far. This takes about 1-4s per file plus startup. Let me wait more. Meanwhile, read PrintAxioms.lean and the JSON card.
+dsh: reasoning:
+All good — 36 `#print axioms` lines.
+
+Now, the card claims 36 declarations. Count: definitions 7 + scaling/moments 12 (lines 37-49: integral_gaussianKernel, _of_pos, integrable, tendsto_atTop, tendsto_atBot, hasDerivAt, integral_moment_succ, zero, two, four, six, integral_gaussianDensity, integral_gaussianDensity_mul_sq = 13) — let me count: lines 37,38,39,40,41,42,43,44,45,46,47,48,49 = 13. Convolution 53-57 = 5. Multivariate 61-71 = 11. Total = 7+13+5+11 = 36. Good.
+
+Now let me update the JSON card status. First read it. Also let me check the JSON's verification section.
+dsh: reasoning:
+The JSON is complete. I need to update the verification data with my re-run results (new logs), and add a note about the repair. Also the `.worktree` path uses `/data/home/...` while actual is `/data3/...` — a symlink? Let me check: `/data/home/guoshaoyang/workdir/...` vs `/data3/guoshaoyang/workdir/...`. They may be the same filesystem via different mount paths. `ls /data/home/guoshaoyang/workdir/lean_poincare` — let me check. The task prompt says worktree is /data3/..., so I'll update to /data3 path.
+
+Let me check the gate job status.
+dsh: reasoning:
+/data/home/... exists as a separate path? It says `drwxrwxr-x 15 guoshaoyang guoshaoyang 4096 Sep 8 19:51` — same date as /data3/.../lean_poincare (Sep 8 19:51). It might be a bind mount of the same directory, or a symlink? `ls -ld` shows 'd', so a real dir (bind mount likely). Either path works. I'll keep the card's existing paths but can note both. Actually to be safe and accurate, I'll use the /data3 path in updated fields (the actual worktree per the prompt), mentioning the alias.
+
+Gate is at 24/68 after ~3 minutes. Some files take longer (e.g., D6LedgerProbe, Probe modules). Let me wait. While waiting, let me run the forbidden-token scanner now, and prepare the card updates.
+
+Let me run scan_forbidden.py.
+dsh: reasoning:
+Scanner passes: 0 hard matches, 0 soft.
+
+Now let's wait for the gate. Meanwhile, I should consider whether the harness's own gate run will again destroy the `.lake` symlink. Last time the failure occurred with the previous worker's layout (real `.lake` dir + symlinks inside). Now it matches the verified worktree layout exactly, which has passed repeatedly. But let me think about *why* root `.lake` was a real dir at gate time and whether something in the harness recreates it.
+
+Possibility: the previous worker's final state had `.lake` as a **real directory** (as we found at 10:36). If the worker's own tests passed, maybe the worker created the real `.lake` at the very end, after its checks. The card's §3.5 table says `.lake/packages` is a symlink to `release/.lake/packages` and `.lake/build/lib/lean` is a symlink to `release/.lake/build/lib/lean`. So the worker set up a real `.lake` dir with those two symlinks — but never verified `lake env lean` afterwards? The card claims the full-tree gate recheck passed with exit 0 for all files... which would have required the setup to work. Hmm, but the full-tree recheck may have been run before the final restructuring.
+
+Also why would lake replace `.lake/packages` symlink with real clones? Here's a plausible mechanism: `lake env lean` resolves the workspace; if `.lake/packages/mathlib` symlink points to `release/.lake/packages/mathlib` which points to the shared cache — the shared cache mathlib has a `.lake/build` with oleans. But wait: for lake, the root package's *manifest* says mathlib is at rev X. Lake checks the package at `.lake/packages/mathlib`; it materializes packages using its own `packagesDir`. If the symlink is "dangling" in lake's view (e.g., because it checks `Dir.isDir` on the path with `followSymlinks` false?), it re-clones. Anyway, bochner's layout is one symlink level at root `.lake`, and the packages symlink lives *inside* `release/.lake` (owned by release package), which lake doesn't manage for the root workspace's manifest. Actually when root `.lake` → release/.lake, lake still wants `.lake/packages/mathlib`... and it finds a symlink there → shared cache. It worked for bochner.
+
+Wait, but here's a critical difference: in bochner's worktree, is the mathlib olean cache present in the shared poincare-lab packages? Yes. And lake doesn't try to re-clone? It apparently didn't (their gate passed and their `.lake/packages` is still a symlink dated Sep 9 11:48). Good.
+
+But our worktree's `.lake/packages` at release level: also symlink, dated Sep 9 11:48. And now root `.lake` → release/.lake. My test compiles worked and the symlink survived. Let me verify after the full gate: check `ls -ld .lake release/.lake/packages`.
+
+Now, another thing to consider: the harness gate might run `lake env lean` on files *concurrently* (from multiple tasks) — not relevant.
+
+The main risk: something outside my control re-materializes `.lake`. I can't prevent that, but matching the proven layout is the best bet.
+
+Additional safety: Instead of relying on prebuilt oleans in `release/.lake/build/lib/lean` (which the gate doesn't rebuild), I could make the D10 files not depend on each other's oleans... but the imports are inherent to the structure (Convolution imports Basic). A more robust approach: make each file import the others via source? Lean cannot import source without olean. Alternatively, I could inline everything into one file... but that changes the structure significantly. The gate needs checkable files; the prebuilt oleans approach is what the verified D10-bochner worktree does too? Let me check: D10-bochner's `release/.lake/build/lib/lean/Poincare/D10/BochnerEuclidean/*.olean` must exist for its gate. Let me check.
+
+Actually yes — D10-bochner's gate passed at 10:25, and its files import each other (Basic → Bochner → Corollary; Axioms imports all). Its oleans must be present in `release/.lake/build/lib/lean/Poincare/D10/BochnerEuclidean/`. Let me verify. That confirms the approach is accepted.
+
+Let me also double check that the gate's `os.walk` will include `.lake` symlink? `os.walk(wt)` with followlinks=False: it lists `.lake` in dirnames but doesn't descend (since it's a symlink to a dir, with followlinks=False it's not descended... actually os.walk classifies symlinks-to-dirs in dirnames but doesn't recurse unless followlinks=True). Then `dirnames[:] = [d for d in dirnames if d not in (".lake",...)]` removes it anyway. Good. And `release/.lake` is removed by name too. Also release/.lake/packages symlink → not followed.
+
+One more consideration: the gate uploads `f` as an absolute path (`os.path.join(dirpath, fn)` where dirpath starts with `wt` = the path used by dispatch_loop, which is `/data3/.../worktrees/D10-gaussian-toolbox`). Fine.
+
+Let me check the gate progress and bochner oleans.
+dsh: reasoning:
+Confirmed: the bochner worktree has prebuilt oleans for its authored files at the same location. My approach matches.
+
+The gate is at 26/68. It's slow-ish (~4s/file for the middle ones). Let me use the wait productively: prepare the result card update.
+
+I need to:
+1. Update `longrun/results/D10-gaussian-toolbox.md` with a repair section documenting:
+   - The gate failure was caused by the worktree-root `.lake` layout (real dir with nested symlinks instead of `.lake → release/.lake`).
+   - The fix: restored the root workspace to the proven layout, added `[[lean_lib]]` to root lakefile.toml, rebuilt D10 oleans.
+   - New verification evidence: refreshed gate re-run results.
+2. Update the JSON with the re-run data, new paths (logs in the worktree, not /tmp).
+3. Keep TASK_DONE at the end.
+
+Where should logs live? The card references /tmp/d10logs which no longer exists. I should copy the gate logs into the worktree so evidence is durable: e.g. `longrun/logs/D10-gaussian-toolbox/`. There's a `longrun/logs/` dir in the worktree? Earlier listing of the worktree root showed a `logs/` dir (Sep 9 12:06) — that's the D6 build logs. The result card's §3.3 etc. reference `longrun/logs/D10-*`. Let me check if `longrun/logs` exists in this worktree.
+
+Actually the worktree root listing showed `logs` (D6 logs). There's `longrun/results`. Let me create `longrun/logs/D10-gaussian-toolbox/` and copy: gate_results.json, gate_stdout.log, per-file logs, PrintAxioms output, scan output.
+
+Let me check what's in longrun dir: DELIVERY.md, queue.updated.json, results/. No logs subdir. I'll create `longrun/logs/D10-gaussian-toolbox/`.
+
+Now — an important question: does adding non-Lean files matter for the gate? No.
+
+Let me also verify the authored file hashes in the card (sha256) since I need to make sure no authored file was modified. I haven't modified any .lean files. Let me compute the hashes and compare with the card. If they match, great; I should keep the card's file table as is.
+
+Let me compute now.
+dsh: reasoning:
+Hashes match the card exactly. The mathematical content is untouched and correct — the gate failure was environmental.
+
+Wait, the card's line counts: Basic 249, Convolution 121, Multivariate 166, PrintAxioms 71. Match. Total 607 lines (card says 249+121+166+71 = 607; table doesn't state total but fine).
+
+Now let me check on the gate job. In the meantime, let me plan the card edit.
+
+Card changes:
+- Header: add a "re-verified after gate repair" timestamp/verdict line.
+- §3.1: The compile table stays valid. Add oleans rebuilt note.
+- §3.4/§3.5: update to describe the root workspace layout fix, and that the gate replica now passes (I'll insert the actual count once done).
+- §4 honest boundary: keep.
+- Add a new section "§6 Gate-repair record (attempt 1)" describing the environmental issue and fix, with exact commands.
+
+I should be careful to describe the cause accurately: at gate time, the worktree-root `.lake` was a real directory whose `packages`/`build` sub-symlinks did not resolve (or were not honored), so `lake env lean` could not find `Mathlib` and every file failed with "unknown module prefix 'Mathlib'". Fix: removed the real `.lake`, created `.lake → release/.lake` (the layout used by every promoted worktree), restored the root `lakefile.toml` to the proven wrapper form (with the `[[lean_lib]]` clause), and rebuilt the three D10 oleans under `release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox/` so that `Convolution.lean`, `Multivariate.lean` and `PrintAxioms.lean` resolve `Poincare.D10.GaussianToolbox.Basic` on the gate's per-file invocation (the gate passes no `-o`).
+
+Hmm — one subtlety: the environment I found at repair time: root `.lake` real dir with freshly-cloned-but-unbuilt packages, and `.lake/build` absent. That's the state the gate left behind (or the state the previous worker left). The direct failure I reproduced: unknown module prefix 'Mathlib'. I'll describe it factually without over-claiming the cause.
+
+Now let me check the gate.
+dsh: reasoning:
+63/68, no failures so far. The remaining 5 are probably the D10 GaussianToolbox ones (sorted: release/Poincare/D10/... comes before Longrun) — wait, sorted order: `release/Poincare/D10/GaussianToolbox/*` comes early (after Audit, maybe). Let me check whether the D10 files have been checked: grep for GaussianToolbox in the ok lines. Also the D6 top-level files (D6AuditReport, D6LedgerProbe, ReleaseAudit, ReleaseCheck, ReleaseClaims) come after Poincare/... in sort order? Paths: `release/D6AuditReport.lean` < `release/Poincare/...` < `release/ReleaseAudit.lean`? "R" > "P", so Release* files come last. Let me look.
+dsh: reasoning:
+All 4 D10 files passed the gate replica. 63 done; 5 remaining are `release/Probe/PdeApi.lean`, `release/ReleaseAudit.lean`, `release/ReleaseClaims.lean`, `release/D6AuditReport.lean`, `release/D6LedgerProbe.lean` (probably). Let me wait for completion.
+
+Note that the gate ran the D10 files in sorted order right after `Audit/*` and before `Ledger/*`, so Convolution could use the prebuilt Basic.olean. Good.
+
+Let me wait for completion.
+dsh: reasoning:
+The gate replica passed: GATE_OK, 68/68 files exit 0, 0 failures.
+
+Wait, the last command's `[exit code: 1]` is from `grep -c "^FAIL"` returning 1 when count is 0 (grep exits 1 on no matches). Fine.
+
+Now let me:
+1. Check that `.lake` symlink and `release/.lake/packages` survived the full gate run.
+2. Copy evidence logs into the worktree (`longrun/logs/D10-gaussian-toolbox/`).
+3. Update the result card MD and JSON.
+4. Re-verify the final state: run `lake env lean` on the four authored files once more (quick), scan forbidden.
+
+Let me check the layout integrity first.
+dsh: reasoning:
+The layout survived, and interestingly `lake env lean` also produced `.ir`, `.olean.private`, `.olean.server` files (server artifacts from `#print axioms`? Actually from lake env lean with server info). Anyway.
+
+Now the environment is stable and the gate passes. Let me copy the evidence logs into the worktree and update the cards.
+
+Evidence to persist:
+- `/tmp/d10gate/gate_stdout.log` (68-file run, GATE_OK)
+- `/tmp/d10gate/gate_results.json` (per-file exit codes)
+- per-file logs (68 files, in /tmp/d10gate/*.log) — that's ~68 small files; maybe include only D10 ones plus a combined summary. The card references per-file logs previously. I'll copy all into `longrun/logs/D10-gaussian-toolbox/gate/` (they're small).
+- PrintAxioms output: /tmp/d10gate/release__Poincare__D10__GaussianToolbox__PrintAxioms.lean.log
+- forbidden scan output: rerun and save to a file.
+- The fix commands (lakefile.toml diff, symlink).
+
+Let me create the logs dir and copy.
+
+Also, I should record a "repair replay" script for reproducibility: `longrun/logs/D10-gaussian-toolbox/repair_replay.sh` documenting the environment fix + gate command. That mirrors what other worktrees did (`gate_repair_replay.py` in D9 worktrees).
+
+Let me now think about whether any additional runtime hardening is warranted. One risk: the harness gate's `lake env lean` might run when `release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox/*.olean` are missing (e.g., if the harness re-clones or cleans). I cannot control that. But I could make the D10 files self-contained enough that each compiles without prebuilt D10 oleans? That would require eliminating cross-imports:
+- Basic: only Mathlib. Fine.
+- Convolution: imports Basic (needs Basic.olean).
+- Multivariate: imports Basic.
+- PrintAxioms: imports all three.
+
+Alternative: merge Basic+Convolution+Multivariate into a single file? That would lose the modular structure and change all hashes/cards. Not warranted; the gate passes and matches the accepted layout of other promoted tasks.
+
+Actually, wait. There's a subtle risk: the gate **deletes nothing**, and per-file `lake env lean` (without `-o`) does not overwrite the D10 oleans. So they persist. Good.
+
+Another risk: `release/.lake/build/lib/lean` files were hardlinked (link count 11) to the D6 release. My new D10 oleans are new files, fine.
+
+Now, about the harness queue: after my repair, the dispatcher will re-run `compile_gate` and write a fresh gate.json, then promote if ok. Since the symlink `.lake` persists, it should pass.
+
+However, one thing to double check: the dispatcher's `compile_gate` uses `os.walk(wt)` where `wt` is `/data3/.../worktrees/D10-gaussian-toolbox` (from QUEUE → WORK = longrun/worktrees). It runs with `ENV` where ELAN_HOME is set (already in env) and PATH prepended. My replica did exactly this. Good.
+
+Now let me copy evidence and update the card.
+
+First, let me create the log dir and copy files.
+dsh: reasoning:
+Now write the repair replay script documenting the fix and the gate command. Then update the MD card and JSON.
+
+Repair replay script: `longrun/logs/D10-gaussian-toolbox/gate_repair_replay.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Exact repair applied to the D10-gaussian-toolbox worktree after compile-gate attempt 1.
+set -euo pipefail
+WT=/data3/.../D10-gaussian-toolbox
+cd "$WT"
+
+# 1. Root workspace must be the same wrapper used by every promoted worktree:
+#    .lake -> release/.lake  (not a real directory with nested symlinks).
+rm -rf .lake
+ln -s release/.lake .lake
+
+# 2. Root lakefile.toml must expose the release package as a lean_lib so that
+#    `lake env lean` from the worktree root puts release's prebuilt oleans and
+#    the mathlib oleans on LEAN_PATH.
+cat > lakefile.toml <<'EOF'
+...
+EOF
+
+# 3. The gate compiles each file with `lake env lean <file>` and no `-o`, so the
+#    D10 modules that import each other need prebuilt oleans on LEAN_PATH.
+mkdir -p release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox
+lake env lean -o ... Basic.olean Basic.lean
+... etc
+```
+
+But careful: with `set -e`, `grep -c` etc. Fine.
+
+I'll write the script and make it executable. It's documentation.
+
+Now the card. I need to update the MD file. Let me plan the exact edits:
+
+1. Line 7-8 header: update `Generated` and `Verdict` to mention the gate-repair re-verification. E.g.:
+
+```
+- **Generated:** `2026-09-10T01:25:06Z`; **gate-repaired and re-verified:** `2026-09-10T10:5x:xx+08:00`
+- **Verdict:** **TASK_DONE — ...** (unchanged math; §6 records the compile-gate repair)
+```
+
+2. §3.1 table: add the actual current verification. The table already says exit 0. I could add the fresh evidence path.
+
+3. §3.4: replace the reference to `/tmp/d10logs/gate_results.txt` with the persisted `longrun/logs/D10-gaussian-toolbox/gate/gate_results.json` and note the re-run timestamp.
+
+4. §3.5: update the root-level lake workspace table (it currently says `.lake/packages` symlink etc.) to reflect the actual final layout: `.lake → release/.lake`. This is the key fix.
+
+5. Add §6 "Compile-gate repair record".
+
+6. Keep the last line `TASK_DONE — card: ...`.
+
+Let me get the current time for the record. Use `date -Is`.
+
+Also I need to double check the JSON: update `verification.compile`, `verification.gate_recheck`, `verification.forbidden_scan` paths, and add `verification.gate_repair`. Also update `.worktree` to `/data3/...`? The card MD line 5 says `/data/home/...`. Both paths exist (bind mount). I'll update to /data3 path for accuracy with the task prompt. Actually, changing might conflict with the "program's" conventions; the D10-bochner card also uses /data/home. Both are valid paths to the same tree (let me verify: `stat -c %i` on the dir via both paths). Let me check inode identity.
+
+Let me check and then edit.
+dsh: reasoning:
+Same inode — same directory, two mount paths. Good; I'll note that.
+
+Hmm wait, current time is 10:44:47? But the gate took ~5 min and started ~10:39... Actually the earlier `date` implied 10:39. The gate ran from 10:39 to ~10:44. Yes.
+
+Now write the repair replay script.
+dsh: reasoning:
+Now update the result card MD. Let me make targeted edits.
+
+First, the header lines 7-8. Then §3.4, §3.5, and add §6.
+
+Let me re-read relevant portions to craft exact edits. I have the full file content from earlier.
+
+Edit 1: lines 6-11 (metadata/verdict).
+
+Current:
+```
+- **Generated:** `2026-09-10T01:25:06Z`
+- **Verdict:** **TASK_DONE — the Gaussian toolbox is kernel-checked and unconditional**
+  (1D scaling law, exact moments for `n = 0,1,2,3`, convolution of two Gaussians with added
+  variances, `n`-dimensional Fubini factorisation and total mass `1`), with every reported
+  declaration depending only on `[propext, Classical.choice, Quot.sound]`.
+```
+
+New:
+```
+- **Generated:** `2026-09-10T01:25:06Z`; **compile-gate repair + full re-verification:**
+  `2026-09-10T10:44:47+08:00` (§6)
+- **Verdict:** **TASK_DONE — the Gaussian toolbox is kernel-checked and unconditional**
+  (1D scaling law, exact moments for `n = 0,1,2,3`, convolution of two Gaussians with added
+  variances, `n`-dimensional Fubini factorisation and total mass `1`), with every reported
+  declaration depending only on `[propext, Classical.choice, Quot.sound]`.  The mathematics is
+  unchanged by the repair: the four authored sources are byte-identical to the originally
+  generated ones (sha256 in §1); what was repaired is the worktree-root Lake workspace (§6).
+```
+
+Edit 2: §3.1 add note. Current text after table:
+```
+Oleans for the imported modules were also produced (`-o`, exit 0):
+`Basic.olean`, `Convolution.olean`, `Multivariate.olean` under
+`release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox/`.
+```
+Add: "rebuilt during the gate repair (§6); the gate itself invokes `lake env lean` without `-o`, so these prebuilt oleans are what lets `Convolution.lean`, `Multivariate.lean` and `PrintAxioms.lean` resolve `Poincare.D10.GaussianToolbox.Basic`."
+
+Edit 3: §3.2 log reference: `/tmp/d10logs/axioms1.log` no longer exists in this container. Update to persisted copy `longrun/logs/D10-gaussian-toolbox/gate/release__Poincare__D10__GaussianToolbox__PrintAxioms.lean.log`.
+
+Edit 4: §3.3 scan: reference persisted output.
+
+Edit 5: §3.4: update to the new gate re-run: 68 files, exit 0, 0 failures, log persisted; mention the replica script.
+
+Edit 6: §3.5: update the root-level lake workspace table to reflect the final repaired layout.
+
+Edit 7: Add §6 compile-gate repair record before the final line.
+
+Edit 8: Reproduction section: update the rehearsal to include repair commands and note the `.lake` symlink requirement.
+
+Let me do these edits one at a time.
+dsh: reasoning:
+Now edit §3.3 (forbidden scan) and §3.4 (full-tree gate recheck) and §3.5 (scaffold integrity).
+
+Current §3.3:
+```
+### 3.3 Forbidden-token scan
+
+```
+python3 input/d5-tools/scan_forbidden.py release/Poincare/D10/GaussianToolbox
+exit 0 — 4 Lean files scanned, hard matches 0, soft matches 0
+```
+```
+
+I'll add the persisted log path.
+
+Current §3.4:
+```
+### 3.4 Full-tree gate recheck
+
+A faithful re-run of the dispatcher's compile gate (`find` traversal excluding `.lake`, sorted,
+`lake env lean <file>` with `cwd` = the worktree root) compiled **all 68 `.lean` files of the
+worktree with exit 0 and 0 failures** — the 64 scaffold files plus the 4 authored files:
+`release/Poincare/D10/GaussianToolbox/{Basic,Convolution,Multivariate,PrintAxioms}.lean` all
+exit `0`.  Per-file exits are recorded in `longrun/results/D10-gaussian-toolbox.json` under
+`verification.gate_recheck`, and the raw log is `/tmp/d10logs/gate_results.txt`.
+```
+
+Replace with updated evidence.
+
+Current §3.5:
+```
+### 3.5 Scaffold integrity
+
+`diff -r --exclude=.lake` against the D6 weekly release shows **no modified scaffold file**;
+the only new path under `release/` is `release/Poincare/D10/`.  The root-level Lake workspace
+below is build infrastructure only (no declarations, no mathematical content):
+
+| root path | content |
+|---|---|
+| `lean-toolchain` | copy of `release/lean-toolchain` |
+| `lake-manifest.json` | copy of `release/lake-manifest.json` |
+| `lakefile.toml` | minimal root package that `require`s mathlib |
+| `.lake/packages` | symlink to `release/.lake/packages` (read-only mathlib cache) |
+| `.lake/build/lib/lean` | symlink to `release/.lake/build/lib/lean` (D6 + D10 oleans) |
+| `release/.lake/packages` | symlink to the D6 package cache |
+```
+
+Update the table's last three rows to the repaired layout.
+
+Let me do these edits.
+dsh: reasoning:
+Now update §4 honest boundary (the last bullet mentions "The compile gate also elaborates the scaffold's negcontrol/NegativeControl.lean..." and "16 MB of D6 .olean artifacts ... copied from the D6 cache so that the scaffold modules resolve at the worktree root; release/.lake/packages is a read-only symlink to the D6 package cache. No scaffold source was edited." — that's still accurate. Fine.
+
+Now the Reproduction section (§5) and add §6. Let me read the current tail of the file.
+dsh: reasoning:
+Now update the JSON card. Let me read the relevant portions and modify:
+- Add `gate_repair` section under `verification`.
+- Update `verification.gate_recheck` with the new run (files_checked 68, failures [], all_exit_zero true, log path, per_file from the new run).
+- Update `verification.print_axioms.log` to the persisted path.
+- Update `verification.forbidden_scan` with output path.
+- Update `generated_at`? No — add `reverified_at`.
+
+Let me write a Python script to do this robustly (preserve key order mostly; json.dump with indent). Actually the file is 18KB; rewriting it with json.dump is fine as long as content is preserved. But care: the dict order might change if I use json.dump? Python dicts preserve insertion order; loading and dumping keeps order, with my new keys appended. The existing formatting (indent) may differ from original. Let me check the original indentation.
+
+Let me look at a snippet of the JSON file to see formatting.
+dsh: reasoning:
+Formatting is 1-space indent. I'll load, update, and dump with `indent=1` to match.
+
+Updates:
+1. `reverified_at`: "2026-09-10T10:44:47+08:00"
+2. `verdict`: keep, maybe append " (gate-repaired; math unchanged)".
+3. `worktree`: keep as /data/home path (it's a valid alias; add `worktree_alias` maybe). Actually simpler: keep.
+4. `verification.print_axioms.log` → persisted path.
+5. `verification.forbidden_scan.log` → persisted path (new key).
+6. `verification.gate_recheck`: replace per_file with the new run's per-file entries (relative path form to match: I have absolute paths; convert to `./`-relative). Update `log`, add `replica_script`, `checked_at` and `seconds`.
+7. Add `verification.gate_repair`: description of symptoms/fix/files touched/hashes unchanged.
+
+Let me write this with a Python script. I'll read the new gate_results.json for per-file data and produce relative paths.
+dsh: reasoning:
+Now verify the JSON is valid and check the card tail. Also let me double check the MD card ends with TASK_DONE. Then do a final end-to-end verification:
+
+1. `lake env lean` on all four authored files (quick, with exit codes).
+2. Confirm `.lake` symlink intact.
+3. Confirm forbidden scan.
+4. Maybe run the full gate once more? It passed already; no authored file changed since. The only changes were non-Lean files (md/json/logs/script). Adding non-Lean files doesn't affect the gate. I could run a quick re-check of just the 4 D10 files to be safe.
+
+Also — important! The dispatcher will run its own gate and may take ~5 minutes. Before that, my final answer must be TASK_DONE.
+
+One more consideration: The dispatcher's compile_gate writes gate.json if not exists. Then card_status reads the card tail and checks for TASK_DONE in last 400 chars. My card ends with TASK_DONE in the last line — good.
+
+Also, the `DONE` file exists in state dir (written by the worker loop), fine.
+
+Let me validate the JSON keys and re-read the card tail.
+dsh: reasoning:
+Now a final independent verification pass: run the 4 authored files with `lake env lean` (fresh, no `-o`) and print exit codes, plus check the `.lake` layout, plus verify no forbidden tokens in the .lean files.
+
+Also, let me double check the MD card for consistency (e.g., the §3.1 table and the statement "Oleans ... exit 0"). Let me re-read the updated card fully to make sure the edits didn't create inconsistencies. Also make sure there's no stale reference to `/tmp/d10logs`.
+
+Let me grep for `/tmp/` in the card.
+dsh: reasoning:
+All four authored files compile with exit 0 with a fresh `lake env lean` (no -o), proving the prebuilt oleans resolve.
+
+The `/tmp/d10gate/…` reference in the card is intentional (mentions the repair-time run); it's fine but /tmp is ephemeral. The persisted copy is referenced. Maybe reword to avoid confusion, but it's okay as it explicitly says "identical to the repair-time run". Actually, since /tmp/d10gate may vanish, let me simplify that line to avoid implying necessary evidence lives in /tmp. Let me edit it slightly.
+
+Also, line 5 uses `/data/home/...` — the same directory via bind mount (same inode). I'll add a parenthetical noting the alias. Let me update the worktree line to mention both.
+
+Let me view lines 1-20 of the updated card to make precise edits.
+dsh: reasoning:
+Now let me do a final review of the whole card to make sure it's coherent. Let me read the full updated MD (287 lines). I'll read it in two parts.
+dsh: reasoning:
+The card is coherent. One inaccuracy: §3.1 says the table's commands are from the worktree root and exit 0 — true. §3.5 says "diff -r --exclude=.lake against the D6 weekly release shows no modified scaffold file" — I haven't re-verified that, but nothing changed in the scaffold. Fine.
+
+One more: §3.4 says "the 64 scaffold files plus the 4 authored files" — 68 total. Correct.
+
+Now let me consider: is there anything else in the worktree that the gate checks? Only `.lean` files. The gate's os.walk will pick up 68 files (verified). But wait: my added files are `.sh`, `.py`, `.json`, `.log`, `.md` — no `.lean` files added. Good.
+
+But hold on: `longrun/logs/D10-gaussian-toolbox/gate/` contains per-file `.lean.log` files — they end in `.log`, not `.lean`, so no issue.
+
+Now, one potential issue: the gate will re-run and could clobber `.lake` again. Let me think about what could have caused the original clobbering more concretely, to assess residual risk.
+
+Recall the state at 10:36: root `.lake` was a real dir with:
+- `config/1`, `config/5` newly written
+- `packages/` newly cloned real dirs
+- no `build`
+
+This is exactly what Lake does when it runs `lake update`/`lake build` in a *fresh* package directory — i.e., when `.lake` was **empty or absent**. So maybe the previous worker's final state had root `.lake` deleted or absent, and the gate's `lake env lean` recreated it by resolving dependencies (cloning packages from the manifest). The card claimed symlinks existed, but the worker may have created them relative (broken) or the worker's cleanup removed `.lake`.
+
+Actually, look at the mtime of the worktree root: Sep 10 10:35 — something touched the root dir at 10:35 (probably creation/deletion of `.lake`). The gate ran around 10:27-10:36. Hmm.
+
+Whatever the cause, the current layout matches the proven one and lake didn't clobber it during 68 invocations. Residual risk is low.
+
+Let me double-check the root `lakefile.toml` is byte-identical to bochner's (the card claims it).
+dsh: reasoning:
+All three root wrapper files are byte-identical to the promoted D10-bochner-euclidean worktree.
+
+Now, before finalizing, let me run the actual dispatcher gate code itself (import dispatch_loop's compile_gate function) to be 100% faithful? That would write gate.json into the state dir, which the dispatcher expects (it checks `if os.path.exists(gate): return json.load(...)`). Hmm — if I write a gate.json, then when the dispatcher runs, it will use *my* gate.json instead of running its own! That would be... actually it would be a legitimate gate run, but I shouldn't write into the state dir (it's outside the workspace, and it'd be me writing the gate verdict). Better not to. The dispatcher deletes gate.json when queueing the repair; it will produce its own.
+
+Actually wait: would writing gate.json even be possible? The state dir is at `/data3/.../longrun/state/...` which is outside the workspace root (my workspace is the worktree). The file sandbox may deny it. And ethically, I shouldn't self-certify the gate. The replica run is enough evidence.
+
+Now let me also think about the "one checked toy theorem" requirement: "if a statement is unprovable with current mathlib, convert it to an explicit hypothesis or a clearly named statement-only Prop and keep at least one checked toy theorem." Not needed — everything is proved (no statement-only Props). Good.
+
+Let me do a final full review of the diff of what I changed in the worktree:
+- `lakefile.toml` (build infra)
+- `.lake` symlink (build infra)
+- rebuilt oleans under `release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox/` (build artifacts)
+- `longrun/results/D10-gaussian-toolbox.md` (card)
+- `longrun/results/D10-gaussian-toolbox.json` (card)
+- `longrun/logs/D10-gaussian-toolbox/*` (new evidence files)
+
+No authored .lean touching. 
+
+Wait — one thing: there's a `logs/` directory at the worktree root with D6 logs. The previous worker's card mentioned `/tmp/d10logs` — gone. I put logs under `longrun/logs/`, fine.
+
+Let me double check that the JSON verdict update didn't introduce an overly long line or invalid characters. Also verify the card's §6 numbers: "the 64 scaffold files plus the 4 authored files" — the gate found 68 .lean files; scaffold = 64. Correct (61 oleans + ... doesn't matter).
+
+Another check: I should ensure `release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox` olean set includes what the gate needs. The gate ran Convolution/Multivariate/PrintAxioms successfully without -o, so yes.
+
+Now, one more robustness improvement: the root `.lake` symlink is relative (`release/.lake`), which resolves correctly regardless of mount path (thanks to same inode). Good.
+
+Finally, let me re-run the forbidden-token grep one more time on the four authored files to be sure (already done via scanner: 0 hard, 0 soft). And check that no `.lean` file in the worktree was modified by me: I can compare mtimes — the four D10 files have mtimes Sep 10 09:15-09:23, unchanged. Good.
+
+Let me also update the JSON's `verification.compile.authored_all_exit_zero` remains true — yes.
+
+Finally, let me verify the gate job's final JSON has 68 entries and read a summary. Done earlier.
+
+One open question: should I also remove the now-unused `/tmp/d10gate` artifacts? They're in /tmp, not the worktree; harmless.
+
+Also should I update the state dir's `latest.log`? No — that's the harness's own log.
+
+I think the work is done. Let me do a final sanity check of the complete card's beginning-to-end structure (section headers), then finish with TASK_DONE.
+
+Actually, wait. Let me reconsider whether the dispatcher's gate will definitely pass. There's one more potential difference between my replica and the real gate: the real gate runs with `cwd=wt` where `wt = os.path.join(WORK, task_id)` and `WORK = os.path.join(ROOT, "worktrees")` with `ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))` = `/data3/.../longrun`. So `wt = /data3/.../longrun/worktrees/D10-gaussian-toolbox`. Exactly what I used. ENV from the dispatcher process: ELAN_HOME set, PATH prefixed. My replica did the same. The only difference: dispatcher's env may have additional/lacking vars — irrelevant.
+
+Also the `timeout=1800` per file. Fine.
+
+One more: the dispatcher's gate will write `gate.json` into state dir; the process has permission. Fine.
+
+Let me also double check there isn't a second `.lake`-related hazard: the gate's `os.walk(wt)` with `followlinks=False` will list the root `.lake` symlink in `dirnames` at depth 0 and prune it by name. Good.
+
+Let me do a last check that `.lake` is a symlink and not accidentally replaced after my final compiles, and print a concise summary of the evidence.
+dsh: reasoning:
+Everything is in place:
+- Root `.lake` → `release/.lake` symlink intact.
+- D10 oleans present.
+- Authored .lean files untouched (same hashes, same mtimes).
+- Gate replica: 68/68 exit 0.
+- Cards updated, ending with TASK_DONE.
+
+One last thought about the JSON: `verification.gate_recheck.all_exit_zero` true and `failures` empty. The `verification.gate_repair.authored_files_modified` empty list. Good.
+
+Let me verify the card ends with TASK_DONE (last line, within last 400 chars) and the JSON parses. Also verify the MD last line exactly.
+
+Then finish. Actually, hold on — I should double check whether the worker_loop might require committing to git — there's no git repo in the worktree (git not a repository), so no.
+
+Also, the `DONE` file exists in state dir from the previous run. Fine.
+
+One more consideration: the harness's gate walk includes `release/Poincare/D10/GaussianToolbox/PrintAxioms.lean`, which imports Convolution/Multivariate. Its compile requires the oleans. Present.
+
+Everything checks out. Let me do the final tail check and then answer with TASK_DONE and the card path.
+dsh: reasoning:
+Everything is complete. Let me summarize the work for the final answer.
+
+Summary:
+- gate.json was absent (dispatcher deletes it when queuing the repair). Reproduced the gate failure by hand.
+- Root cause: worktree-root `.lake` was a real directory whose package checkouts had no build artifacts → `lake env lean` failed with "unknown module prefix 'Mathlib'" on every file. The authored Lean sources were fine.
+- Fix (no authored file changed):
+  1. `.lake` → `release/.lake` symlink (layout of every promoted worktree).
+  2. Root `lakefile.toml` restored to the proven wrapper (with `[[lean_lib]] Poincare`, srcDir release); now byte-identical to the promoted D10-bochner-euclidean wrapper files.
+  3. Rebuilt the three D10 oleans needed because the gate runs `lake env lean` without `-o`.
+- Verified: faithful replica of `dispatch_loop.compile_gate` over all 68 .lean files → 68/68 exit 0, GATE_OK; four authored files exit 0 with fresh `lake env lean`; `#print axioms` → 36 declarations, all `[propext, Classical.choice, Quot.sound]`; forbidden scan 0 hard/0 soft.
+- Updated the result card MD + JSON; evidence persisted in worktree.
+
+Last line: TASK_DONE with card path.
+## Summary
+
+The compile gate failed for environmental reasons, not because of the authored Lean. The `gate.json` referenced by the prompt had already been deleted by the dispatcher (it removes it when queuing a repair), so I reproduced the gate myself.
+
+**Root cause.** The worktree-root `.lake` had become a real directory containing fresh package checkouts with no build artifacts, so the first import failed for *every* file:
+
+```
+release/Poincare/D10/GaussianToolbox/Basic.lean:6:0: error: unknown module prefix 'Mathlib'
+[exit 1]
+```
+
+**Fix (only build infrastructure; no authored `.lean` touched):**
+1. Replaced root `.lake` with the symlink `.lake → release/.lake` — the layout used by every already-promoted worktree.
+2. Restored root `lakefile.toml` to the proven wrapper form (`[[lean_lib]] Poincare`, `srcDir = release`); it is now byte-identical to `D10-bochner-euclidean`'s wrapper (`lakefile.toml`, `lake-manifest.json`, `lean-toolchain` all diff clean).
+3. Rebuilt `Basic/Convolution/Multivariate.olean` under `release/.lake/build/lib/lean/Poincare/D10/GaussianToolbox/`, because the gate runs `lake env lean` without `-o` and three authored files import `Basic`.
+
+**Verification.**
+- Faithful replica of `dispatch_loop.compile_gate` over the whole tree: **68/68 `.lean` files exit 0, 0 failures (`GATE_OK`)**; a fresh `lake env lean` run of all four authored files also exits 0.
+- `PrintAxioms.lean`: 36 declarations, all depending only on `[propext, Classical.choice, Quot.sound]`; no `sorryAx`.
+- Forbidden-token scan: 4 files, **0 hard / 0 soft matches**.
+- The four authored sources are byte-identical to the originals (sha256 unchanged), so all mathematics stands exactly as verified.
+- Evidence persisted in `longrun/logs/D10-gaussian-toolbox/` (`gate/run_gate.py`, `gate/gate_results.json`, `gate/gate_stdout.log`, per-file logs, `gate_repair_replay.sh`, `forbidden_scan.json`); result card (`longrun/results/D10-gaussian-toolbox.md`) and companion JSON updated with the repair record.
+
+TASK_DONE — card: `longrun/results/D10-gaussian-toolbox.md`

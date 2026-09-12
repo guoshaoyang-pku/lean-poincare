@@ -1,0 +1,324 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree, reading the checkpoint.json, the existing files, and the D11 HeatKernelBridge source.
+dsh: reasoning:
+The checkpoint.json is not in the worktree root apparently (exit code 1 from cat). Let me look at the longrun directory and find checkpoint.json.
+dsh: reasoning:
+There's no checkpoint.json yet in the worktree — this is a fresh D12 task. Let me read the D11 result card and the D11 source, plus the LONG_PLAN.json, to understand what's being asked.
+
+Let me check for checkpoint.json more carefully and read the key files.
+dsh: reasoning:
+Now I understand the D11 work. The D12 task is:
+
+- Repair the D7 initial-condition domain, not the heat equation.
+- D11's `HeatKernelBridge` initialCondition: "all continuous functions on noncompact Euclidean space is overstrong".
+- Define a versioned admissible-test-function interface (continuous compact support or an explicitly suitable integrable class).
+- Prove the D11 Euclidean core inhabits it for every dimension.
+- Prove precisely scoped compatibility for compact finite-measure settings.
+- Do not assume FullInitialCondition in positive dimension.
+- Do not replace genuine Laplacians by arbitrary operators.
+- Keep legacy definitions unchanged until downstream compatibility is proved.
+- If feasible formalize an explicit fast-growing counterexample to the old condition; label the informal obstruction separately until then.
+
+So the task: build a versioned interface (e.g. `HeatDomain`) for admissible test functions — continuous compact support class `Cc(X)` — and prove:
+1. The D11 Euclidean core (`flatHeatKernelCore n`) inhabits this interface for every dimension n (i.e., weak initial condition holds for continuous compactly-supported test functions — already proved in D11 as `flatKernel_tendsto_integral_of_hasCompactSupport`).
+2. Compatibility: for compact finite-measure settings, continuous compact support == continuous (bounded?) etc. Actually "precisely scoped compatibility for compact finite-measure settings" — i.e., on a compact space with finite measure, the FullInitialCondition (all continuous functions) is equivalent to the versioned admissible-class condition, because every continuous function on a compact space has compact support (if the space is compact) and is integrable (bounded + finite measure). So the legacy D7 field is compatible with the new interface in compact finite-measure settings.
+3. Formalize a fast-growing counterexample to the old condition: e.g. `f y = exp (‖y‖^3)` — prove that for n ≥ 1, `y ↦ gaussianKernel n t (x - y) * f y` is not integrable for t > 0, so the Bochner integral is 0 while f x ≠ 0; hence the literal D7 `initialCondition` (FullInitialCondition) is not satisfied by the flat kernel in positive dimension.
+
+That's the core. The formalization of the counterexample would be a great deliverable: prove `¬ FullInitialCondition (flatHeatKernelCore n)` for n ≥ 1.
+
+Let me now read the D11 sources to understand the exact definitions, especially `Basic.lean`, `InitialCondition.lean`, `EuclideanInstance.lean`. Also check the D7 interface.
+
+Let me also check LONG_PLAN.json and the tools directory.
+
+Let me look at the D11 files.
+dsh: reasoning:
+Let me read the D7 HeatKernel Basic.lean (the interface), the D11 InitialCondition.lean, and the LONG_PLAN.json to see what dependencies are expected.
+dsh: reasoning:
+Now I understand the structure. The D12 task:
+
+1. **Repair the D7 initial-condition domain**: define a versioned admissible-test-function interface — e.g. `HeatDomain` — with an admissible test-function class (continuous compact support, `Cc`, or an explicitly suitable integrable class).
+2. **Prove the D11 Euclidean core inhabits it for every dimension**: `flatHeatKernelCore n` satisfies the versioned initial condition for all admissible test functions.
+3. **Prove precisely scoped compatibility for compact finite-measure settings**: on compact X with finite measure (e.g. `IsFiniteMeasure`), the versioned condition (Cc test functions) is equivalent to / implies the legacy `FullInitialCondition` — actually in compact settings, every continuous function has compact support and is integrable, so Full ⇔ Weak ⇔ Cc-version.
+4. **Do not assume FullInitialCondition in positive dimension**: so no axiom of that.
+5. **Formalize an explicit fast-growing counterexample** to the old condition: `f y = exp (‖y‖^3)` (or similar); prove for n ≥ 1 that the integral `∫ y, flatKernel n x y t * f y` is not well-defined / not integrable for t > 0, so `¬ FullInitialCondition (flatHeatKernelCore n)`.
+
+Let me now read the D11 InitialCondition.lean to see what lemmas exist (particularly about integrability and the weak condition), and the EuclideanInstance.lean. Also LONG_PLAN.json for context.
+dsh: reasoning:
+The D11 weak initial condition already covers continuous compactly-supported test functions via `flatKernel_tendsto_integral_of_hasCompactSupport`. The D12 task now is:
+
+1. **Define a versioned admissible-test-function interface** — e.g. `HeatDomain.AdmissibleTestFunction` / `TestFunction` structure — with the admissible class being continuous compact support (`HasCompactSupport`), or more generally `Continuous f ∧ Integrable f volume`.
+
+2. **Prove the D11 Euclidean core inhabits it for every dimension** — i.e. the versioned initial condition holds for the flat kernel: for every admissible test function, `∫ y, flatKernel n x y t * f y → f x`. Already essentially proved (flatKernel_tendsto_integral_of_hasCompactSupport), but we need to package it in the new versioned interface with an instance `flatHeatKernelCoreAdmissible n`.
+
+3. **Prove precisely scoped compatibility for compact finite-measure settings** — on a compact space X with finite measure (or with `IsFiniteMeasure` + bounded continuous functions are integrable), the legacy `FullInitialCondition` (all continuous) is implied by the versioned admissible condition (compact support / integrable). Because: if X is compact (with the right regularity — e.g. `[CompactSpace X]` plus `T2Space` and locally compact? Actually `Continuous.integrable_of_hasCompactSupport` needs `LocallyCompactSpace`? Let me recall: mathlib has `Continuous.integrable_of_hasCompactSupport (h : HasCompactSupport f)` under `[SecondCountableTopologyEither X E]`? Something like that) then every continuous f has compact support (compact closure of the whole space) and is integrable when the measure is finite (bounded + finite measure).
+
+Key mathlib facts:
+- `hasCompactSupport_of_compactSpace`? There's `hasCompactSupport_iff_eventuallyEq`... For a compact space: `HasCompactSupport f` iff `tsupport f` is compact — `hasCompactSupport_iff_tsupport`? There's a lemma `HasCompactSupport` meaning `IsCompact (tsupport f)`. If `[CompactSpace X]` then `IsCompact Set.univ`, and `tsupport f ⊆ Set.univ`, so closed subset of compact is compact: `IsCompact.isClosed_subset`? Actually `tsupport` is closed, `IsCompact.of_isClosed_subset isCompact_univ isClosed_tsupport subset_univ`. There's likely a lemma `hasCompactSupport_iff_of_compactSpace`? Not sure. We can prove it directly.
+
+- Bounded continuous function integrable under finite measure: `Continuous.bounded` on compact space (`isCompact_range`), then `integrable_of_bounded`? Actually the standard lemma: `hf.integrable_of_hasCompactSupport` plus finite measure on the support? Let me recall the mathlib lemma names:
+  - `Continuous.integrable_of_hasCompactSupport : Continuous f → HasCompactSupport f → Integrable f μ` (needs `[SecondCountableTopologyEither X E]`? Actually needs `[OpensMeasurableSpace X]` and second countable...). In D11 they used `hf.integrable_of_hasCompactSupport hfs` successfully for `EuclideanSpace ℝ (Fin n) → ℝ`.
+  - `ContinuousOn.integrableOn_compact` / `Continuous.integrableOn_Icc` etc.
+  - `integrable_const` for finite measure: `integrable_const_iff (μ := μ) (x := c)`... For bounded functions: `Integrable.of_bound`? There's `MeasureTheory.Memℒp`, and `Integrable.mono'`... The cleanest: `hf.integrable_of_hasCompactSupport (hasCompactSupport_of_isCompact_subset isCompact_univ ...)`, i.e. reduce to compact support. For finite measure, on the compact support the function is bounded (continuous on compact), and finite measure on compact set... Hmm, `Continuous.integrable_of_hasCompactSupport` requires `IsFiniteMeasureOnCompacts μ`? Let me check the actual mathlib signature. In mathlib, `Continuous.integrable_of_hasCompactSupport` has hypothesis `[IsFiniteMeasureOnCompacts μ]` (I believe). For the compact-space compatibility we want `IsFiniteMeasure μ`. Note `IsFiniteMeasure μ → IsFiniteMeasureOnCompacts μ` holds trivially (since every compact set has finite measure). So with `IsFiniteMeasure` we're fine.
+
+Actually, in D11 they used `hf.integrable_of_hasCompactSupport hfs` for Euclidean space — EuclideanSpace is `LocallyCompactSpace`, and volume is `IsFiniteMeasureOnCompacts`. Good.
+
+4. **Counterexample**: formalize a fast-growing continuous f on ℝⁿ (n ≥ 1) such that `¬ Integrable (fun y => flatKernel n x y t * f y) volume` for `0 < t`, and `f x ≠ 0` (e.g. f = exp(‖y‖³), f 0 = 1). Then `FullInitialCondition` fails: since the integral `∫ y, kernel x y t * f y` is 0 for all t > 0 (Bochner integral of non-integrable function is 0 by `integral_undef`), we get `0 → 1` which is false. So `¬ (flatHeatKernelCore n).FullInitialCondition` for n ≥ 1.
+
+This is the "explicit fast-growing counterexample to the old condition". The informal obstruction is then formally proved.
+
+The counterexample proof needs: for `n ≥ 1` (in fact n ≥ 1; for n = 0 the space is a point so it doesn't work), `f y = Real.exp (‖y‖ ^ 3)`. Need to show for `0 < t`: `¬ Integrable (fun y => flatKernel n x y t * f y) volume`, i.e. `¬ Integrable (fun y => gaussianKernel n t (x - y) * exp (‖y‖³)) volume`.
+
+Approach: lower bound. `gaussianKernel n t z = (4πt)^(-n/2) exp(-‖z‖²/(4t)) ≥ c_t` on some set... Actually a standard argument: on the annulus region where the Gaussian is not too small and ‖y‖ large, the product grows. Simpler: show `∫ exp(‖y‖³ - ‖x-y‖²/(4t)) dy = ∞`. 
+
+Alternative cleaner approach: use the fact that on ℝ (n = 1), `∫ exp(y³ - (x-y)²/(4t)) dy = ∞` since y³ dominates (x-y)². Hmm, but formalizing divergence in higher dimension via slicing (Fubini) is more work.
+
+Another approach for a cleaner counterexample: use f with even faster growth, like `f y = exp (2 * ‖y‖ ^ 2 / t + ‖y‖)`... but f must be *continuous*, and any growth rate is fine. Actually, maybe the cleanest: choose f so that the product `K * f` is bounded below by a non-integrable function. E.g. for n = 1: `f y = exp (y ^ 4)`? The Gaussian decay exp(-(x-y)²/(4t)) times exp(y⁴): y⁴ - (x-y)²/(4t) → +∞ as |y| → ∞, so the integrand itself → ∞... For integrability we need the integral to be +∞. If integrand ≥ 1 outside a compact set, then integral = ∞ (since it's nonnegative and ≥ 1 a.e. outside compact set means integral ≥ measure of complement of compact = ∞).
+
+That's the cleanest: find `R` such that for `‖y‖ ≥ R`: `exp(‖y‖³ - ‖x - y‖² / (4t)) ≥ 1`, i.e. `‖y‖³ ≥ ‖x - y‖² / (4t)`. Since `‖x - y‖ ≤ ‖x‖ + ‖y‖` and ‖y‖³ grows faster than quadratic, for ‖y‖ ≥ R the inequality holds. Then on `{‖y‖ ≥ R}` the integrand is ≥ `(4πt)^(-n/2)` — a positive constant. The measure of `{‖y‖ ≥ R}` in ℝⁿ (n ≥ 1) is infinite (measure of complement of bounded set — a standard fact: `measure_ball` finite, but whole space infinite... need `volume_ne_top`? Hmm. The measure of the complement of a ball: volume (ball 0 R) = ωₙ Rⁿ < ∞ (mathlib has `measure_ball`? There's `measure_ball_pos`... Actually mathlib has `MeasureTheory.measure_ball` formulas for EuclideanSpace: `measure_ball_pos`, and finiteness `measure_ball_lt_top`? Let me think: mathlib has `MeasureTheory.measure_ball_lt_top`? I recall `MeasureTheory.measure_ball_ne_top`? Hmm — there is `measure_ball_ne_top` under `[NormedSpace ℝ E]`? Not sure. There's `MeasureTheory.measure_ball_pos` and also `Real.volume_Ioo`... 
+
+The infinite measure of the complement: `volume (ball 0 R)ᶜ = ∞` requires volume of whole space = ∞. For `EuclideanSpace ℝ (Fin n)` with n ≥ 1, the volume of the whole space is ∞: `MeasureTheory.volume_ne_top`? Hmm, is there a lemma `not_isFiniteMeasure_volume` / `volume_univ` = ∞? There's `MeasureTheory.measure_univ_pos`... Let me think about mathlib facts:
+
+- `EuclideanSpace.volume` = product measure of n copies of Lebesgue: `volume_pi_eq_dirac`? Actually mathlib has `volume_eq_prod`... There's `MeasureTheory.volume_preserving_measurableEquiv`... For the counterexample, an easier route: work with n = 1 specifically and use known mathlib facts about intervals: `volume (Set.Ici R)` is infinite: `MeasureTheory.volume_Ici`? There's `Real.volume_Ici = ∞`? mathlib has `MeasureTheory.volume_Iio`, `volume_Ioi`, `volume_Ici`... Let me recall: `MeasureTheory.volume_Ioo`, `volume_Ioc`, `volume_Icc` (finite), and for infinite intervals `volume_Ici`? I believe mathlib has `MeasureTheory.volume_Ioi = ∞`, `volume_Ici = ∞` (`Real.volume_Ici` maybe via `volume_Ici` with `Set.Ici`). In recent mathlib there is `MeasureTheory.volume_Ioi : volume (Set.Ioi a) = ∞`? I'm fairly confident `volume_Ici` exists: `theorem volume_Ici (a : ℝ) : volume (Set.Ici a) = ∞`. Yes — in `Mathlib/MeasureTheory/Measure/Lebesgue/Basic.lean` there are `volume_Iio`, `volume_Ioi`, `volume_Ici`, `volume_Iic`.
+
+So the cleanest counterexample might be in dimension 1 (n = 1): `f y = exp (y ^ 4)` (or `exp (y³ * |y|)` = exp(y⁴) — even powers keep continuity and positivity simpler). Let me pick `f y = Real.exp (y ^ 4)`. Then for n = 1, x = 0, t = 1: integrand `gaussianKernel 1 1 (-y) * exp (y⁴)` — need ≥ constant on Ici R for some R.
+
+Actually to make the algebra trivial: choose f so that the product is ≥ 1 on a set of infinite measure. Consider `f y = exp(y²/(4t) + y²)`? Hmm, let's see: with n = 1, t = 1: kernel = (4π)^(-1/2) * exp(-(x-y)²/4). Choose x = 0, t = 1: kernel = c * exp(-y²/4). Take f y = exp(y²/4). Then product = c, constant — integrable? No, the constant function is NOT integrable on ℝ! `∫ c = ∞`. That's even cleaner: the product `K * f` is constant `c > 0`, and a positive constant is not integrable on ℝ (infinite measure). 
+
+So: `f y = exp (y² / 4)`... wait but we also need `f` to grow faster than every Gaussian? No — we just need `¬ FullInitialCondition`. The full condition requires convergence to f x for EVERY continuous f, including this one. With f y = exp(y²/4), x = 0, t = 1: integrand = (4π)^(-1/2) * exp(-y²/4) * exp(y²/4) = (4π)^(-1/2). Not integrable on ℝ (constant nonzero function on infinite-measure space). So `∫ y, flatKernel 1 0 y t * f y = 0` for all t > 0 by integral_undef. Then the claimed limit as t → 0⁺ is 0, but f 0 = exp 0 = 1. Contradiction. 
+
+This is clean but wait — the FullInitialCondition quantifies over all t and the Tendsto. To show ¬Full, we need: for some x, f, the Tendsto fails. The function `t ↦ ∫ y, ...` is identically 0 on `𝓝[>] 0` (all t > 0), so the Tendsto to `f x = 1` fails since `0 ≠ 1` and Tendsto of a constant function: `tendsto_const_nhds` gives limit 0; uniqueness of limits (`tendsto_nhds_unique` with hausdorff) gives 0 = 1, contradiction.
+
+To show the function is identically 0 for t > 0: `integral_undef` — the Bochner integral of a non-integrable function is 0. Need `¬ Integrable (fun y => flatKernel 1 0 y t * exp (y²/4)) volume` for all 0 < t.
+
+For general t > 0: flatKernel 1 0 y t = (4πt)^(-1/2) exp(-y²/(4t)) (for t > 0; n=1: dim/2 = 1/2, so rpow with t > 0 fine, (4πt)^(-1/2) = (4πt)^(-(1:ℝ)/2)... note n = 1 gives dim = (1:ℝ), exponent -(dim/2) = -1/2. (4πt)^(-1/2) > 0.)
+
+Take f y = exp (y² / (4t₀)) for a FIXED t₀... but f must not depend on t (it's fixed upfront), and we want ¬Integrable for ALL t > 0? Actually we just need ONE t where the integral is undefined → then the function `t ↦ ∫` is not the "converging" one... Wait, actually careful: for the Tendsto statement to fail, we need the limit to be something ≠ f x. The function `F t = ∫ y, flatKernel 1 0 y t * f y` — for t > 0 where the integrand is not integrable, F t = 0. If for SOME t the integrand is integrable, F could be anything there, but the limit as t → 0⁺ only depends on a punctured neighborhood... Actually a Tendsto means: for all neighborhoods of f x, eventually the F t values are inside. If F t = 0 for all t in `(0, ε)` for some ε > 0, then the limit would have to be 0 (since the function is eventually constantly 0). To force that, we need ¬Integrable for all t in some interval (0, ε). 
+
+Simplest: make f y = exp(y²) — even faster than needed for ALL t ≤ 1. Let's check: integrand for t ≤ 1... hmm, we need the integrand non-integrable for all t in (0, ε). With f y = exp(y²/(4t₀))... Let me choose f y = exp (y² / 4) and restrict t... For t ≤ 1, the integrand = (4πt)^(-1/2) * exp(-y²/(4t) + y²/4). Exponent: y²(1/4 - 1/(4t)) = y² * (t - 1)/(4t) ≤ 0 for t ≤ 1. So integrand ≤ ... hmm that gives integrand ≤ constant, which doesn't show non-integrability (that would show integrability!). 
+
+Wrong direction. I need the integrand to be ≥ positive constant on a set of infinite measure (or ≥ something non-integrable). For t ≥ 1: exponent y²(1/4 - 1/(4t)) ≥ 0, so integrand ≥ (4πt)^(-1/2) ≥ ... for t ≥ 1, (4πt)^(-1/2) ≤ (4π)^(-1/2). So integrand ≥ (4πt)^(-1/2) * 1 on all of ℝ... but wait the constant (4πt)^(-1/2) > 0 is fixed for fixed t. So for fixed t ≥ 1, integrand ≥ (4πt)^(-1/2) > 0 on ℝ (everywhere!). And a function ≥ positive constant everywhere on an infinite-measure space is not integrable. So for ALL t ≥ 1, the integrand is non-integrable. But the limit as t → 0⁺ only sees t near 0. Damn.
+
+OK so we need the non-integrability on (0, ε). Flip: make f grow faster, e.g. f y = exp(y²/(4t) ... no, f can't depend on t. f y = exp(y⁴). Integrand for t ≤ 1: exponent = -y²/(4t) + y⁴. For |y| ≥ R(t), y⁴ ≥ y²/(4t) + 1, so integrand ≥ (4πt)^(-1/2) * exp(1)... need lower bound on (4πt)^(-1/2) for t in (0,1] — not bounded below. Hmm. But we don't need a uniform constant: for a fixed t, integrand ≥ (4πt)^(-1/2) * e ≥ ... on |y| ≥ R. The measure of {|y| ≥ R} is infinite (in ℝ). So the integrand (nonnegative, ≥ positive constant (4πt)^(-1/2) on an infinite-measure set) is not integrable. That works for every fixed t > 0 with R depending on t. Then F t = 0 for EVERY t > 0, so F is identically 0 on (0, ∞) = 𝓝[>] 0, so the limit is 0 ≠ 1 = f 0. 
+
+For this, need: for each t > 0, exists R with y⁴ ≥ y²/(4t) for |y| ≥ R. Easy: y⁴ - y²/(4t) = y²(y² - 1/(4t)) ≥ 0 for y² ≥ 1/(4t), i.e. |y| ≥ 1/sqrt(4t)... plus 1 to get strict. Take R = sqrt(1/(4t)) + 1 or so. Also we need to prove `∫` of a function that is ≥ c > 0 on `Ici R ∪ Iic (-R)` — actually for n=1, the set {|y| ≥ R} = Iic (-R) ∪ Ici R. Measure: volume (Ici R) = ∞. So measure of the union is ∞.
+
+Then: if Integrable g and g ≥ c > 0 on a set S with μ(S) = ∞... `setIntegral_ge` ... `integral_ge_of_integral_le`? Hmm, there's a cleaner approach: use `not_integrable_iff`? Actually there's the lemma `integrable_const_iff` for finite measure... Let me recall mathlib lemmas:
+
+- `MeasureTheory.integrable_const_iff {c : E} : Integrable (fun _ => c) μ ↔ c = 0 ∨ IsFiniteMeasure μ` (something like that; for c ≠ 0 and not finite measure → not integrable).
+- To transfer: if g ≥ c > 0 a.e. and g integrable then c * μ(s)? Better: use `MeasureTheory.setIntegral_const` or simpler: use `integral_mono`/`integral_ge`: If g is integrable and g ≥ indicator... 
+
+Cleanest: `not_integrable_of_measure_eq_top`? Hmm. Let me think of what's available. There's `MeasureTheory.integrableOn_iff_integrable_restrict`. And a good approach: suppose Integrable g. Then `IntegrableOn g (Ici R)` — i.e., `Integrable g (μ.restrict (Ici R))`. Then `0 ≤ c ≤ g` on that set, so `setIntegral` ≥ c * μ(Ici R) = ∞? That needs monotonicity: `integral_mono_on`/`setIntegral_mono_on`, and `setIntegral_const`: `setIntegral_const (μ := μ) ...`. With μ(Ici R) = ∞, c * ∞ = ∞ (with c > 0: `ENNReal.mul_top`? c as ENNReal... c > 0 so `(ENNReal.ofReal c) * ∞ = ∞`). And `setIntegral_const` gives the value `c * μ(S)` as ℝ≥0∞... The lemma `setIntegral_const` : `∫ x in s, c ∂μ = c • (μ s).toReal`? Hmm no, there's `setIntegral_const (hs : MeasurableSet s) : ∫ _ in s, c ∂μ = (μ s).toReal • c`? Not sure exact name. There's `MeasureTheory.integral_const` = `(μ Set.univ).toReal • c`.
+
+Alternative cleaner path: mathlib has `not_integrable_of_tendsto_norm_atTop`? Or `integrable_iff_integrable_atTop`? Hmm.
+
+Alternative: There is a very convenient family: `MeasureTheory.integrableOn_Ioi_of_intervalIntegral_norm_tendsto`? Let me think about what's really available in the pinned mathlib (v4.34.0-rc2 era, ~2026). Actually the D11 card says mathlib `7974e751bece493b6ff508039423ca9fa2452fa8` and lean `v4.34.0-rc2`. This is a 2026 snapshot. Let me just search mathlib source in the worktree for relevant lemmas. The pinned mathlib source should be available somewhere — let me look for it (input/ dir? or .lake/packages/mathlib).
+
+Let me also think about the approach via `integrable_const_iff` and comparison: Suppose Integrable g, g ≥ c > 0 on S. Then consider h = indicator of S... The integral of g over S ≥ integral of c over S = c • (μ S).toReal? If μ S = ∞ then (μ S).toReal = 0 — no good, toReal of ∞ is 0 in mathlib! (`ENNReal.toReal_top = 0`.) So use `integral_lt_top`/`lintegral` instead: for nonnegative integrable g: `∫⁻ g < ∞` (`integrable_iff_lintegral_lt_top`? For nonnegative measurable: `Integrable g ↔ ∫⁻ g ∂μ < ∞` roughly, via `integral_eq_lintegral_of_nonneg_ae`). And g ≥ c > 0 on S → lintegral ≥ lintegral of c * indicator_S = c * μ S = ∞. Then ∫⁻ g = ∞ → not integrable. That's the standard route:
+
+- `MeasureTheory.lintegral_const_mul` or use `setLIntegral_const`: `setLIntegral_const (c : ℝ≥0∞) (hs : MeasurableSet s) : ∫⁻ _ in s, c ∂μ = c * μ s`. Yes! `setLIntegral_const` exists. With c = ENNReal.ofReal c₀ > 0 and μ s = ∞: c * ∞ = ∞ (`ENNReal.mul_top' hc` or `ENNReal.mul_top hc`).
+
+- `lintegral_mono_set` / `setLIntegral_mono`: ∫⁻ over s ≤ ∫⁻ over univ, i.e. `lintegral_ge`... There's `setLIntegral_le_lintegral`? And `lintegral_mono'` pointwise. So: ∫⁻ g ≥ ∫⁻_s g ≥ ∫⁻_s c = c * μ s = ∞ → ∫⁻ g = ∞ → ¬ Integrable g (for g ≥ 0: `not_integrable_iff_lintegral_eq_top`? or via `Integrable g → ∫⁻ ‖g‖ < ∞`).
+
+Hmm, this is standard but has several steps. Alternatively use the easier fact: `Integrable g → g =ᵐ[μ] 0`? No.
+
+Actually maybe there's a much simpler path: mathlib might have `not_integrable_of_not_integrable_le`? Hmm. Or use `MeasureTheory.Integrable.mono'`: if Integrable g and |h| ≤ g then Integrable h. Contrapositive: if h is not integrable and 0 ≤ h ≤ g... wait direction: |h| ≤ g and h not integrable → g not integrable. Take h = indicator S (not integrable iff μ S = ∞: `integrable_indicator_iff`? For indicator: `Integrable (s.indicator fun _ => 1) μ ↔ μ s < ∞` — that's `integrable_indicatorConstLp`? There's `integrable_indicator_iff : Integrable (s.indicator fun x => c) μ ↔ c = 0 ∨ μ s < ∞`? I think there is `MeasureTheory.integrable_indicator_iff` requiring c ≠ 0... something like `integrable_indicator_iff (hs) : Integrable (s.indicator fun _ => c) μ ↔ c = 0 ∨ μ s < ∞`.) So: h = s.indicator (fun _ => c) with c > 0, μ s = ∞ → ¬ Integrable h. Then h ≤ g pointwise (since g ≥ c on s, g ≥ 0 everywhere... need g ≥ h everywhere: g ≥ 0 everywhere (nonneg integrand) and g ≥ c on s; off s, h = 0 ≤ g). Then if Integrable g, by `Integrable.mono'` (h measurable, |h| ≤ g) h integrable — contradiction. 
+
+`Integrable.mono'` exact statement: `Integrable.mono' {g} (hg : Integrable g μ) (hf : AEStronglyMeasurable f μ) (h : f ≤ᵐ[μ] g)` — needs g ≥ 0 presumably; there's a version `Integrable.mono` for |f| ≤ g. Since h ≥ 0, |h| = h ≤ g a.e. → Integrable h from Integrable g. So contrapositive works.
+
+Actually even simpler — there might be `not_integrable_of_tendsto_norm_atTop_of_...`? No, let me keep the indicator plan but maybe simplify with a dedicated lemma:
+
+```lean
+theorem not_integrable_of_measure_set_ge_ne_top {g} (hg0 : 0 ≤ᵐ[μ] g) (hmeas : AEStronglyMeasurable g μ)
+    {s} (hs : MeasurableSet s) (hμs : μ s = ∞) {c : ℝ} (hc : 0 < c) (hge : ∀ᵐ x ∂μ, x ∈ s → c ≤ g x) :
+    ¬ Integrable g μ
+```
+
+Proof: by_contra hInt. have hIntc : ¬ Integrable (s.indicator (fun _ => c)) μ := by rw [integrable_indicator_iff ...]; ... hmm need exact lemma name. Let me check mathlib.
+
+Alternatively, use lintegral approach:
+
+```lean
+have hlin : ∫⁻ x, ENNReal.ofReal c ∂μ = ∞  -- via lintegral_const? 
+```
+
+Hmm — `lintegral_const` : `∫⁻ _, c ∂μ = c * μ univ`. For the indicator: `setLIntegral_const`. Path:
+
+```
+have hle : (∫⁻ x in s, ENNReal.ofReal c ∂μ) ≤ ∫⁻ x, ENNReal.ofReal (g x) ∂μ := by
+  refine setLIntegral_le_lintegral ...? 
+```
+
+There's `lintegral_mono_set`, `setLIntegral_mono'`... `MeasureTheory.setLIntegral_mono'`? I recall `lintegral_mono'` for pointwise ≤, `setLIntegral_mono`. Then `setLIntegral_const`: `∫⁻ x in s, c ∂μ = c * μ s`. With c = ENNReal.ofReal c₀, `ENNReal.mul_top'` needs c ≠ 0: `c₀ > 0 → ENNReal.ofReal c₀ ≠ 0 → ENNReal.ofReal c₀ * ∞ = ∞`. Then `lintegral_eq_top_of...`: if lintegral ≥ top then = top (since ≤ top always: `lintegral_le_top`? For ENNReal-valued, everything ≤ ⊤: `le_top`). So ∫⁻ ofReal(g) = ∞. And `Integrable g` for nonnegative g implies `∫⁻ ofReal g < ∞`: `MeasureTheory.integrable_iff_lintegral_lt_top`? Hmm, for nonneg functions: `integral_eq_lintegral_of_nonneg_ae` says ∫ g = ∫⁻ ofReal g... but integrability: `Integrable g ↔ AEStronglyMeasurable g ∧ ∫⁻ ‖g‖ < ∞` (`integrable_iff_lintegral_nnnorm_lt_top`? there's `Integrable.integrableOn`...). I recall: `MeasureTheory.integrable_iff_of_norm`? The precise one: `Integrable f μ ↔ AEStronglyMeasurable f μ ∧ (∫⁻ x, ‖f x‖₊ ∂μ) < ∞` — that's `integrable_iff`? or `integrable_iff_aeStronglyMeasurable_and_lintegral_nnnorm_lt_top`? I don't remember exact name, but there is `MeasureTheory.integrable_iff_lintegral_nnnorm_lt_top` maybe. Hmm, there's `hasFiniteIntegral_iff_ofReal` and `hasFiniteIntegral_iff_norm`. There's `Integrable.hasFiniteIntegral` and `hasFiniteIntegral_iff_lintegral_lt_top`? Not sure.
+
+Simplest robust approach might be: use `MeasureTheory.Memℒp`/`lintegral` APIs carefully after checking mathlib. Let me search the pinned mathlib source. It's likely at `release/.lake/packages/mathlib/Mathlib`. Let me check.
+
+Also the alternative plan: choose the counterexample function so that the integrand is ≥ a *positive constant on a half-line* and use the n=1 case with mathlib's specific results about Lebesgue measure on ℝ. E.g., there are lemmas `not_integrable_of_tendsto...`? Or even simpler — `MeasureTheory.integrableOn_Iic_iff_integrableOn_Ioi`... no.
+
+Actually there's an even more classical approach: divergence of the integral via `intervalIntegral`: For n=1, `¬ Integrable g` follows from `Tendsto (fun R => ∫ x in Icc (-R) R, g x) atTop atTop`? Requires the integral over symmetric intervals → ∞. There's `not_integrable_of_tendsto_intervalIntegral...`? Hmm, I don't remember such a lemma. The indicator route seems most reliable.
+
+Let me also think: maybe mathlib has `MeasureTheory.not_integrable_of_measure_le`... I'll search.
+
+Now for the "measure of complement of ball is infinite in ℝⁿ for n ≥ 1" and "measure of Ici R is ∞ in ℝ": 
+
+- n = 1, ℝ: `volume (Ici R) = ∞`. In mathlib: `MeasureTheory.volume_Ici`? Hmm, I'm not sure this exists. Let me search. There's `Real.volume_Iic`, `Real.volume_Ioi`... I'll search the source.
+
+Alternatively for n=1 use `volume_Icc`-based arguments: `volume (Ici R) = ⨆ ...`? The measure is `toReal`-free ENNReal: `volume (Set.Ici R) = ∞`. I'm fairly confident mathlib has `MeasureTheory.volume_Ioi (a : ℝ) : volume (Set.Ioi a) = ∞` — there's `Real.volume_Ioi`. And Ici ⊇ Ioi so volume(Ici R) ≥ volume(Ioi R) = ∞. If only Ioi exists: fine, use `Set.Ioi R`.
+
+Hmm wait — maybe even better: we can avoid needing "measure of a set is ∞" by using a different counterexample argument: prove that the *t → 0⁺ limit* fails not via constant-0 function but directly: for the f with f 0 = 1, if FullInitialCondition held for the flat kernel... hmm, that's the same thing.
+
+Alternatively prove the counterexample by contradiction against the FullInitialCondition directly using lower bound: `∫ y, K * f ≥ ∫ over some set ... = ∞` — no, the Bochner integral is 0 when not integrable; the contradiction is exactly "F t = 0 for all t > 0, yet tendsto to 1".
+
+So the plan for the counterexample (n = 1):
+1. Define `f₀ y = Real.exp (y ^ 4)` — wait, I earlier wanted exp(y⁴). Hmm, but with the product kernel*t: for fixed t, integrand g y = c_t * exp(-y²/(4t) + y⁴) with x = 0 (c_t = (4πt)^(-1/2)). On |y| ≥ R where y² ≥ 1/(4t)+1... we need `-y²/(4t) + y⁴ ≥ 0` i.e. `y⁴ ≥ y²/(4t)`, i.e. `y² ≥ 1/(4t)` (for y ≠ 0). So on S = {|y| ≥ R} with R > sqrt(1/(4t)) (need strict: R > sqrt(1/(4t)), e.g. R = max(1, 2/t)... let's just take R = 1 + 1/(4t) maybe; check: R² ≥ 1/(4t)? R = sqrt(1/(4t)) + 1 works, or simpler R = max 1 (1/(4t))... take R = 1 + 1/(4t) ≥ 1/(4t), and need R² ≥ 1/(4t): since R ≥ 1, R² ≥ R ≥ 1/(4t) — yes if 1/(4t) ≤ 1... not always for small t. Let's not fix constants here; the proof: ∃ R, ∀ y, R ≤ |y| → c ≤ g y. This is an elementary real calculus argument:
+
+For fixed t > 0: the function y ↦ y⁴ - y²/(4t) → ∞ as |y| → ∞ (it's ≥ y²(y² - 1/(4t)) and for |y| ≥ sqrt(1/(4t)) + 1... or use tendsto_norm_atTop...). In Lean: `Filter.Tendsto` of `y⁴ - y²/(4t)` atTop atTop, then `eventually` ≥ 0/≥1. E.g. use `tendsto_pow_atTop_atTop`... or simpler: `eventually_atTop.2` with explicit witness: `⟨sqrt (1/(4t)) + 1, ...⟩`: for |y| ≥ sqrt(1/(4t)) + 1: y² ≥ 1/(4t)... need y² ≥ (sqrt(1/(4t))+1)² ≥ 1/(4t) — true since square ≥ 1/(4t) obviously. Then y⁴ = y²·y² ≥ y²·(1/(4t)) ≥ y²/(4t)? Wait need y⁴ ≥ y²/(4t) i.e. y⁴ - y²/(4t) ≥ 0. y⁴ - y²/(4t) = y²·(y² - 1/(4t)) ≥ 0 given y² ≥ 1/(4t) and y² ≥ 0. Good. Also need it for BOTH ± directions: `|y| ≥ R → y² ≥ R²` (`sq_le_sq`? abs stuff: `sq_abs`...). Standard: `R ≤ |y| → R^2 ≤ y^2` via `sq_le_sq.mpr`? The lemma: `sq_le_sq : a² ≤ b² ↔ |a| ≤ |b|`. So `|y| ≥ R` → `R ≤ |y|` → `R² ≤ |y|² = y²`. Good.
+
+2. Then measure of {y | R ≤ |y|} = ∞ in ℝ. This set = Iic (-R) ∪ Ici R ⊇ Ici R. `volume (Ici R) = ∞`? Need a mathlib lemma. Let me search for it. If it's not there, prove: `volume (Ici R) = ∞`... hmm how does mathlib state infinitude of Lebesgue measure? There's `MeasureTheory.measure_univ_eq_top`? Hmm. There's `Real.volume_Ioo`? For the pinned version I need to search.
+
+Also potentially relevant existing lemmas in the repo: maybe D10 or D9 files have `not_integrable` lemmas already. Let me search the release tree for `not_integrable`, `integrable_const`, `volume_Ici` etc.
+
+3. Non-integrability transfer: define g y = c_t * exp(-y²/(4t) + y⁴) ≥ c_t > 0 on S. Also g ≥ 0 everywhere. Suppose Integrable g. Then Integrable (S.indicator fun _ => c_t)? via Integrable.mono' with |indicator| ≤ g: on S, indicator = c_t ≤ g; off S, indicator = 0 ≤ g (g ≥ 0). So |indicator c_t| ≤ g everywhere. Then Integrable (S.indicator (fun _ => c_t)) from Integrable.mono'? The lemma `Integrable.mono'`: 
+
+```lean
+theorem Integrable.mono' {f g : α → ℝ} (hg : Integrable g μ) (hf : AEStronglyMeasurable f μ) (hfg : f ≤ᵐ[μ] g) (h0 : 0 ≤ᵐ[μ] g) : Integrable f μ
+```
+
+I think `Integrable.mono` exists for real-valued: `theorem Integrable.mono {f g : α → ℝ} (hg : Integrable g μ) (hf : AEStronglyMeasurable f μ) (hfg : |f| ≤ᵐ[μ] g) : Integrable f μ`. Yes — `MeasureTheory.Integrable.mono`. So with f = S.indicator (fun _ => c_t), |f| ≤ g: on S: |c_t| = c_t ≤ g y; off S: |0| = 0 ≤ g y since g ≥ 0 everywhere. 
+
+Then contradiction via `integrable_indicator_iff`? Need exact name. Hmm, maybe `integrable_indicatorConstLp`? The statement I want: `¬ Integrable (S.indicator (fun _ : ℝ => c))` when c ≠ 0 and μ S = ∞. There is `MeasureTheory.integrable_indicator_iff`? Let me search.
+
+If not found: prove directly: Integrable indicator implies `∫⁻ indicator' < ∞`... or use `setIntegral_const`:
+
+If h : Integrable (S.indicator fun _ => c), then `IntegrableOn (fun _ => c) S`? Hmm — restrict: `Integrable (fun x => c) (μ.restrict S)` — `integrable_indicator_iff`? There's `integrableOn_iff_integrable_restrict`, and `integrableOn_const : IntegrableOn (fun _ => c) S μ ↔ c = 0 ∨ μ S < ∞` — yes! `MeasureTheory.integrableOn_const` exists I believe: `theorem integrableOn_const {s : Set α} {c : E} : IntegrableOn (fun _ => c) s μ ↔ c = 0 ∨ μ s < ∞`. And the indicator version: `Integrable (s.indicator fun _ => c) μ ↔ ...` via `integrable_indicator_iff`? There is `integrable_indicator_iff` for restrict? Hmm: `Integrable (s.indicator f) μ ↔ IntegrableOn f s μ` — that's `integrable_indicator_iff`? or `integrable_indicatorOn_iff`? I recall: `MeasureTheory.integrable_indicator_iff {f} (hs : MeasurableSet s) : Integrable (s.indicator f) μ ↔ IntegrableOn f s μ`? Something like `integrable_indicator_iff` exists. Let me search the mathlib source.
+
+So the chain: Integrable (S.indicator const) → IntegrableOn const S → c = 0 ∨ μ S < ∞ → contradiction with c ≠ 0 and μ S = ∞. 
+
+All standard. Now, `volume (Set.Ici R) = ∞`: search mathlib for `volume_Ici`. I believe `MeasureTheory/Measure/Lebesgue/Basic.lean` has:
+
+```
+@[simp] theorem volume_Iic (a : ℝ) : volume (Set.Iic a) = ∞
+@[simp] theorem volume_Ici (a : ℝ) : volume (Set.Ici a) = ∞
+```
+
+Hmm — I actually recall `Real.volume_Iic` and `Real.volume_Ici` being in `MeasureTheory.Measure.Lebesgue.Interval`? Let me just search.
+
+4. Finally assemble: `¬ (flatHeatKernelCore 1).FullInitialCondition`:
+
+FullInitialCondition (flatHeatKernelCore 1) = ∀ x f, Continuous f → Tendsto (fun t => ∫ y, kernel x y t * f y) (𝓝[>] 0) (𝓝 (f x)).
+
+Take x = 0, f = f₀ (continuous: exp∘(·⁴) continuous). Suppose the Tendsto holds. Since for all t > 0: `∫ y, flatKernel 1 0 y t * f₀ y = 0` (by `integral_undef`: `∫ y, g = 0` when ¬ Integrable g — the lemma: `integral_undef (h : ¬ Integrable f μ) : ∫ x, f x ∂μ = 0`). So the function is 0 on 𝓝[>] 0 (eventually... actually for all t in the set). Tendsto → limit is f₀ 0 = 1 AND limit is 0 (since function is eventually constantly 0: `Tendsto.congr'` with `Eventually.of_forall`, plus `tendsto_const_nhds`). Uniqueness: `tendsto_nhds_unique` needs T2: ℝ is T2. `tendsto_nhds_unique (h1 : Tendsto f l (𝓝 a)) (h2 : Tendsto f l (𝓝 b)) : a = b`. Get 0 = 1 → `zero_ne_one` contradiction.
+
+Nice. But wait: also need f₀ x = 1: f₀ 0 = exp(0⁴) = exp 0 = 1: `Real.exp_zero`. Good.
+
+But hold on — n = 1 works. For general n ≥ 1, could do the same by restricting to a line (Fubini) — more work. The task says "If feasible formalize an explicit fast-growing counterexample to the old condition" — one explicit counterexample in dimension 1 suffices to refute the D7 statement "the D11 Euclidean core inhabits the full condition in every dimension" — well, actually it shows: the flat core in dimension 1 does NOT satisfy FullInitialCondition. That's the counterexample to the old condition. 
+
+Could also do the same in arbitrary dimension via Fubini... but n=1 is a complete, honest counterexample. The task's informal obstruction ("f y = exp(‖y‖³) on ℝⁿ, n ≥ 1") gets a formal instance at n=1 (maybe with y⁴ for algebra simplicity). I might also state and prove the n ≥ 1 version via a reduction: if FullInitialCondition holds for the core in dimension n ≥ 1 then it would hold in dimension 1 by slicing? That requires Fubini machinery — probably too much. n = 1 is fine and honest; I'll document it.
+
+Hmm, wait. Actually let me reconsider: is there an even simpler counterexample for arbitrary n ≥ 1? Consider `f y = exp (‖y‖²)`. For t < 1/4, exponent: ‖y‖² - ‖y‖²/(4t) = ‖y‖²(1 - 1/(4t)) ≤ 0 for t ≥ 1/4... again the wrong direction for small t. The problem: Gaussian kills quadratic growth for small t. Need superquadratic: f y = exp(‖y‖³): exponent ‖y‖³ - ‖y‖²/(4t) = ‖y‖²(‖y‖ - 1/(4t)) ≥ 0 for ‖y‖ ≥ 1/(4t). And the set {‖y‖ ≥ R} in ℝⁿ has infinite measure — need that fact for n ≥ 1. Might be provable via a mathlib lemma `measure_ball` + `volume_univ = ∞`? Hmm.
+
+For the n=1 case I can use Ioi/Ici measure facts which definitely exist (`volume_Ioi` etc.). Let me now:
+
+(a) find the pinned mathlib source location;
+(b) search for the needed lemmas: `integral_undef`, `Integrable.mono`, `integrable_indicator_iff`, `integrableOn_const`, `volume_Ici`, `volume_Ioi`, `tendsto_nhds_unique`, `Continuous.integrable_of_hasCompactSupport`, `hasCompactSupport` facts, `isFiniteMeasure` facts.
+
+Also for the versioned interface part, design:
+
+```lean
+-- D12 HeatDomain.Admissible
+namespace Poincare.D12.HeatDomain
+
+/-- Versioned admissible test-function interface for heat-kernel initial conditions (v1).
+An admissible test function is continuous with compact support (the classical test-function
+class), or more generally continuous and integrable w.r.t. the reference measure. -/
+structure AdmissibleTestFunction (X : Type*) [TopologicalSpace X] [MeasurableSpace X] (μ : Measure X) (f : X → ℝ) : Prop where
+  continuous : Continuous f
+  integrable : Integrable f μ
+
+/-- The v1 initial-condition predicate for a core datum: convergence against every admissible
+test function. -/
+def AdmissibleInitialCondition (D : HeatKernelCore X) : Prop :=
+  ∀ x f, AdmissibleTestFunction D.volume f → Tendsto (fun t => ∫ y, D.kernel x y t * f y ∂D.volume) (𝓝[>] 0) (𝓝 (f x))
+```
+
+Then:
+- `flatHeatKernelCoreAdmissibleInitialCondition : ∀ n, AdmissibleInitialCondition (flatHeatKernelCore n)` — from D11's `flatHeatKernelCore_weakInitialCondition` (they're literally the same predicate; the versioned one is just a named interface). Good — this shows the D11 Euclidean core inhabits the versioned interface for every dimension.
+
+- Compatibility (compact finite-measure settings): 
+```lean
+theorem admissibleInitialCondition_of_full (D) : D.FullInitialCondition → D.AdmissibleInitialCondition
+theorem fullInitialCondition_of_admissible [CompactSpace X] [T2Space X] [LocallyCompactSpace X]? [SecondCountableTopology X] [IsFiniteMeasure D.volume] : D.AdmissibleInitialCondition → D.FullInitialCondition
+```
+
+For the converse: given AdmissibleInitialCondition, need: every continuous f is admissible, i.e. Continuous f → Integrable f D.volume (or has compact support). On a compact space, every continuous f: has compact support (tsupport ⊆ univ compact, closed subset of compact → compact: `IsCompact.of_isClosed_subset isCompact_univ isClosed_tsupport (subset_univ _)`. Need X T2 for tsupport closed? `isClosed_tsupport` requires `[T2Space X]`? Actually `isClosed_tsupport` needs `[T2Space X]`? Hmm, I recall `isClosed_tsupport` under T2. There's also `tsupport` closed without T2? The lemma `isClosed_tsupport` — let me check. Alternatively use the closure of the whole space: for compact X, `HasCompactSupport f` iff `IsCompact (closure {x | f x ≠ 0})` — closure of a subset of compact set is compact (closed subset of compact): `IsCompact.of_isClosed_subset isCompact_univ (isClosed_closure) subset_univ`. And `isClosed_closure` doesn't need T2. So HasCompactSupport holds on any compact X with no T2 needed if we go through closure. But `Continuous.integrable_of_hasCompactSupport` needs more: it's:
+
+```lean
+theorem Continuous.integrable_of_hasCompactSupport (h1 : Continuous f) (h2 : HasCompactSupport f) : Integrable f μ
+```
+under `[OpensMeasurableSpace X] [SecondCountableTopologyEither X E]`? and `[IsFiniteMeasureOnCompacts μ]`. And `IsFiniteMeasure μ → IsFiniteMeasureOnCompacts μ`: `isFiniteMeasureOnCompacts_of_isFiniteMeasure`. So hypotheses: `[OpensMeasurableSpace X] [SecondCountableTopologyEither X ℝ] [IsFiniteMeasure D.volume]`. With `[CompactSpace X]`, HasCompactSupport f via closure argument.
+
+Wait, but the task says "compact finite-measure settings". The compatibility statement should be precisely scoped: on a compact space with finite measure, FullInitialCondition ⇔ AdmissibleInitialCondition (given all the structural hypotheses). Let me also double check that these hypotheses are automatically satisfiable — e.g. `[CompactSpace X] [T2Space X] [LocallyCompactSpace X] [OpensMeasurableSpace X] [SecondCountableTopology X] [IsFiniteMeasure μ]` are all standard compact-manifold hypotheses. Note the intended application is compact manifolds — where all of these hold. That's the "expanded and justified" regularity hypothesis.
+
+Additionally, "prove precisely scoped compatibility for compact finite-measure settings" — maybe also: on compact finite-measure space, the WeakInitialCondition equals the versioned one? Trivial. And also show that for the legacy D7: a `HeatKernelData` on compact finite-measure space... The old D7 interface field remains; we keep legacy definitions unchanged. The compatibility: `AdmissibleInitialCondition → FullInitialCondition` in compact finite-measure settings, so downstream legacy consumers (which need FullInitialCondition) can be fed from versioned proofs in compact settings. Also prove the non-vacuousness example: dim 0 (`flatHeatKernelData_zero` from D11) satisfies the versioned condition (trivially since it satisfies full).
+
+Also maybe prove: in the compact finite-measure setting, if the core satisfies the versioned condition then `toHeatKernelData` gives a genuine D7 datum — i.e., construct `HeatKernelData` from versioned condition + compact hypotheses. That's the "downstream compatibility" deliverable.
+
+Let me also check `Continuous.integrable_of_hasCompactSupport` signature in the pinned mathlib. And D11 used `hf.integrable_of_hasCompactSupport hfs` with f : EuclideanSpace → ℝ, so the typeclass requirements were discharged automatically (EuclideanSpace is second countable, opens measurable space, and volume is finite measure on compacts).
+
+Additional piece: "prove the D11 Euclidean core inhabits it for every dimension" — i.e., `AdmissibleInitialCondition (flatHeatKernelCore n)` for all n. From D11: `flatHeatKernelCore_weakInitialCondition n`. The versioned predicate = ∀ f, Continuous f → Integrable f volume → Tendsto... — identical to WeakInitialCondition. So it's a one-liner plus naming. Good.
+
+Also "versioned" — I should version the interface: `AdmissibleTestFunction` version 1 (v1) with continuous compact support as the canonical class, and prove `Continuous f → HasCompactSupport f → AdmissibleTestFunction μ f` (v1 inhabited by Cc). Maybe two versions: v1 = continuous compact support; and show equivalent-to continuous+integrable class. Design:
+
+```lean
+/-- Admissible test-function class v1: continuous compactly supported. -/
+def AdmissibleTestFunctionCc (μ) (f) : Prop := Continuous f ∧ HasCompactSupport f
+
+/-- Admissible test-function class v2: continuous integrable. -/
+def AdmissibleTestFunctionInt (μ) (f) : Prop := Continuous f ∧ Integrable f μ
+```
+
+And the initial-condition predicates parameterized by the class:
+
+```lean
+def InitialConditionOn (D : HeatKernelCore X) (𝒜 : (X → ℝ) → Prop) : Prop :=
+  ∀ x f, 𝒜 f → Tendsto (fun t => ∫ y, D.kernel x y t * f y ∂D.volume) (𝓝[>] 0) (𝓝 (f x))
+```
+
+Then:
+- `AdmissibleInitialCondition D := InitialConditionOn D (AdmissibleTestFunctionInt D.volume)`.
+- `CcInitialCondition D := InitialConditionOn D (AdmissibleTestFunctionCc D.volume)`.
+
+Compatibility: Cc → Int (compact support continuous functions are integrable: needs LocallyCompactSpace? For general measure: `Continuous.integrable_of_hasCompactSupport` needs `IsFiniteMeasureOnCompacts μ` + second countability. So `InitialConditionOn D (Int) → InitialConditionOn D (Cc)` always; converse under `[IsFiniteMeasureOnCompacts D.volume] [OpensMeasurableSpace X] [SecondCountableTopology X]`.) Then compact finite-measure → Full.
+
+Hmm — but note the compatibility in compact settings must be *precisely scoped*: state the exact typeclass hypotheses. Let me now also confirm what D11's WeakInitialCondition is and reuse it: our versioned interface should probably literally generalize it. Since legacy must be kept unchanged, we add new definitions in our directory and prove bridges.
+
+Deliverable structure under `release/Poincare/D12/HeatDomain/`:
+
+1. `Basic.lean` — versioned admissible test-function classes + `InitialConditionOn`; implications between classes (general, for arbitrary X): `Cc ⊆ Int` under regularity; `IntCondition → CcCondition`; `Full → IntCondition`.
+2. `EuclideanInstance.lean` — D11 Euclidean core inhabits the versioned interface in every dimension: `flatHeatKernelCore_admissibleInitialCondition (n)`; plus `flatKernel_tendsto_integral_cc` etc.
+3. `CompactCompatibility.lean` — compact finite-measure compatibility: `Full ⇔ IntCondition ⇔ CcCondition` with precisely scoped hypotheses; construction of a full D7 `HeatKernelData` from versioned condition in compact finite-measure settings (`HeatKernelCore.toHeatKernelData` reuse); maybe also show dim-0 example satisfies everything (non-vacuity of compact setting: finite space...? Actually compact finite-measure: e.g. `EuclideanSpace ℝ (Fin 0)`? That's compact (it's a point? PUnit-like — EuclideanSpace ℝ (Fin 0) is compact? It's homeomorphic to PUnit, yes compact) and finite measure (volume = dirac, finite). So dim-0 gives a concrete inhabited compact finite-measure instance where Full holds → shows the compatibility theorem's hypotheses are satisfiable and the conclusion is non-vacuous. Also maybe a finite set example? Hmm, dim-0 is a nice concrete nondegenerate example.
+4. `Counterexample.lean` — the fast-growing counterexample: `¬ FullInitialCondition (flatHeatKernelCore 1)`; also possibly `¬ Integrable` lemmas; and a corollary: the D7 literal field cannot hold for the flat kernel in dimension 1 (i.e., no `HeatKernelData` with the flat core in dim 1: `¬ ∃ D : HeatKernelData (EuclideanSpace ℝ (Fin 1)), D.toCore = flatHeatKernelCore 1` — follows from D11's `exists_toCore_eq_iff`). That's a strong honest statement: the old condition is formally refuted.
+5. `Audit.lean` — programmatic axiom audit.
+6. `All.lean` — umbrella.
+
+Also the task-local audit module: `release/Poincare/D12/HeatDomain/AxiomAudit.lean` (that can serve as both).
+
+Wait, also should I double check: does D11's `flatHeatKernelCore` have kernel truncated at t ≤ 0? Yes: `flatKernel n x y t = if 0 < t then gaussianKernel n t (x - y) else 0`. For the counterexample we need flatKernel 1 0 y t = gaussianKernel 1 t (0 - y) for t > 0 — D11 has `flatKernel_of_pos n x y ht`. Let me read EuclideanInstance.lean and the D10 HeatKernelEuclidean.Basic to get exact statement names (`gaussianKernel_apply`, `gaussianKernel_nonneg`).
+
+Also `laplacianLinearMap` — the "genuine Laplacian" part: our new interface should reuse D11's core (which already has the genuine mathlib Laplacian). Task: "do not replace genuine Laplacians by arbitrary operators" — we're not touching that.
+
+Now — "Keep legacy definitions unchanged until downstream compatibility is proved." We keep D7/D11 untouched; all new defs in D12 namespace. 
+
+"Prove a concrete nondegenerate example when necessary to test non-vacuity." → dim-0 full datum + compact-space example; the counterexample itself is a concrete nondegenerate test.
+
+Let me now examine the remaining D11 files and check the environment. Then search mathlib for the lemmas I need.
+
+Plan for this invocation (4 hours):
+1. Read EuclideanInstance.lean, D10 HeatKernelEuclidean/Basic.lean (relevant parts), LONG_PLAN.json, tools dir.
+2. Verify build environment works (lake build).
+3. Search mathlib for the needed lemmas.
+4. Write the new modules; iterate until compiling; run axiom audit; write checkpoint.json; write result card skeleton.
+5. Hourly checkpoints.
+
+Let me read the EuclideanInstance and check environment in parallel.
+Now let me look at the D11 EuclideanInstance, the D10 Gaussian kernel definitions, and verify the build environment.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

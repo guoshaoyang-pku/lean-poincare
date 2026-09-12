@@ -1,0 +1,101 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree. I need to look at existing files, checkpoint.json, the release/ directory structure, and the longrun results.
+
+Let me first explore the worktree.
+dsh: reasoning:
+The D12 result files don't exist yet. Let me look at the LONG_PLAN.json, the release/ structure, and any checkpoint.json in the worktree (the find command didn't print anything for checkpoints before the second bash output). Let me check the structure more carefully.
+dsh: reasoning:
+There's no existing checkpoint.json or D12 files yet — this is a fresh start for the D12-heat-semigroup-analysis task. Let me explore:
+
+1. The D10 Gaussian mass/convolution modules (relevant upstream).
+2. The D11 HeatKernelBridge modules.
+3. The lakefile, toolchain, and mathlib pinned version.
+4. Check what's in .lake (mathlib available?).
+
+Let me look at D10 Gaussian toolbox and D11 HeatKernelBridge sources.
+dsh: reasoning:
+The .lake/packages symlinks to the D6 weekly release worktree's .lake/packages. Let me check the mathlib revision and whether the build works. Also look at D10 GaussianToolbox and D11 HeatKernelBridge sources.
+
+Let me check:
+1. The mathlib pinned source (the task mentions "the pinned mathlib source" — probably somewhere in input/ or manifest/).
+2. D10 GaussianToolbox contents.
+3. D11 HeatKernelBridge contents.
+dsh: reasoning:
+Let me read the D10 GaussianToolbox and D11 HeatKernelBridge files. These are my upstream dependencies.
+dsh: reasoning:
+Now let me look at D10 HeatKernelEuclidean (which has the Euclidean heat kernel) and D11 HeatKernelBridge.
+dsh: reasoning:
+Let me look at the D10 HeatKernelEuclidean module — especially Mass.lean, Semigroup.lean, Basic.lean. Also D11 EuclideanInstance.lean and InitialCondition.lean. These are my primary upstream dependencies for "heat semigroup analysis".
+dsh: reasoning:
+Let me read the Semigroup.lean and HeatEquation.lean from D10, and the D11 InitialCondition.lean and EuclideanInstance.lean. These are the key upstream results.
+dsh: reasoning:
+Now I have a good picture of the upstream dependencies:
+
+**D10 GaussianToolbox**: 1D Gaussian integrals, moments, convolution.
+**D10 HeatKernelEuclidean**: kernel `gaussianKernel n t x = (4πt)^(-n/2) * exp(-‖x‖²/(4t))` on `EuclideanSpace ℝ (Fin n)`, with positivity, mass 1, semigroup (convolution) property, heat equation.
+**D11 HeatKernelBridge**: D7 interface, Euclidean instance (`flatKernel`, `flatHeatKernelCore`), weak initial condition via peak-function approximation of identity.
+
+**My D12 task** (heat semigroup analysis):
+1. Define the heat semigroup operator: `(P_t f)(x) = ∫ y, flatKernel n x y t * f y` (i.e., convolution with the explicit kernel against Lebesgue measure).
+2. Prove positivity: `f ≥ 0 (a.e.) → P_t f ≥ 0 (a.e. or pointwise if f ≥ 0 everywhere)`.
+3. Prove L∞ contraction: `‖P_t f‖∞ ≤ ‖f‖∞` for f ∈ L∞ (or bounded measurable f), using kernel mass 1 and nonnegativity.
+4. Prove L1 contraction: `‖P_t f‖₁ ≤ ‖f‖₁` — this needs Fubini/convolution: ∫ |∫ K(x-y) f(y) dy| dx ≤ ∫∫ K(x-y)|f(y)| dy dx = ‖f‖₁ since ∫ K dx = 1. In mathlib, there's `HasConv` or convolution API (`convolution`, `HasFDerivAt`... `Mathlib.Analysis.Convolution`). Actually mathlib has `MeasureTheory.convolution` and `integral_convolution`? There's `Mathlib.MeasureTheory.Function.Convolution`. There is a theorem `convolution` L1 Young's inequality: `Mathlib.MeasureTheory.Function.Convolution` includes Young's inequality for Lp (needs `lp` spaces... `MeasureTheory.convolution_tendsto_right`?). Let me check what's available in this mathlib revision: `Mathlib.MeasureTheory.Function.Convolution` has `integral_convolution`? Let me check: mathlib has `convolution_integral`? There are theorems like `BddAbove.convolution_tendsto_right`, `convolution_eq_swap`... and Young's inequality `MeasureTheory.Young.inequality`? Hmm, I recall mathlib has `Mathlib.MeasureTheory.Function.Convolution` with `HasFDerivAt.convolution` and `lp` convolution inequality `Mathlib.MeasureTheory.Function.Convolution`... Actually there's `Mathlib.Analysis.Convolution` (old), and current `Mathlib.MeasureTheory.Function.Convolution`. Young's inequality: `Mathlib.MeasureTheory.Function.Convolution` has `convolution_integral` ... I need to check. There's a file `Mathlib.MeasureTheory.Function.Convolution` — includes `integral_posConvolution` etc. And there's `Mathlib.Analysis.Convolution` with `Young`... Let me search the mathlib source in .lake/packages/mathlib.
+
+5. Strong continuity: `t ↦ P_t f` continuous from ℝ≥0 into L¹ or L∞ as t → 0⁺ (uses D11 weak initial condition for L1: `‖P_t f - f‖₁ → 0`). For L∞-continuity needs f uniformly continuous; for L1 needs f ∈ L1 and D11's peak function result (which is pointwise/weak convergence; we need L1 norm convergence — standard argument via approximation: ‖P_t f − f‖₁ ≤ sup over compact support of sup-convolution... Actually there is a classical lemma: if f ∈ L¹, then P_t f → f in L¹, follows from approximation by Cc functions and the D11 pointwise result + domination. In mathlib, there's `HasCompactSupport.convolution_tendsto`? Let me search: mathlib `Mathlib.MeasureTheory.Function.Convolution` has `convolution_tendsto_right`? There's `contDiff_convolution`... I recall `HasFDerivAt.convolution`... and there's `MeasureTheory.convolution_tendsto_right_of_integrable`? Hmm.
+
+Actually there is a known mathlib file: `Mathlib.Analysis.Convolution` with theorems `hasCompactSupport.contDiff_convolution_right`, and `Mathlib.MeasureTheory.Function.Convolution` with `MeasureTheory.convolution_tendsto_right`? Let me search the mathlib snapshot.
+
+6. Smoothing / differentiation under the integral: `t ↦ P_t f` differentiable for t > 0 with derivative `∫ (∂_t K) f` — differentiation under the integral via `hasDerivAt_integral_of_dominated_loc_of_deriv_le` (mathlib `intervalIntegral` has this for intervals; there's also `hasFDerivAt_integral_of_dominated_loc_of_lip'` for arbitrary measures in `Mathlib.MeasureTheory.Integral.Bochner`). With the heat kernel, for t in a compact interval [ε, T], the time derivative ∂_t K n t x = K · (n/(2t) ... ) is dominated. That's feasible but maybe heavy. Alternative smoothing: `x ↦ P_t f x` is differentiable/continuous for t > 0 and bounded f (differentiation under integral in space variable, dominated by polynomial × Gaussian). That could use `hasFDerivAt_integral_of_dominated_loc_of_lip'`.
+
+Given 72 hours / 24 invocations and 4-hour sessions, my plan:
+
+**Architecture** (module `Poincare.D12.HeatSemigroup`):
+- `Basic.lean`: define heat operator `heatOp n t f x = ∫ y, flatKernel n x y t * f y` (noncomputable). Also define as convolution with kernel function `k_t(y) = gaussianKernel n t y`. Prove: measurability of the kernel in (x,y); symmetry → convolution form: `heatOp n t f x = ∫ y, gaussianKernel n t (x - y) * f y`; integral of heatOp = ∫ f (mass preservation); positivity; boundedness pointwise bound `|heatOp n t f x| ≤ ‖f‖∞`; L∞ contraction.
+- `Contraction.lean`: L¹ contraction via Fubini (integral of |heatOp| ≤ integral |f|), with all measurability/integrability obligations. This is the core "genuine Euclidean heat-operator estimate".
+- `Continuity.lean` (strong continuity): ‖P_t f − f‖₁ → 0 as t → 0⁺ for f ∈ L¹: from D11 weak initial condition for Cc functions + approximation (density of Cc in L¹ on ℝⁿ — does mathlib have that? Hmm. mathlib has `continuousMap_compactlySupported` density in Lp? There is `Lp.continuousMap_dense`? Hmm — mathlib has `Mathlib.MeasureTheory.Integral.Bochner.LpSpace` with `Lp.continuousMap_dense`? I don't recall for arbitrary spaces. For ℝⁿ there is `exists_continuous_compactlySupported_eq_ae`? Hmm. Actually mathlib has approximation of L¹ functions on finite-dimensional spaces by continuous compact support? There's `Mathlib.MeasureTheory.Function.StronglyMeasurable.Dense`? Let me search. There's `hasCompactSupport` approximation: `MeasureTheory.exists_continuous_compactlySupported`? I believe there's a theorem about Cc density in Lp for locally compact groups, e.g. `Mathlib.MeasureTheory.Group.Integral` ... Hmm.
+
+Alternative path for strong continuity: prove it directly via the D11 peak function machinery: `tendsto_integral_peak_smul_of_integrable_of_tendsto` gives pointwise-ish... Actually there's a stronger mathlib theorem: `MeasureTheory.tendsto_integral_peak_smul_of_integrable_of_tendsto` — converges a.e.? Hmm. In `Mathlib.MeasureTheory.Integral.PeakFunction` there are several variants: `tendsto_integral_peak_smul_of_integrable_of_tendsto` (a.e. convergence of the integrated function?), `ae_tendsto_integral_peak_smul...`, and importantly `tendsto_Lp_peak_smul`? Let me check: I recall `Mathlib.MeasureTheory.Integral.PeakFunction` has `tendsto_integral_peak_smul_of_integrable_of_tendsto : Tendsto (fun t => ∫ x, φ t x • g x) l (𝓝 (a • g x₀))` — pointwise convergence at a point; and `ae_tendsto_integral_peak_smul_of_integrable_of_tendsto`; and `tendsto_Lp_peak_smul_of_integrable...`? If mathlib has an Lp version of the peak function theorem, then strong continuity in L¹ follows directly. Let me check the file.
+
+Let me plan the concrete deliverables for this first 4-hour invocation (also the first checkpoint milestone: exact target statement, dependency search, choice of approach, and a compiling first lemma):
+
+1. Explore mathlib APIs: convolution (`Mathlib.MeasureTheory.Function.Convolution`), peak function (`Mathlib.MeasureTheory.Integral.PeakFunction`), Lp spaces, `hasFDerivAt_integral_of_dominated_loc_of_lip'` for differentiation under integral.
+2. Verify build works: `lake build` in release/ (check it compiles now).
+3. Create `release/Poincare/D12/HeatSemigroup/Basic.lean` with:
+   - `heatOperator` definition
+   - mass preservation: `∫ x, heatOp n t f x = ∫ x, f x` (via Fubini? Actually via translation invariance: heatOp = convolution; ∫ conv = ∫K · ∫f needs Fubini: mathlib `integral_integral_swap`? There's `MeasureTheory.integral_prod` and `integral_integral_swap`. Might be doable but heavy. Alternatively skip mass preservation and go straight to contraction which only needs the inequality direction.)
+   - positivity: if f ≥ 0 a.e. then heatOp f ≥ 0 a.e. (needs the integral to be nonneg: `integral_nonneg_of_ae` plus measurability of kernel·f)
+   - L∞ bound: |heatOp n t f x| ≤ sup-norm bound: for f with `∀ y, ‖f y‖ ≤ M` (or `|f y| ≤ M`), `|heatOp n t f x| ≤ M` using kernel nonneg and mass 1: |∫ K f| ≤ ∫ K |f| ≤ ∫ K M = M. This is the L∞ contraction, genuinely nontrivial but elementary with Bochner integral bounds (`integral_abs_le`, `integral_mono`...). Note: for the Bochner integral, `∫ y, K x y t * f y` is a scalar ℝ integral. Need `Integrable` of `y ↦ K x y t * f y` for bounded measurable f: K integrable (from `integral = 1`), product with bounded function integrable: `Integrable.mul_bounded`? Hmm, there's `Integrable.mul_essSup_bounded`? For ℝ-valued: `Integrable.bdd_mul'`? Let me search: mathlib has `Integrable.bdd_mul'` (for `‖f‖ * ‖g‖` bounded)? I recall `MeasureTheory.Integrable.bdd_mul` in `Mathlib.MeasureTheory.Integral.Bochner`. Something like: `hIntegrable.bdd_mul' hg : Integrable (f * g)` where hg : essSup ‖g‖ < ∞? Let me check the source. There's `Integrable.bdd_mul'` I believe.
+
+4. L¹ contraction via Fubini: `∫ x, |heatOp n t f x| ≤ ∫ x, ∫ y, K(x-y) |f y| = ∫ y, (∫ x, K(x-y)) |f y| = ∫ |f|`. In mathlib, there's `MeasureTheory.integral_integral_swap` (Fubini) — requires integrability of the two-variable function. For nonneg it's `lintegral_lintegral_swap` (Tonelli) for ℝ≥0∞. Simpler: use `∫⁻` (lintegral) version: `lintegral` of |heatOp| ≤ ‖f‖₁ via Tonelli. But the task says "with all measurability/integrability obligations" — a lintegral proof is cleaner: Tonelli in mathlib: `lintegral_lintegral_swap`. Then `∫ x, ‖heatOp...‖` bounded via `lintegral_eq_integral`? Hmm.
+
+Alternative cleaner route: use mathlib's convolution API. In `Mathlib.MeasureTheory.Function.Convolution`, there might be a Young-type inequality. Let me actually check what's there in this specific revision. I remember: `MeasureTheory.convolution` definition requires `[NormedAddCommGroup E] [NormedSpace ℝ E] ...` with `[MeasurableAdd₂ ...]`. Theorems: `convolution_integral`? `integral_convolution`? Hmm.
+
+Let me look at the mathlib sources present. Files of interest:
+- `Mathlib/MeasureTheory/Integral/PeakFunction.lean`
+- `Mathlib/MeasureTheory/Function/Convolution.lean`
+- `Mathlib/Analysis/Convolution.lean`
+- `Mathlib/MeasureTheory/Integral/Bochner.lean` (for dominated convergence / differentiation)
+- `Mathlib/MeasureTheory/Integral/IntegralEqImproper.lean` (used by D10)
+
+Also check whether mathlib has `lp`/Young: `Mathlib.MeasureTheory.Function.Convolution` — I'm fairly sure it has `convolution_tendsto_right` and maybe `lpConvolution`... Let me grep.
+
+5. Set up `checkpoint.json` at worktree root (or in longrun/? The task says "preserve progress in checkpoint.json" — I'll put it in the worktree root: `/data3/.../D12-heat-semigroup-analysis/checkpoint.json`).
+
+Also the audit module: `release/Poincare/D12/HeatSemigroup/AxiomAudit.lean` with `#print axioms` and fail-closed checks, plus a programmatic axiom audit (I can write a script similar to tools/ ones; check what d6_probe.py does — but those are for the D6 release. I'll write my own small audit script or Lean-based `#print axioms` file. "fail-closed programmatic axiom audit" — I'll write a Python script that parses `#print axioms` output and fails if anything beyond propext/Classical.choice/Quot.sound appears. Since I can't run `lake env lean` interactively per decl maybe, simplest: an Audit.lean with `#print axioms` for each new decl; a Python script runs `lake env lean` on it, parses, checks the allowlist, exits nonzero on violation.)
+
+6. Results files: `longrun/results/D12-heat-semigroup-analysis.md` and `.json`.
+
+First: verify the package builds. `cd release && lake build` — this may take a while (but mathlib is prebuilt in the D6 worktree's .lake? The symlink `.lake/packages` points to D6 worktree's packages; but `.lake/build` for this worktree is fresh — `lake build` will compile everything from scratch, which could take a long time (mathlib full build is hours on a big machine; here maybe an hour+). Hmm. Actually `lake build Poincare` needs to build mathlib dependencies first — mathlib's build artifacts (olean files) live in `mathlib/.lake/build` inside the packages dir? Mathlib builds its artifacts in `mathlib4/.lake/build` which is shared via the symlink! Since `.lake/packages` symlinks to the D6 worktree's `.lake/packages`, and mathlib is a git worktree there with its own `.lake` dir... let me check: does `mathlib/.lake` exist in the packages dir? If the D6 worker already built mathlib there, then oleans are cached and my `lake build` only compiles the Poincare package. Let me check.
+
+Also `release/.lake/build` in this worktree is empty (fresh), so building Poincare + Audit + Ledger etc. will compile all D1-D11 sources too — that's fine (maybe a few minutes).
+
+Let me now:
+1. Check .lake/build in mathlib packages (prebuilt?).
+2. Start a background `lake build` in release/.
+3. While building, explore mathlib APIs.
+
+Then write Basic.lean with the first compiling lemma (L∞ contraction or positivity), checkpoint after hour 1.
+
+Let me start.
+Good picture of upstream. Now let me check the build cache status and kick off a build, then explore the relevant mathlib APIs.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

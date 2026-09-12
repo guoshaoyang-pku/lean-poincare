@@ -1,0 +1,192 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree and the task at hand.
+dsh: reasoning:
+The worktree has no checkpoint.json at top level. Let me look at the longrun directory, LONG_PLAN.json, and the release structure.
+dsh: reasoning:
+Let me look at the release directory structure, particularly the Poincare directory, and the D9/D10/D11 sources. Also check the results directory for the D12-parabolic-local-existence files (which may not exist yet).
+dsh: reasoning:
+No D12 files exist yet. This is a fresh start for my task. Let me explore the relevant APIs:
+1. mathlib ODE API
+2. Banach fixed point (contractingWith)
+3. D9 DeTurck/ParabolicEstimates
+4. D10 GaussianToolbox/HeatKernelEuclidean
+5. D11 HeatKernelBridge
+
+Let me look at the D9 ParabolicEstimates and DeTurck first, plus D10 GaussianToolbox.
+dsh: reasoning:
+Let me look at the key files. First, let me check the D10 GaussianToolbox (Basic, Convolution) and HeatKernelEuclidean Semigroup, since my task says "Starting from D10 Gaussian mass/convolution and D11 initial convergence where available, prove a genuine Euclidean heat-operator estimate on a specified function space... Use Lebesgue measure and the explicit kernel."
+
+Wait — actually my task is D12-parabolic-local-existence: "Construct a nontrivial heat-semigroup mild solution or contraction argument on a precisely defined Banach space with verified bounds, rather than finite-dimensional ODE relabeling. Prove the exact bridge obligations for a semilinear parabolic model."
+
+So my task: 
+1. Inspect mathlib ODE, Banach fixed point, function-space and D9 DeTurck/ParabolicEstimates APIs.
+2. Construct a nontrivial heat-semigroup mild solution or contraction argument on a precisely defined Banach space with verified bounds.
+3. Prove the exact bridge obligations for a semilinear parabolic model.
+4. Identify the derivative loss and quasilinear regularity barriers to Ricci-DeTurck.
+
+Approach: The classic approach to semilinear parabolic local existence: on X = C_b(ℝ^n) or L^∞, define mild solution of u_t = Δu + f(u), u(0) = u0, via Duhamel: u(t) = e^{tΔ}u0 + ∫₀ᵗ e^{(t-s)Δ} f(u(s)) ds. Use Banach fixed point on C([0,T], X) with the heat semigroup estimates: ‖e^{tΔ}u0‖ ≤ ‖u0‖ and ‖e^{(t-s)Δ} f(u(s))‖ ≤ ‖f(u(s))‖ — L^∞ contraction. Then the map Φ(u)(t) = e^{tΔ}u0 + ∫₀ᵗ e^{(t-s)Δ} f(u(s)) ds is a contraction for T small enough if f is Lipschitz (in L^∞). That gives genuine semilinear parabolic local existence in L^∞/C_b.
+
+The heat semigroup L^∞ estimates needed:
+- ‖e^{tΔ}φ‖_{L^∞} ≤ ‖φ‖_{L^∞} (sup of convolution with nonnegative kernel of mass 1)
+- e^{tΔ}φ ∈ C_b (continuity in x) — maybe not needed for L^∞ space
+- strong continuity at t=0 for nice φ.
+
+Let me check what's available in D10 GaussianToolbox and D10 HeatKernelEuclidean. These will be the building blocks.
+
+Let me read those files.
+dsh: reasoning:
+Good. Now let me look at D10 HeatKernelEuclidean Semigroup and HeatEquation, and D11 HeatKernelBridge. These are my direct dependencies for a heat-semigroup mild solution.
+dsh: reasoning:
+Excellent! D10 has a genuine Euclidean heat kernel with:
+- `gaussianKernel n t x = (4πt)^{-n/2} exp(-‖x‖²/(4t))` — defined in Mass.lean or Basic.lean probably.
+- semigroup convolution identity
+- heat equation at kernel level
+
+Now for my task, the approach: semilinear parabolic local existence via Duhamel + Banach fixed point in L^∞. The key steps:
+
+1. Define the heat semigroup action on bounded measurable functions: (H_t f)(x) = ∫ K_t(x-y) f(y) dy. For f in a nice class (bounded measurable, or continuous with compact support), prove:
+   - ‖H_t f‖_∞ ≤ ‖f‖_∞ (L^∞ contraction).
+2. Strong continuity of t ↦ H_t f at 0 for suitable f (uniform continuity + boundedness): H_t f → f as t → 0.
+3. The semigroup law H_t (H_s f) = H_{t+s} f — needs Fubini; maybe skip or use convolution identity at kernel level with Fubini. This is harder. Might avoid needing it for the fixed-point argument.
+4. Duhamel mild solution: u(t) = H_t u0 + ∫_0^t H_{t-s} f(u(s)) ds. Fixed point in X_T := C([0,T], L^∞ space) with sup norm. Need:
+   - The map Φ(u)(t) is well-defined and continuous in t.
+   - Boundedness estimates: ‖Φ(u) - Φ(v)‖ ≤ C·T·‖u-v‖ for Lipschitz f. Need ‖H_{t-s} (f(u(s)) - f(v(s)))‖_∞ ≤ ‖f(u(s)) - f(v(s))‖_∞ ≤ L ‖u(s) - v(s)‖_∞.
+   - The integral ∫_0^t ... ds is Bochner integral in the Banach space X = L^∞ (or C_b). For the Bochner integral we need measurability of s ↦ H_{t-s} f(u(s)) and integrable bound. The bound is L ‖u-v‖_∞ which is constant, so integrability is easy; measurability: s ↦ H_{t-s} w(s) where w is continuous and the semigroup is strongly continuous... This needs care. Alternatively use a pointwise-dual approach, or define the fixed point in a space of functions u : [0,T] → X where X = L^∞, and use integral with respect to s of the function valued in X.
+
+This is a real chunk of work. Bochner integrability of s ↦ H_{t-s} f(u(s)): if u is continuous in X and the map (t, x) ↦ (H_t f(x)) is continuous... hmm.
+
+Alternative simpler and still genuine approach: Consider a *spatially discretized*? No — that would be finite-dimensional ODE relabeling which is explicitly disallowed.
+
+Let me think about what's achievable within 4 hours per invocation and the acceptance rules. The key difficulty: defining L^∞ as a Banach space. mathlib has `lp` spaces: `lp E p` for p = ∞. For p=∞, `lp E ∞` is the space of functions with `‖f‖ = essSup ‖f(x)‖ < ∞`. mathlib's `lp` has a Banach space structure for p = ∞ (there's `instNormedAddCommGroup_lp` etc., complete for p=∞). Actually mathlib has `lp.completeSpace` for p = ∞. And `lp` for general types ι. So X = `lp (fun _ : EuclideanSpace ℝ (Fin n) => ℝ) ∞`? Hmm, `lp` uses `E : ι → Type*` as a family of normed groups; with ι = EuclideanSpace ℝ (Fin n) and E = fun _ => ℝ. The norm of f in `lp (fun _ => ℝ) ∞` is essSup ‖f x‖. Hmm, but in Lean, `lp` notation: `lp E p` where `E : ι → Type*` has each `E i` a NormedAddCommGroup. Then elements are `∀ i, E i`-ish with finite norm. Good: `LpLinfty := lp (fun _ : EuclideanSpace ℝ (Fin n) => ℝ) ∞`.
+
+Hmm, but working with `lp` for p = ∞ might have API friction. Let me check what mathlib provides:
+- `lp.mem_lp_iff` etc.
+- For p = ∞: `lp.norm_apply_le_norm` : ‖f i‖ ≤ ‖f‖ for p = ∞. That's the key estimate!
+- `lp.lipschitzWith` etc.
+
+Actually, maybe better: use the space of bounded continuous functions `α →ᵇ β` (BoundedContinuousFunction) — mathlib has `α →ᵇ β` with sup norm, complete. X = `(EuclideanSpace ℝ (Fin n)) →ᵇ ℝ`. Elements have a coercion to functions: `f x` via `DFunLike`. Norm: ‖f‖ = sup ‖f x‖. `norm_coe_le_norm` : ‖f x‖ ≤ ‖f‖. That's very friendly. The heat semigroup maps bounded continuous functions to bounded continuous functions (continuity of the convolution of a continuous function with a bounded integrable kernel; and boundedness from mass 1).
+
+But then H_t f ∈ C_b. For the contraction argument we need X closed under H_t. With f continuous bounded and the kernel integrable, the convolution x ↦ ∫ K_t(y) f(x-y) dy is continuous — need a dominated convergence / continuity of convolution lemma. mathlib has `HasCompactSupport`-based convolutions: `convolution`, `HasFDerivAt.convolution` etc. There's `Continuous.convolution`? Let me check: mathlib has `Mathlib.Analysis.Convolution` with `convolution` for f : G → E, g : G → E' with `HasCompactSupport`. Hmm, those are for compact support. But we can get continuity of x ↦ ∫ K(y) f(x - y) dy on ℝⁿ via dominated convergence using the explicit Gaussian kernel and its integrability, and f continuous bounded: |K(y) f(x-y)| ≤ ‖f‖∞ K(y) which is integrable. Continuity at x0: f continuous at x0 - y uniformly? Pointwise continuity of f gives continuity of the integrand pointwise in y; dominated convergence gives continuity of the integral. mathlib's dominated convergence for continuity: there might be `continuous_of_dominated`? Hmm, there is `MeasureTheory.continuousWithinAt_of_dominated` maybe? Let me check. Actually there's `hasFDerivAt_integral_of_dominated_of_fderiv_le` and `continuousAt_of_dominated`... I recall `continuous_of_dominated` exists in `Mathlib.MeasureTheory.Integral.DominatedConvergence`. Something like:
+
+```
+theorem continuousAt_of_dominated {F : X → α → E} {x₀ : X} {bound : α → ℝ}
+    (hF_meas : ∀ᶠ x in 𝓝 x₀, AEStronglyMeasurable (F x) μ)
+    (h_bound : ∀ᶠ x in 𝓝 x₀, ∀ᵐ a ∂μ, ‖F x a‖ ≤ bound a)
+    (bound_integrable : Integrable bound μ)
+    (h_cont : ∀ᵐ a ∂μ, ContinuousAt (fun x => F x a) x₀) :
+    ContinuousAt (fun x => ∫ a, F x a ∂μ) x₀
+```
+
+Yes, `continuousAt_of_dominated` exists in mathlib. 
+
+Also mass: ∫ K_t(x - y) dy = 1 — need the total mass in ℝⁿ. D10 has Mass.lean — let me check it. It probably has `integral_gaussianKernel_mass` = 1. Then ‖H_t f‖∞ ≤ ‖f‖∞ since |H_t f(x)| = |∫ K_t(x-y) f(y) dy| ≤ ∫ K_t(x-y) ‖f‖∞ dy = ‖f‖∞.
+
+Strong continuity at 0 for uniformly continuous bounded f: H_t f → f as t → 0+. This requires a lemma on the approximation of identity. This is substantial but there might be a way: use the known mathlib result? mathlib has approximation of identity results in `Mathlib.Analysis.Convolution`? There's `Convolution.lean`... There's also `HasCompactSupport`. Hmm, the classical "approximation to identity" lemma might not be in mathlib directly. We can prove our own for the Gaussian: 
+
+H_t f(x) - f(x) = ∫ K_t(y) (f(x-y) - f(x)) dy. Split the integral into |y| ≤ δ and |y| > δ. For |y| ≤ δ: |f(x-y)-f(x)| ≤ ε by uniform continuity. For |y| > δ: bounded by 2‖f‖∞ ∫_{|y|>δ} K_t(y) dy → 0 as t → 0 (since K_t concentrates). Need the concentration estimate: ∫_{|y|>δ} K_t(y) dy → 0 as t → 0⁺. This is a Gaussian tail estimate. Provable: scale y = √t z, so ∫_{|y|>δ} K_t(y) dy = ∫_{|z|>δ/√t} K_1(z) dz → 0 as t→0 since the full integral is finite. Requires change of variables — some work, but doable.
+
+Alternatively, restrict the initial data class further: the D11 HeatKernelBridge task says "all continuous functions on noncompact Euclidean space is overstrong". For my task (D12-parabolic-local-existence), the mild-solution fixed point needs the space X to be invariant under H_t and the Duhamel term. Let me think about the cleanest formulation:
+
+**Plan**: Work on X = (EuclideanSpace ℝ (Fin n)) →ᵇ ℝ (bounded continuous functions, sup norm). 
+
+Define H_t f (x) = ∫ y, K_t(y) • f (x - y)... wait sign conventions: convolution (K * f)(x) = ∫ K(y) f(x - y) dy. With K(y) = K_t(y). Also equals ∫ K(x - y) f(y) dy by symmetry of kernel.
+
+Key lemmas:
+1. `heatSemigroup_apply` well-defined: for f ∈ X (bounded continuous), H_t f is bounded continuous: `heatKernel_conv_bcf_cont` and bound ‖H_t f‖ ≤ ‖f‖.
+2. Linearity: H_t (a f + b g) = a H_t f + b H_t g (integral linearity).
+3. Contraction: ‖H_t f - H_t g‖ ≤ ‖f - g‖ (even contractive).
+4. Semigroup property H_t(H_s f) = H_{t+s} f: needs Fubini. Use mathlib `integral_integral_swap` — for nonnegative? Fubini for general functions: mathlib has `integral_integral_swap` requiring integrability in product. Hmm. Could use Tonelli for nonneg + integrable. Actually since |K_t(y) K_s(z) f(x - y - z)| ≤ ‖f‖∞ K_t(y) K_s(z), and ∫∫ K_t(y)K_s(z) = 1 < ∞, the function is integrable, so Fubini applies. This might be heavy but possible.
+5. Strong continuity at 0: for uniformly continuous f... but X = bounded continuous functions includes non-uniformly-continuous f. We could either:
+   a. restrict initial data to uniformly continuous (and prove e.g. compact support implies uniform continuity) — the objective says "precisely defined Banach space" — but uniformly continuous bounded functions aren't closed under... hmm, they are a closed subspace of C_b? Uniform continuity is preserved under uniform limits, and the set of bounded uniformly continuous functions is closed in sup norm. But is it a Banach space? Yes: bounded uniformly continuous functions form a closed subspace of C_b, hence Banach. But in Lean, constructing that subspace as a `NormedAddCommGroup` requires quotienting... The space could be defined as a subtype `{f : α →ᵇ ℝ // UniformContinuous f}` — well `UniformContinuous (f : α → ℝ)`. And prove it's complete as a closed subspace. mathlib has `Closeds` completeness: `IsClosed.isComplete`? For closed sets in complete spaces: `IsClosed.completeSpace`? Hmm there's `Subtype.completeSpace` for closed subsets? There is `IsClosed.completeSpace`? Not sure of exact name. There's `Metric.completeSpace_of_isClosed`? Hmm, maybe. Actually there is `Subtype.instCompleteSpace` requiring `IsClosed s` and `CompleteSpace α`? Let me check: `Mathlib.Topology.Algebra.UniformGroup`... I recall `IsClosed.isComplete` in `Mathlib.Topology.MetricSpace.Basic`? There's `isClosed_iff_isComplete`? For the specific setting: mathlib has `CompleteSpace` for `Subtype` of a closed set? Hmm. In `Mathlib.Topology.MetricSpace.Isometry`... Actually there's `Subtype.completeSpace [CompleteSpace α] (h : IsClosed s)`? I believe there is something like that in `Mathlib/Topology/MetricSpace/Baire`? Not sure. Let me search during implementation.
+
+   b. For strong continuity at 0, we only need it for the specific u0 (initial data) and for f(u(s)) values along the iteration. In the fixed point argument on C([0,T], X), we need continuity of t ↦ Φ(u)(t), which needs continuity of s ↦ H_{t-s}(w(s)) in s plus continuity of H_τ g in τ (strong continuity) for g = f(u(s))... 
+
+   Standard alternative: define the solution space as those u ∈ C([0,T], X) such that... hmm, classical approach (e.g. for L^∞ mild solutions) uses the "weak" setup or defines the mild solution integral pointwise and proves continuity using the semigroup's smoothing. To keep the Duhamel integral honest, we need:
+   - For each t, the Bochner integral ∫_0^t H_{t-s} (f(u(s))) ds exists in X.
+   - t ↦ Φ(u)(t) is continuous.
+   
+   Strong continuity of H_τ at τ = 0 only on the range of f∘u and u0. If u0 is uniformly continuous and f is Lipschitz (global Lipschitz on ℝ — e.g. f(u) = ... hmm, typical semilinear example: f(u) = -u³ is locally Lipschitz; global Lipschitz f = λu is linear — then the equation is u_t = Δu + λu, solvable via rescaling e^{λt}H_t u0 — that's an interesting test case but "linear" might be considered trivial-ish; still genuine: mild solution of the linearized equation).
+   
+   For a genuinely nonlinear but globally Lipschitz f: f(u) = a·arctan(u) (bounded, Lipschitz with L = |a|). Nice: u_t = Δu + a·arctan(u). Or f(u) = -u/(1+u²) (Lipschitz, bounded). These are genuine semilinear parabolic with global Lipschitz nonlinearity — local existence (actually global) via Banach fixed point. 
+
+   For locally Lipschitz f (like -u³), we'd need a cutoff/truncation argument: replace f by f ∘ cutoff on the ball B(u0, R), get fixed point for the truncated problem with T small so the solution stays in the ball, hence solves the original. This is the "standard" semilinear local existence. More work but more genuine. Given time constraints, start with global Lipschitz f — still a "nontrivial heat-semigroup mild solution ... on a precisely defined Banach space with verified bounds". Then if time permits, extend to locally Lipschitz with truncation.
+
+So the plan:
+- Space: X = (EuclideanSpace ℝ (Fin n)) →ᵇ ℝ (complete since codomain ℝ complete). Hmm — but for H_t to map X to X we need continuity of convolution; for strong continuity at 0 we need uniform continuity of u0.
+
+Let me define the space Y = {f : X // UniformContinuous f} — bounded uniformly continuous. And prove Y is closed in X (uniform limit of uniformly continuous is uniformly continuous — mathlib: `UniformContinuous.uniformContinuous_of_tendsto`? There's `Tendsto.uniformContinuous_of_uniformlyContinuous`? Hmm; there is `UniformContinuousOn`... Let me think: there's `Filter.Tendsto.uniformContinuous_iff`? I recall `UniformContinuous.uniformContinuous_of_tendsto` might not exist; but there's the fact that uniform limit of uniformly continuous functions is uniformly continuous — in mathlib as `Tendsto.uniformContinuous`? Hmm. Let me search later.)
+
+Then the theorem:
+
+**Theorem (semilinear mild existence)**: For n : ℕ, T > 0, f : ℝ → ℝ globally Lipschitz with constant L, u0 : Y:
+there exists u : C([0,T], X) with u 0 = u0 (as functions) and for all t ∈ [0,T]:
+u t = H_t u0 + ∫_0^t H_{t-s} (f ∘ (u s)) ds,
+where the Bochner integral is in X. Uniqueness: any other such v equals u.
+
+The proof: Banach fixed point on C([0,T], X) restricted to the closed ball... no wait, need contraction. Define Φ(v)(t) = H_t u0 + ∫_0^t H_{t-s} f(v(s)) ds. Then:
+‖Φ(v)(t) - Φ(w)(t)‖ ≤ ∫_0^t ‖H_{t-s}(f(v(s)) - f(w(s)))‖ ds ≤ ∫_0^t L ‖v(s)-w(s)‖ ds ≤ T·L ‖v-w‖_∞.
+So Φ is L T-Lipschitz; contraction iff L T < 1. Wait but also f(0) term: ‖Φ(v)(t)‖ ≤ ‖u0‖ + T·(L‖v‖ + |f(0)|)... Actually we don't even need the ball: Φ maps C([0,T],X) to itself and is a contraction when LT < 1. T small enough: T < 1/L. That gives local (in time) existence for globally Lipschitz f. 
+
+Hmm, wait: is the contraction in the whole space C([0,T], X) or do we need a closed ball? For a contraction on the whole complete metric space, Banach fixed point gives unique fixed point in the whole space. ‖Φ(v) - Φ(w)‖_∞ ≤ LT ‖v - w‖_∞ gives contraction when LT < 1. 
+
+The nontrivial ingredients:
+(a) H_t maps X to X with ‖H_t g‖ ≤ ‖g‖ (linear contraction). This needs: kernel ≥ 0, mass 1, integrable, and continuity of the convolution.
+(b) Strong continuity: t ↦ H_t g continuous on [0,T] as map to X, for g ∈ Y (uniformly continuous bounded). Then s ↦ H_{t-s} f(v(s)) is continuous for v ∈ C([0,T], X) (since f Lipschitz maps X continuously to X, and v(s) ∈ Y? No! v(s) need not be uniformly continuous!). 
+
+Hmm, problem: for the Bochner integral ∫_0^t H_{t-s}(f(v(s))) ds, at s = t we have H_0 — we need H_0 = identity, defined for all g ∈ X. And strong continuity of τ ↦ H_τ g at τ = 0 holds only for g uniformly continuous (in general). So the map s ↦ H_{t-s}(f(v(s))) would fail continuity at s = t unless f(v(t)) is uniformly continuous.
+
+Options:
+1. Restrict the whole fixed point to the space C([0,T], Y) where Y = bounded uniformly continuous functions with sup norm. Need f Lipschitz to map Y to Y (Lipschitz f maps uniformly continuous to uniformly continuous — true: uniform continuity composed with Lipschitz). And H_t maps Y to Y: need uniform continuity of x ↦ ∫ K_t(y) g(x - y) dy for g ∈ Y: |H_t g(x) - H_t g(x')| ≤ ∫ K_t(y) |g(x-y) - g(x'-y)| dy ≤ ω(‖x - x'‖) where ω is the modulus of uniform continuity. Good — H_t g ∈ Y. And Y complete (closed subspace of C_b). Then Φ maps C([0,T], Y) to itself: need t ↦ H_t g : [0,T] → Y continuous at every τ ≥ 0 including 0 for g ∈ Y — strong continuity on Y. This is the approximation-of-identity argument: ‖H_t g - g‖_∞ ≤ sup_{|y|≤δ} |g(x-y) - g(x)| + 2‖g‖∞ ∫_{|y|>δ} K_t(y) dy → 0. And at τ > 0: continuity from the formula H_t g - H_s g = ... hmm, need t ↦ H_t g continuous at t > 0 as a map to Y. For that, use continuity of K_t in t (from D10 hasDerivAt_gaussianKernel! derivative of kernel in t at t > 0) and dominated convergence: |∂ₜ K_t| integrable and continuous in t... The kernel K_t(x) is C^∞ in (t,x) for t > 0. Dominated convergence in t: locally for t ∈ [ε, T], |∂ₜ K_t(y)| ≤ C(ε, T) e^{-c ‖y‖²}·(something polynomial) which is integrable. Since D10 has hasDerivAt_gaussianKernel with explicit derivative, I can bound the derivative locally in t by an integrable function. That gives continuity of t ↦ H_t g on (0, T] via hasFDerivAt_integral_of_dominated... Actually just continuousAt_of_dominated for continuity in t. 
+
+That's the heavy part. Alternatively define Y with a stronger regularity to make life easier? No—uniform continuity is the natural class.
+
+Hmm wait, actually there's a subtlety: is Y (bounded uniformly continuous) closed in C_b? Yes: uniform limit of uniformly continuous functions is uniformly continuous. mathlib lemma: `UniformContinuous.uniformContinuous_of_tendsto`? Let me search. I recall in mathlib: `Filter.Tendsto.uniformContinuous` — no... There is `UniformSpace`... I'll search: maybe `uniformContinuous_of_tendsto`? Hmm. There's `Tendsto.uniformContinuous_of_uniform`? I'll look. In any case it can be proved directly from definitions (ε/3 argument): if g_n → g uniformly, all g_n uniformly continuous, then g uniformly continuous: |g(x) - g(y)| ≤ |g(x) - g_n(x)| + |g_n(x) - g_n(y)| + |g_n(y) - g(y)| ≤ ε/3·... Choose n with ‖g_n - g‖ < ε/3, then δ from uniform continuity of g_n. Provable directly — fine.
+
+2. Alternatively, use the weak-star / dual formulation avoiding Bochner integrals: define u(t) via the pointwise Duhamel formula and prove continuity using kernel estimates. This avoids Bochner machinery for the Duhamel integral (it's a plain Lebesgue integral in s for each x), and then the fixed point is on C([0,T], X) — need Φ maps to C([0,T], X): continuity of t ↦ Φ(v)(t) pointwise + we need it as map into X (uniform in x). Same approximations of identity issues arise. Bochner integral in X is cleaner for the norm estimates though. Hmm — but the Bochner integral of s ↦ H_{t-s} f(v(s)) in the Banach space Y needs measurable + integrable; measurable of continuous functions is fine.
+
+Actually, maybe simpler: do the whole argument in X = C_b and only require continuity at 0 for H applied to u0 and to f(v(t)) where v ∈ C([0,T], Y)... mixed spaces get messy.
+
+Let me just go with Y = bounded uniformly continuous functions. But there's friction: Y as a subtype of →ᵇ. Norm on subtype: ‖⟨g, hg⟩‖ = ‖g‖. Completeness of closed subtype: mathlib has `CompleteSpace` for `{x : α // x ∈ s}` when s is closed? I think `Subtype.completeSpace` might not exist directly; there's `Metric.completeSpace_iff_isComplete`? Hmm. There's the fact that closed subsets of complete metric spaces are complete: mathlib theorem `IsClosed.isComplete`? Hmm... Let me just search during implementation.
+
+Alternatively — simpler and still perfectly genuine: take the domain to be a *compact* box or use functions with compact support? Compact support doesn't help continuity at 0 issues much; uniform continuity is automatic on compact domains. Oh wait — here's a cleaner option: **work on the torus** or **on a compact domain with the torus heat kernel**? The task says "Euclidean heat-operator estimate on a specified function space" and the overall goal is Ricci flow on compact manifolds, so a torus/compact model is actually closer to the target. But D10/D11 give us the Euclidean Gaussian kernel with mass, convolution, semigroup, heat equation. Building a torus heat kernel from the Euclidean one via periodization is a project in itself.
+
+Better to stay Euclidean with Y = bounded uniformly continuous functions, and u0 ∈ Y. Actually hmm, wait. Let me reconsider: maybe define the Banach space X as the space of all bounded *uniformly continuous* functions directly as a subtype, and just prove completeness by the ε/3 argument using mathlib's completeness of →ᵇ. That's one nontrivial lemma: `CompleteSpace (BoundedUniformContinuous ℝ n)` where
+
+```
+def BoundedUniformContinuous (n : ℕ) := {f : EuclideanSpace ℝ (Fin n) →ᵇ ℝ // UniformContinuous ⇑f}
+```
+
+with norm inherited. Also need AddCommGroup/NormedAddCommGroup instances on the subtype: mathlib has `Subtype.instAddCommGroup`? There's a general "instances on subtype" via `Subtype.semigroup`... For a subtype of an additive group it's not automatic that the subset is closed under the operations; we need to show sum of uniformly continuous is uniformly continuous — fine, define instances manually with proofs. This is all doable but adds up. 
+
+Hmm, alternative that avoids subtype instances entirely: work with `α →ᵇ ℝ` where α = ℝⁿ and use the *whole* space X = →ᵇ, but restrict the fixed point to those v ∈ C([0,T], X) with v t ∈ Y for all t and t ↦ v t : [0,T] → Y continuous... the space C([0,T], Y) where Y is the subtype. The instance friction remains.
+
+Alternatively use `ContinuousMap`-like space directly: define Y as a structure? The cleanest: since we need completeness, closedness under +, scalar, and norm — I'll define a `Subtype` with explicit instances:
+
+```lean
+structure BUC (n : ℕ) where
+  f : EuclideanSpace ℝ (Fin n) →ᵇ ℝ
+  uc : UniformContinuous ⇑f
+```
+
+and give it a NormedAddCommGroup instance: pointwise add with uc = h.uc.add h'.uc etc. Completeness via closedness... For a structure it's a bit more work than subtype. With Subtype I get the additive structure automatically? No — mathlib does have `Subtype` instances only for things that are closed under ops automatically? Actually no, mathlib doesn't have generic subgroup-like instances on arbitrary subtypes; it has them for predicates known to be subgroups (via `AddSubgroup`). Hmm, actually `Subtype` has `instAdd` for `p : α → Prop` with... no, I don't think so. 
+
+OK here's the thing: I should first check what mathlib gives for bounded continuous functions and for the required continuity lemmas, then decide. Let me also check D9 ParabolicEstimates — the task explicitly says inspect it; it may already have Gronwall and matrix-model stuff (finite-dimensional though). And D9 DeTurck StatementOnly/SymbolModel — the task says identify derivative-loss barriers; D9 might have the DeTurck statement recorded. Let me look at those files quickly, plus D11 HeatKernelBridge Basic to see the interfaces.
+
+Also check mathlib for:
+- `continuousAt_of_dominated` (DominatedConvergence)
+- `integral_integral_swap` (Fubini)
+- `lp` completeness for p=∞ — maybe simpler than →ᵇ? For →ᵇ, completeness: `ContinuousMap.completeSpace`? mathlib has `instCompleteSpace` for α →ᵇ β when β complete: yes, `BoundedContinuousFunction.completeSpace` exists.
+- Banach fixed point: `ContractingWith.exists_fixedPoint` in `Mathlib.Topology.MetricSpace.Contracting`.
+- ODE API: `Mathlib.Analysis.ODE.PicardLindelof` — `exists_forall_deriv_eq_Ioo_eq_of_contDiff`... the task says inspect; I can mention it in the report. The ODE path is finite-dim or Banach-space ODE: mathlib has Picard–Lindelof on Banach spaces (`exists_forall_hasDerivAt_eq_of_contDiff`? It's `Mathlib.Analysis.ODE.PicardLindelof`: `exists_forall_hasDerivAt_eq_of_contDiff` for f : E → E). Note: the heat equation can't be ODE in time — the semigroup approach is needed; that's the point.
+
+Let me now look at D9 ParabolicEstimates and DeTurck quickly, and D11 bridge. Then check mathlib availability of key lemmas. Then start building.
+
+Priority order for this 4-hour invocation:
+1. Survey D9 DeTurck/ParabolicEstimates + D11 bridge (30 min).
+2. Check mathlib lemmas availability (30 min).
+3. Set up module directory Poincare/D12/ParabolicLocal with a first file: definitions of heat semigroup action + first compiling lemmas (positivity, mass, boundedness). Aim for checkpoint 1 milestone: exact target statement + first compiling lemma.
+4. Checkpoint files: longrun/checkpoint.json? The instructions say "Save a compile-checked checkpoint at least every hour" and "preserve progress in checkpoint.json". There's no checkpoint.json in the worktree root. The task says "Continue from existing files and checkpoint.json in this worktree" — but there is none; maybe checkpoint.json is meant to live under longrun/ or created by me. Let me create longrun/checkpoint.json (or worktree root?). "Only your own longrun/results/D12-parabolic-local-existence.md can complete this task." I'll put checkpoint at worktree root as checkpoint.json and also longrun/checkpoint.json? To be safe, create both? The dispatcher may expect a specific location. The instructions in the task text: "preserve progress in checkpoint.json" and "write explicit dependency requests in checkpoint.json". I'll create /worktree/checkpoint.json. Hmm, "Continue from existing files and checkpoint.json in this worktree" — since none exists, I create it at the worktree root.
+
+Let me also check the tools/ dir and manifest/ dir for useful scripts (axiom audit scripts).
+Let me look at the D9 APIs and D11 bridge, plus audit tooling available in the worktree.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

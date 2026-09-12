@@ -1,0 +1,331 @@
+dsh: reasoning:
+Let me start by reading the gate files and understanding the current state of the task.
+dsh: reasoning:
+Let me understand the current state. The gate says `ok: false` — the D12 task's files are compiled but the gate is failing. Let me look at what the gate requires. The gate.json has `mathematical_status: not_assessed` and `ok: false`. Let me check what the gate expects — maybe there's a gate script somewhere. Let me look at the checkpoint.json, the results, and the D12 directory.
+
+Let me first look at the existing D12 files and the checkpoint state.
+dsh: reasoning:
+The gate is `ok: false`. The previous run apparently delivered a TASK_DONE card but the gate rejects it. Let me look at the latest run log to see what the dispatcher said, and the prompt.md which may contain the gate criteria. Also let me look at the PAUSED.reviewed files.
+dsh: reasoning:
+The gate is `ok: false` with `mathematical_status: not_assessed`. This suggests a reviewer/assessor marked the previous deliverable as not accepted. Let me look at the last run log to see what happened (run-1789069314-1.log was the last run, and gate.json was updated at 03:41). Let me check what the gate actually checks — maybe there's a gate script in the longrun directory. Let me look at the longrun directory structure and find the gate logic.
+dsh: reasoning:
+The previous invocation already completed with a TASK_DONE card, but the gate says `ok: false` with `mathematical_status: not_assessed`. The current invocation is "Repair attempt: 1", meaning the dispatcher rejected the previous deliverable. I need to figure out why the gate is `ok: false`.
+
+The gate.json has:
+- `ok: false`
+- `mathematical_status: not_assessed`
+- All files in "files" list have exit 0 except scratch files.
+
+Hmm, the gate shows `files` with exit codes for various files. The gate's `ok: false` could be because:
+1. The scratch files Bisect.lean, Cvt.lean, etc. have exit 1 (they fail to compile!). The gate might check that all files in the release package compile, and the scratch directory has failing files.
+
+Looking at the files list: `scratch/Bisect.lean: exit 1`, `scratch/Cvt.lean: exit 1`, `scratch/Cvt2.lean: exit 1`, `scratch/Cvt4.lean: exit 1`, `scratch/Cvt5.lean: exit 1`, `scratch/Cvt6.lean: exit 1`, `scratch/InstTest.lean: exit 1`, `scratch/MinCheck.lean: exit 1`, `scratch/Probe.lean: exit 1`.
+
+These are leftover scratch probe files that fail to compile. The gate probably runs `lake env lean` on each file in the release package and flags any exit != 0 as a failure. That's likely why the gate is `ok: false`.
+
+Also, there might be a check that the results card's claims match. But `mathematical_status: not_assessed` suggests the gate only does build checks. Let me figure out how the gate works. Let me look for the gate script in longrun/bin.
+dsh: reasoning:
+The gate reports 9 files with exit 1, all in `scratch/`. These are leftover probe files that fail to compile. The gate seems to compile every `.lean` file in the release package with `lake env lean` and any exit != 0 makes `ok: false`.
+
+The fix: remove or fix these failing scratch files. They're scratch/probe files from my own task (leftovers from earlier invocations of this same task). Since they're in `release/scratch/` and are mine (from previous D12 invocations), removing them should be fine — they're not tests or negative controls. Actually wait, let me check if the negative control is among them. The `negcontrol/` directory is at the worktree root, outside release/. Let me check what's in release/scratch/ and whether these files were authored by this task or pre-existing.
+
+The previous invocation log said: "verify the negcontrol file (release/scratch/d12_negcontrol.lean) is OK to leave" — hmm, they moved it to worktree-root negcontrol/. Let me check.
+
+Also let me look at how the gate decides ok. Let me check dispatch_loop.py for gate logic.
+dsh: reasoning:
+The scratch files were created by the previous invocation (Sep 11 01:38-02:47 timestamps). The gate compiles every .lean file under release/ (probably via a find), and 9 scratch probe files fail. Let me read the compile_gate function to see exactly how it works.
+dsh: reasoning:
+Now I understand the gate:
+
+1. It computes a source hash of all `.lean` files in `release/`.
+2. It runs `lake build` in `release/` — must exit 0.
+3. It runs `lake env lean <file>` on EVERY `.lean` file in release/ — each must exit 0.
+4. `ok = all exits == 0`.
+
+The 9 failing files are the scratch probes left by the previous invocation. They fail `lake env lean` (because `lake build` doesn't build scratch files — they're not part of the package modules).
+
+Wait, actually `lake env lean scratch/Bisect.lean` — these failed with unknown identifier errors, e.g. `riccati_delta_le_exp` unknown in Bisect.lean, because `lake env lean` on a file outside the lib's module root doesn't have the D12 modules' oleans available? Actually they'd be available if the module name matches... no — `lake env lean scratch/Bisect.lean` compiles the file as a standalone file. The import statements inside would resolve against the built library. Bisect.lean probably imports the D12 modules. `riccati_delta_le_exp` unknown identifier means... the import didn't bring it? Let me check Bisect.lean. Actually the errors say "Unknown identifier `riccati_delta_le_exp`" — hmm, maybe Bisect.lean imports an old name that was renamed in v2, or it doesn't import SingularRiccati at all.
+
+Whatever the exact cause: the fix is to delete the failing scratch probe files (they're my own leftovers, not tests or negative controls) — or fix them to compile. The cleanest is to remove the failing ones. But wait — the instructions say "Do not edit tests or negative controls." These scratch files are neither. They're leftover working probes from the previous invocation of this task. Deleting them is safe and appropriate. But `Probe.lean` (73KB, Sep 11 01:38, mode 600) — is that mine or pre-existing? Timestamp Sep 11 01:38 — created during the previous invocation window (Sep 10 22:07 to Sep 11 03:39). Hmm wait, but maybe some of these scratch files pre-existed from D6's release (the release package was copied from the D6 store?). The gate for D6 presumably passed at some point... Actually, this release/ is this task's own package; scratch files with timestamps in the previous D12 invocation window are mine.
+
+Let me verify: do these files exist in the D6 worktree or elsewhere? Let me check whether other release packages have a scratch dir with the same files. Actually simpler: these files are task-local working files; deleting the broken ones is the right fix and matches "finish your own checks" — the gate fails because of them.
+
+But hold on — maybe I should double check what the gate does about `negcontrol/` — that's outside release/, so the gate doesn't see it. Good.
+
+Also `mathematical_status: not_assessed` — the gate's `ok` only covers compilation. Once `ok: true`, the task goes to semantic review. The current task prompt says "Repair attempt: 1 ... Fix authored source or report an infrastructure blocker." So the gate failure due to scratch files is the thing to fix.
+
+Plan:
+1. Delete (or fix) the 9 failing scratch files in release/scratch/.
+2. Rerun the gate-equivalent: `lake build` from release/, then `lake env lean` on every .lean file under release/ (excluding .lake) to verify all exit 0.
+3. Make sure the results card is current; update checkpoint.json; rewrite the result card if needed.
+
+Actually, rather than deleting (which loses history), I could move the failing probes out of release/ to a task-local directory outside the package (e.g. worktree-root scratch-archive/). That keeps them available but out of the gate's scan. That's safest — no information loss, and the gate passes.
+
+Also there's `Probe.lean` with mode 600 — my own file.
+
+Additionally, I should double-check the gate's `lake build` passes and, more importantly, re-verify the full compile chain myself as the instructions require: "finish your own checks and write the result card."
+
+Also I should re-examine whether the previous invocation's TASK_DONE claims hold up, since the gate failed. The prompt says: "Fix authored source or report an infrastructure blocker... Preserve definitions and target semantics." The fix here is removing broken scratch probes — authored source (the D12 modules) compiles fine.
+
+Wait — but there's a subtlety: `source_sha256` in gate.json covers ALL files under release/ including scratch/. If I move the scratch files out, the hash changes — fine, the gate recomputes.
+
+Let me also check: are there other non-scratch .lean files failing? From gate.json, all exits are 0 except the 9 scratch files. Good.
+
+Let me also verify there are no other stray files in release/ outside Poincare/D12 that were added by the previous invocation (e.g. /tmp probes — no). Let me check git-like state: is release a git repo? Probably not. Let me just do the move.
+
+Plan:
+1. Move the 9 failing files from release/scratch/ to a worktree-root archive dir `scratch-archive/` (outside release, outside gate scope). Also maybe move the other scratch files? No — keep only failing ones out. Actually, keeping a split is odd; but the passing ones don't hurt the gate. Hmm, but actually let me think: gate compiles every .lean in release including scratch/Combos.lean etc. — they pass. Only the 9 failing ones must go.
+
+Actually, cleaner: move ALL task-probe scratch files out of release/scratch/ into an archive dir to keep the release package clean? But some scratch files might pre-date my task (from the D6 store copy). Timestamps: all scratch files are Sep 11 01:38–02:47, which is during the previous D12 invocation. Hmm, but the previous invocation started at 22:07 Sep 10 and ran to 03:39 Sep 11. All timestamps are within that window except... AbsCheck.lean 02:27, all within. But wait — earlier invocations (Sep 10 22:07 to Sep 11 00:03) also ran. The scratch dir at 03:38 has all files from 01:38-02:47 — all during the last invocation (which ran 03:39 latest.log, started ~02:50 per run-1789069314). Hmm, actually run-1789069314-1.log at 03:39 — the invocation that started at 1789069314 ≈ 03:01? Let me not overthink. The files are all within my task's window (Sep 10 22:07 onward = task start). Actually the first run started Sep 10 22:07 (run-1789049279). Files at 01:38-02:47 are within my task's activity.
+
+But careful: the very first snapshot (Sep 9, NegativeControl.lean at root, Sep 9 11:35) suggests the worktree was created Sep 9. The release/scratch dir might have contained files from D6 before my task touched them? The D6 release package (from the shared store) — did it have a scratch dir? The gate-build.log D6DECL entries mention `scratch/` files? Looking at gate-build.log tail: D6DECL entries list Probe.PdeApi etc. — those are from ReleaseAudit maybe. Let me quickly check if D6's worktree release has scratch files. Actually, it doesn't matter much: any file I delete from MY task's worktree release/scratch only affects my own gate. The instruction "Do not edit tests or negative controls" — scratch probes are not tests. The `negcontrol/` dir at worktree root holds negative controls and I won't touch it.
+
+Decision: move the 9 failing files out of release/scratch to a `scratch-archive/` at worktree root. Then rerun the full gate-equivalent check.
+
+Also, while I'm at it, I should double check that the gate will then pass: run `lake build` (it already passed: build_exit 0, 8957 jobs). Then run `lake env lean` on every .lean file under release/ excluding .lake, verifying exit 0 for all.
+
+Additionally, the prompt for this repair attempt says to verify the mathematical claims? "mathematical_status: not_assessed" — the semantic review happens after gate ok. My job: make the gate pass and keep the card honest. The previous card claimed TASK_DONE. I should independently re-verify the key deliverables: the D12 files compile, the audit passes, the card/JSON exist and are current. I should also spot-check the actual theorem statements to make sure they're not vacuous or toy — at least re-read the headline theorems. Given "Repair attempt: 1" and the task instruction "Do not weaken a theorem... Preserve definitions and target semantics", the expectation is: fix the compilation gate. 
+
+Let me also check `longrun/results/D12-comparison-geodesics.md` current ending and whether the results are consistent.
+
+Let me start by reading the failing scratch files briefly to confirm they're probes, then move them.
+
+Also note: the heartbeat/last_run files show the dispatcher is watching. After I finish, the dispatcher will rerun the gate. I must ensure `ok: true` on the next gate run. Key: after moving files, run the exact gate procedure myself (source_hash equivalent — no, gate recomputes fingerprint itself).
+
+One more consideration: `check_file` runs `lake env lean <relative>` with cwd=package, using the module-relative path. For files under Poincare/D12/..., `lake env lean Poincare/D12/ComparisonGeodesics/Definitions.lean` compiles the module — fine (those already exit 0). For scratch files that pass (Combos, Cvt3, etc.), they compile standalone with imports — they pass. OK.
+
+Also verify no other files outside scratch fail — confirmed from gate.json: only scratch/*.
+
+Now execute:
+
+Step 1: mkdir scratch-archive at worktree root; move the 9 files (and .olean artifacts if any were generated next to them — check for *.olean in release/scratch).
+
+Step 2: rerun `lake build` in release/ (should be quick incremental) and the per-file compile loop.
+
+Step 3: update checkpoint.json (status, recent_log) and refresh result card with a note about the gate repair; update hashes in results JSON (source_hashes must remain valid — moving files doesn't change the authored D12 files' hashes; but the results JSON's source_hashes cover the authored files — still valid. I'll re-verify).
+
+Step 4: verify card ends with TASK_DONE (it's a request for acceptance; the math is proved and audited — I'll re-run the audit myself to confirm it still passes).
+
+Let me look at the scratch files quickly and then act. Also confirm there are no .olean files in scratch.
+dsh: reasoning:
+Confirmed: all 9 failing files are ad-hoc working probes (bracketed #check probes, bisection experiments, instance tests) from the previous invocation. They're not tests, not negative controls, and not part of the package's module tree. They fail only because they're standalone probe files with stale/experimental content that `lake env lean` recompiles during the gate's per-file sweep.
+
+The correct repair: move these broken probes out of `release/` (the gate's scan root) to a task-local archive outside the package, e.g. worktree-root `scratch-archive/`. Keep everything else intact. Then re-run the full gate-equivalent check myself: `lake build` + per-file `lake env lean` sweep over release/.
+
+Note the gate also includes all other scratch files that pass — those can stay, but for cleanliness and to avoid future bit-rot I could move all probe files. But minimal change is better: only move the 9 failing ones. Hmm — but wait: files like Combos.lean, Cvt3.lean etc. pass now but are also probe leftovers. If I leave them, gate still passes. Minimal change: move only failing 9. Actually, let me reconsider: leaving passing probe files is harmless and less destructive. I'll move just the 9 failing.
+
+Also — I must double-check the gate's source hash: it hashes all .lean under release/. Fine.
+
+After the move, run:
+1. `lake build` in release/ (verify exit 0).
+2. Loop over all .lean files under release/ (excluding .lake): `lake env lean <rel>` — verify all exit 0. This mirrors the gate exactly.
+
+Then update checkpoint.json and the result card (md + json) to note the gate repair (compile_evidence update). Also re-run the axiom audit tool to confirm it still passes.
+
+Let me also review the results card quickly to make sure it's still accurate and ends with TASK_DONE. And confirm the D12 module files themselves are untouched (hashes in results JSON still match). Moving scratch files doesn't change D12 module hashes.
+
+Actually, one consideration: should the results JSON `source_hashes` cover only authored D12 files? It says hashes of authored files — still valid.
+
+Also the checkpoint "status": "deliverable_complete" — update recent_log to record the gate repair, and update `updated_at`.
+
+Let me do the move now.
+dsh: reasoning:
+The 9 failing files are moved to `scratch-archive/` (outside release/). The remaining 9 scratch files in release/scratch passed the gate's per-file check (exit 0) per gate.json. But to be safe and to mirror the gate exactly, I should now run:
+
+1. `lake build` from release/ (exit 0 expected).
+2. `lake env lean` on every .lean file under release/ (excluding .lake) — verify all exit 0.
+
+Let me also double-check the remaining scratch files still pass (they did in the gate run; but after moving files, imports of the moved files aren't referenced by them — they're standalone, so fine).
+
+Let me write a small script that mirrors the gate's check_file loop. Note: the gate enumerates files via source_hash's os.walk excluding .lake and .git, including files starting with "._" excluded. Let me replicate: find release -name '*.lean' -not -path '*/.lake/*' sorted, then run lake env lean on each relative path with cwd=release.
+
+Time: 83 files previously; each fast (already compiled, but lean recompiles standalone — a few seconds each). Use a parallel sweep with xargs -P 4. Actually careful: concurrent `lake env lean` on scratch files is fine. But for module files under Poincare/, recompiling them standalone writes .olean? No — `lake env lean <file>` without -o writes the .olean next to the source. That's fine, they already exist from lake build. Concurrent writes of same olean by different files could race only if same file compiled twice — not the case.
+
+Let me run the full sweep now in background? It took the gate a few minutes. Let me run it with reasonable parallelism and capture per-file exit codes.
+dsh: reasoning:
+While `lake build` runs in the background, let me review the current results card and JSON, and the D12 module files, to prepare the final verification and updates.
+dsh: reasoning:
+The card is comprehensive. Now let me wait for the build, then run the per-file sweep. Let me check the build job.
+dsh: reasoning:
+`lake build` passes (exit 0, 8957 jobs). Now the per-file sweep: run `lake env lean <rel>` on every .lean under release/ (excluding .lake), in parallel, collecting exit codes. Mirror the gate exactly.
+dsh: reasoning:
+83 files, matching the gate's count (83 exit-0 + 9 exit-1 = 92 previously; now 83 files). Now run the sweep with `lake env lean` on each, in parallel (max 4 workers like the gate). Let me write a small shell loop with xargs -P 4. Each run: `lake env lean <rel>` from cwd=release; capture exit code; record failures.
+
+Note: files under Poincare/ etc. are module files — `lake env lean Poincare/Basic.lean` will recompile the module and write .olean next to the source. That's what the gate does too. Fine.
+
+Also note that the gate strips "./" — it uses path.relative_to(package), so relative paths without "./". `lake env lean` with "./..." — "./Poincare/Basic.lean" should work the same as "Poincare/Basic.lean". To mirror exactly, strip the "./" prefix.
+
+Let me run the sweep in the background (it may take a few minutes — the gate used max_workers=4 and a 900s timeout per file).
+dsh: reasoning:
+While the sweep runs, let me:
+1. Review the D12 authored files to make sure nothing needs fixing (the gate only checks compilation; but the repair prompt also says preserve definitions and semantics — the previous invocation already fixed the vacuity defect).
+2. Check the results JSON is valid and current.
+3. Prepare checkpoint.json update.
+
+Actually — one important consideration. The repair prompt says "Fix authored source or report an infrastructure blocker." The gate failure was caused by scratch probe files, which are now archived. But should I also double-check the "mathematical_status: not_assessed" part? That's set by a later semantic review stage (dispatcher's job). The gate's `ok` only gates compilation. Once `ok: true`, dispatcher promotes to semantic review.
+
+Let me look at the D12 module files briefly to verify they're in good shape (spot-check the headline statements), and validate the results JSON. Also update the checkpoint and the results card to document this repair (compile_evidence: the gate sweep now covers all 83 files, etc.).
+
+Let me check the JSON.
+dsh: reasoning:
+Everything looks in good shape. The declarations are all there. Now let me wait for the sweep to finish. While waiting, let me look at the checkpoint.json's current content and prepare the update. Also, I want to double-check the remaining scratch files (the 9 that stayed) still compile — they did per the gate (exit 0), but my sweep will re-verify.
+
+Also, let me think about whether the results card needs a "repair note". The repair prompt says: "Fix authored source or report an infrastructure blocker. Do not wait for the dispatcher: finish your own checks and write the result card." The gate failure was caused by leftover broken scratch probes. The fix is archiving them outside the package. I should:
+1. Verify the sweep is fully green.
+2. Update checkpoint.json (status, recent_log, updated_at) and keep high-frequency coordination.
+3. Update the results .md/.json with a short "gate repair" note in compile evidence (e.g., that the full package per-file sweep passes: 83/83 files exit 0), keeping the card honest.
+4. Re-verify source hashes of the authored files match the results JSON.
+5. Re-run the axiom audit tool to confirm PASS (it was passed before; unchanged files, but re-run to be sure).
+
+Let me check on the sweep job.
+dsh: reasoning:
+The full gate-equivalent sweep now passes: 83/83 files exit 0.
+
+Now:
+1. Re-run the axiom audit tool to confirm PASS.
+2. Verify source hashes of authored D12 files match results JSON's source_hashes.
+3. Update checkpoint.json with the repair record.
+4. Update results .md/.json with the gate-repair evidence (compile evidence update: full-package sweep 83/83 exit 0).
+5. Final check of the card ending.
+
+Let me check the audit tool and its invocation.
+dsh: reasoning:
+All D12 module hashes match. The audit script hash mismatches — the script may have been modified since (the previous invocation moved the negcontrol file out of release/ and updated the script; the JSON hash wasn't refreshed, or vice versa). Let me check the script's history: the stored hash d2056884... vs current 0de0c4ba... Let me look at what the script does with negcontrol — the previous log said they moved negcontrol to worktree-root and updated the script. The stored hash may be stale. I'll update the JSON's hash after verifying the audit passes. Let me wait for the audit job.
+dsh: reasoning:
+Audit PASSED: 59/59 declarations, only {propext, Classical.choice, Quot.sound}, negative control flagged.
+
+Now update:
+1. `longrun/results/D12-comparison-geodesics.json`: refresh `source_hashes` for `tools/d12_axiom_audit.py`, and add the gate-repair evidence to `compile_evidence` (full per-file sweep 83/83 exit 0). Update `updated_at`.
+2. `longrun/results/D12-comparison-geodesics.md`: add a short "gate repair" section/note about the archive of broken probes and the full sweep passing; keep ending TASK_DONE.
+3. `checkpoint.json`: update `updated_at`, `status`, `recent_log` with the repair record, keep all existing fields.
+
+Let me check the current JSON's compile_evidence fully and the elapsed fields so I can append correctly.
+dsh: reasoning:
+Interesting: `axiom_evidence.negative_control` mentions "scratch/d12_negcontrol.lean" — but the negcontrol was moved to worktree-root `negcontrol/d12_negcontrol.lean`. Let me check what the audit script currently uses. The script was updated (hash changed), so it presumably now uses `negcontrol/d12_negcontrol.lean` at the worktree root. Let me confirm by checking the script's negcontrol section.
+
+Then update the JSON:
+1. `source_hashes["tools/d12_axiom_audit.py"]` → new hash.
+2. `compile_evidence` → add the gate-repair sweep entry (lake build exit 0 8957 jobs + per-file sweep 83/83 exit 0).
+3. `axiom_evidence.negative_control` → correct path.
+4. `updated_at` → now.
+5. Also record in elapsed a note about this repair invocation (add ~0.5h; keep honest: this invocation started recently — say approx 0.5h so far; but I'm not done yet; better to update at the end).
+
+Let me check the script's negcontrol path handling.
+dsh: reasoning:
+The script writes its negcontrol into worktree-root `negcontrol/d12_negcontrol.lean` (outside release/, so the gate never sees it). Good.
+
+Wait — the script *writes* the negcontrol file at line ~71. That means the negcontrol file is regenerated by the audit run — writing into `negcontrol/`. That's fine (task-local, outside release). But note: `NegativeControl.lean` (Sep 9, pre-existing at worktree root) — I must not touch it. The script only writes `d12_negcontrol.lean`. OK.
+
+Hmm — one consideration: does the audit script leave `negcontrol/d12_negcontrol.lean` containing `sorry` on disk? Yes it does (it writes then compiles). That's outside release/, so the gate's per-file sweep (which scans release/) won't see it. Fine.
+
+Now let me update the JSON and MD files, then checkpoint.json. Also update the .md card: add a short "Gate repair (attempt 1)" note near the evidence section, mentioning the archived probes and the full 83-file sweep.
+
+Then final checks:
+- `git`? The worktree isn't necessarily a git repo; no commit needed (instructions say do not commit/push).
+- Make sure no other stray files were introduced into release/ by the audit run (the audit compiles AxiomAudit.lean — writes olean into release/.lake? `lake env lean` writes olean next to source. That's normal/expected, and oleans aren't .lean files so the gate ignores them).
+
+Let me now make the edits. First the JSON updates.
+dsh: reasoning:
+Also fix the axiom audit line — negative control now at negcontrol/ outside release. Minor: the .md says "negative control (a `sorry` file is required to be flagged)" — that's still accurate. Fine.
+
+Now update checkpoint.json: updated_at, status, recent_log entries. Let me read the current checkpoint.json fully to update it carefully.
+dsh: reasoning:
+The f-string with `{propext, Classical.choice, Quot.sound}` is being interpreted as a Python set expression? No — inside an f-string, `{propext, ...}` is evaluated as Python code. I need to escape braces in f-strings: use `{{...}}` or avoid f-strings. Let me fix.
+dsh: reasoning:
+Now, final verification pass. Let me:
+
+1. Recompute the full source hash the gate uses (sha256 of all files + lakefile/manifest/toolchain) — actually the gate recomputes itself; no need.
+2. Double-check that nothing in release/ was modified since my sweep (the audit run compiles AxiomAudit.lean → writes olean next to source; that's fine). But wait — my sweep ran `lake env lean` on module files, which wrote fresh .olean files next to sources. The gate doesn't hash oleans (only .lean files + lakefile/manifest/toolchain). Fine.
+3. One more sanity check: confirm the 9 archived files are no longer under release/ and the remaining 9 scratch files all compile (already verified in sweep: 83/83 exit 0, and release/scratch now has 9 files... wait, 83 total files now; before it was 92 (83+9). The gate originally reported 92 files? Let me count: gate.json "files" list — 83 with exit 0 + 9 with exit 1 = 92. Now 83. Consistent.
+
+4. Confirm `negcontrol/NegativeControl.lean` untouched (it's at worktree root, outside release — gate doesn't scan it; and I haven't touched it).
+5. Verify no other modifications: check for any new .lean files anywhere under release/ that I might have accidentally created — the sweep enumerated 83; gate's earlier list was 92; the difference is exactly the 9 archived.
+
+6. Also double check `release/scratch/d12_negcontrol.lean` doesn't exist anymore (it was moved by previous invocation). ls showed scratch has 9 files, no d12_negcontrol. Good. And `negcontrol/d12_negcontrol.lean` is written by the audit script each run — outside release.
+
+7. Update elapsed time in results JSON: previous invocation ~3.5h; this repair invocation ~0.5h. The JSON has 'elapsed' object. Let me bump hours_total_estimate to 11.0 and note the repair. Actually, let me set hours_this_invocation appropriately — this repair invocation has been ~25 minutes so far. I'll set hours_this_invocation: 0.5, hours_total_estimate: 11.0 with an updated note.
+
+8. Final read of the .md to confirm it ends with exactly TASK_DONE (last line), and JSON validity.
+
+Also, one thing to double check — the task prompt for this repair says: "If the intended proof remains unavailable, preserve valid partial lemmas and end the task's own card with TASK_BLOCKED." Here the proofs are complete; the only issue was stray probe files. The card ends with TASK_DONE — appropriate since the math deliverable is intact and audited, and now the gate sweep is green.
+
+Let me also verify the heartbeat expectations: "HIGH-FREQUENCY COORDINATION: update checkpoint.json at least every 30 minutes" — done (03:45). Fine.
+
+One more consideration: should I remove the leftover PASSING probe files from release/scratch/ too? They pass the gate, so leaving them is safe. But they're clutter that could rot later (if mathlib changes). However, the instruction says don't do more than needed; gate passes with them. Hmm — but consider: the gate will hash and compile them; they currently pass. Leave them — minimal change principle. Actually wait: let me reconsider. `scratch/Combos.lean`, `Cvt3.lean`, etc. — they import D12 Definitions and reference declarations that still exist. They passed both in the dispatcher's gate run and in my sweep. Leave them.
+
+Let me do the final elapsed update and a last full verification.
+dsh: reasoning:
+Everything is in place. Let me do one final integrity check: re-run the exact gate simulation one more time on the final state (since I just edited JSON/md — those aren't .lean files, so the gate hash is unaffected by them; but the .olean files written by `lake env lean` during my sweep... the gate hashes only .lean + lakefile/manifest/toolchain. The .lean files haven't changed since my sweep. However, wait — did `lake build` or my sweep modify any .lean files? No, they only write .olean. Let me verify by checking mtimes of the .lean files vs my sweep time, and confirm the source_hash would match what the next gate run computes (it recomputes anyway, so as long as files are static now, fine).
+
+One risk: the dispatcher's gate recomputes `source_hash` and if unchanged from the previous gate.json, it would reuse the previous (failed) result! Look at compile_gate:
+
+```python
+if gate.exists():
+    previous = json.loads(gate.read_text())
+    if previous.get("version") == GATE_VERSION and previous.get("source_sha256") == fingerprint:
+        return previous
+```
+
+The previous gate.json has `source_sha256: 6e2b6788...` computed over the OLD file set (92 files including the 9 broken probes). Since I moved 9 files out, the new fingerprint will differ → the gate will re-run the build and sweep → `ok: true`.
+
+Double-check: the fingerprint includes ALL .lean files under release/. Old set had scratch/Bisect.lean etc. (9 files). New set doesn't. So fingerprint differs. Good.
+
+Also verify that no .lean file is being written dynamically at gate time by anything (the audit script writes negcontrol/d12_negcontrol.lean at worktree root — outside release; not in the hash). Good.
+
+Also — one more check: the `longrun/results` files and `checkpoint.json` — are these inside release/? No, they're at worktree root. Good.
+
+Let me also run a final quick grep for forbidden tokens in the authored D12 files (the audit script does this, but let me confirm once more as a belt-and-braces check), and verify the worktree has no stray tmp files inside release/.
+dsh: reasoning:
+The only `sorry` occurrence in D12 modules is in AxiomAudit.lean line 1 — let me check what that is. The audit script expects `#print axioms` lines; line 1 of AxiomAudit.lean containing "sorry" — probably a docstring mentioning that sorry is forbidden? Let me check. The audit script's forbidden scan excludes... let me look at line 1 of AxiomAudit.lean.
+dsh: reasoning:
+Line 13 is a doc comment: "with no `sorryAx`, no `native_decide`, no custom axiom and no `unsafe` declaration" — the "sorry" match is inside the string "sorryAx" in a doc comment. Harmless. The audit script already handles this (its forbidden scan passed).
+
+Now, everything is verified:
+
+1. ✅ `lake build` from release/: exit 0 (8957 jobs).
+2. ✅ Per-file gate sweep: 83/83 files exit 0.
+3. ✅ Axiom audit: PASSED, 59/59 declarations, whitelist only.
+4. ✅ Gate fingerprint changed → dispatcher gate will re-run from scratch and pass.
+5. ✅ Results .md/.json current with repair evidence; ends TASK_DONE.
+6. ✅ checkpoint.json updated with repair record.
+7. ✅ No forbidden tokens in authored sources.
+8. ✅ Negative control untouched (worktree-root negcontrol/, and my negcontrol file is outside release/).
+
+One more thing to consider: the task says "Do not edit tests or negative controls." — I didn't. The 9 archived probe files were moved, not edited, and they're not tests/negative controls (they were my task's own working scratch).
+
+Also — "Repair attempt: 1" implies my card should reflect that the repair is done. The .md now has the gate-repair section. Good.
+
+Should I double check the `heartbeat` mechanism? The dispatcher checks heartbeats of the worker loop; my job is to finish and the dispatcher picks up gate.json re-check. Not my concern.
+
+Let me also double-check that I haven't accidentally changed any file outside my task's scope in release/ (e.g., D10 or Longrun files). My only release/ change: moved 9 scratch files out. Verify with a quick scan of recently-modified .lean files under release/.
+dsh: reasoning:
+No `.lean` source files under release/ were modified after the gate ran — my only change to the package was archiving the 9 broken probes out (which happened at ~03:44, i.e., removing files, not modifying any; the `find -newermt` with the removal shows nothing because the files are gone).
+
+Wait — the archive move happened at ~03:44. `find ... -newermt "2026-09-11 03:39:00"` shows no .lean files under release/ modified since then. Correct: removals don't show; no file was edited.
+
+Everything is consistent and verified. Summary of the repair:
+
+- Root cause of gate `ok: false`: 9 leftover broken probe files in `release/scratch/` failing the gate's per-file `lake env lean` sweep (83 other files passed, including all D12 modules).
+- Fix: archived those 9 probes out of the package to `<worktree>/scratch-archive/`; no authored source weakened or changed; no tests/negative controls edited.
+- Re-verified exactly as the gate does: `lake build` exit 0; per-file sweep 83/83 exit 0; axiom audit PASSED; fingerprint changed so the gate re-runs.
+- Updated `checkpoint.json`, `longrun/results/D12-comparison-geodesics.{md,json}` with the repair evidence and fresh hashes; card still ends with TASK_DONE.
+
+Now write the final answer summarizing the repair.
+All checks pass. The repair is complete and fully verified.
+
+## Gate repair report — D12-comparison-geodesics (repair attempt 1)
+
+**Root cause of `gate.json ok: false`:** the dispatcher's gate runs `lake env lean` on **every** `.lean` file under `release/` and requires all to exit 0. Nine leftover ad-hoc probe files from the previous invocation sat in `release/scratch/` (`Bisect`, `Cvt`, `Cvt2`, `Cvt4`, `Cvt5`, `Cvt6`, `InstTest`, `MinCheck`, `Probe` — bisection experiments and `#check` probes with stale identifiers) and failed that sweep. All 83 other files — including every D12 module — already passed. `lake build` itself was never broken (build_exit 0).
+
+**Fix applied:** archived those nine broken probes **out of the package** to `<worktree>/scratch-archive/` (no information lost, no authored source weakened or changed, no tests or negative controls touched). The mathematical deliverable was already sound — this was purely a stray-file compilation issue.
+
+**Verification performed here (mirroring the gate exactly):**
+1. `cd release && lake build` — exit 0 (8957 jobs).
+2. Per-file sweep `lake env lean <rel>` over all 83 `.lean` files under `release/` (excluding `.lake`), 4-way parallel like the gate — **83/83 exit 0**.
+3. Fail-closed axiom audit `tools/d12_axiom_audit.py` — **PASSED**: 59/59 declarations depend only on `{propext, Classical.choice, Quot.sound}`, negative control correctly flagged, forbidden-token scan clean.
+4. Gate source fingerprint changed (`6e2b6788…` → `bd856a50…`), so the dispatcher will re-run the gate instead of reusing the failed snapshot.
+5. Source hashes re-verified against the results JSON (7/7 authored files match; audit-script hash refreshed after its negcontrol-path edit).
+
+**Records updated:** `checkpoint.json` (status `deliverable_complete_gate_repaired`, repair log), `longrun/results/D12-comparison-geodesics.md` (new "Gate repair" evidence section, still ends exactly `TASK_DONE`), and `.json` (fresh `compile_evidence` entries, corrected negcontrol path, updated elapsed time).
+
+The mathematical content is unchanged from the audited deliverable: general nonconstant Sturm/Riccati comparisons with correct interval, closed-interval positivity, quantitative singular normalization (no division at zero), the expanded-hypothesis Bishop–Gromov volume-ratio consequence, and the Euclidean non-vacuity witness — with the missing geometric construction (Jacobi fields / shape-operator Riccati / `ω_{n−1}`) honestly listed as remaining blockers, never assumed.

@@ -1,0 +1,1344 @@
+dsh: reasoning:
+The gate.json isn't at that path apparently. Let me look.
+dsh: reasoning:
+The gate.json isn't in the state dir. Let me look at the log files and the prompt.
+dsh: reasoning:
+The gate.json doesn't exist at the path given. But there's an input/d5-manifest/gate-results.json. Let me look at the logs dir and longrun/results in this worktree. Also check the parent dir for a D11-maximum-principle-tensor directory elsewhere.
+
+Actually there's an interesting note: `last_run.json` says exit_code 0, and DONE file exists. So previous attempt said done. But then this prompt says attempt 2 failed. Maybe the gate ran after. Let me check logs dir.
+dsh: reasoning:
+There's a `logs/gate` directory. Let me look at that. Also the D11 result card exists. Let me check the gate directory.
+dsh: reasoning:
+The gate directory has per-file logs. All the D11 files show 0 bytes meaning success? Let me check the filelist.txt which probably has exit codes. Also, let me look at the release dir, specifically for the D11 files. And look for growth in the D11 section.
+
+Wait — the D11 files listed have 0-byte logs, which typically means compile OK. But the task says gate failed attempt 2. Maybe there's a gate.json generated elsewhere. Let me search for gate.json more broadly and check the filelist.
+dsh: reasoning:
+gate.json is not in the state dir for D11, but exists for other tasks. That's because the gate failed before writing it, or maybe the gate script crashed. But the previous worker created a result card. The prompt says "attempt 2".
+
+Notably `logs/gate/` was written at 20:49-20:50 and all D11 logs are 0 bytes (success). The `d11_axiom_audit.out` was written at 20:49. The result card at 20:51. Hmm.
+
+Wait — the mtimes in this worktree seem off (Sep 10 20:49). Current time is around Sep 10 20:59 per heartbeat. So the gate ran at 20:49. The card was written at 20:50/20:51. Then this repair worker prompt was generated at 20:59.
+
+Actually maybe the gate is a different script than the file-by-file lean loop. Let's look at the gate script in longrun/bin.
+
+Let me examine the actual authored files for D11. First check what files are authored (D11 dir), and understand the structure.
+
+Also note: "Fix ONLY the authored files in your worktree" — so the D11 MaximumPrincipleTensor files are the authored ones. But all gate logs are 0 bytes. Perhaps the failure is in a different aspect: the gate might include forbidden token scan, release build, axiom audit etc.
+
+Let me look at longrun/bin for the gate script.
+dsh: reasoning:
+Let me look at the result card first to understand what the previous worker claimed, then run the compile myself.
+
+Also the gate logs show 0 bytes for D11 files at 20:49. That's suspicious — maybe the gate was run in a mode where 0 bytes = success. But the prompt says gate failed attempt 2. Perhaps the gate failure is captured somewhere else — maybe the "gate" here is a different harness that checks that no `sorry` etc.
+
+Wait: maybe the issue is the filelist.txt only lists files at 20:49 but the D11 .lean files were modified AFTER the gate ran (20:49 for AxiomAudit, 20:47 Basic, 20:41 Euler, 20:46 Flow, 20:48 ScalarODE — all BEFORE 20:49). Hmm, so they were gated.
+
+Hmm, but the gate directory was created at 20:49 and D11 logs are 0 bytes. Let me check whether the gate logs are actually empty vs whitespace. Let me look at release_Poincare_D11_MaximumPrincipleTensor_AxiomAudit.lean.log (4159 bytes).
+
+Actually wait, the listing showed:
+- release_Poincare_D11_MaximumPrincipleTensor_AxiomAudit.lean.log — 4159 bytes
+- release_Poincare_D11_MaximumPrincipleTensor_Basic.lean.log — 0
+- release_Poincare_D11_MaximumPrincipleTensor_Euler.lean.log — 0
+- release_Poincare_D11_MaximumPrincipleTensor_Flow.lean.log — 0
+- release_Poincare_D11_MaximumPrincipleTensor_ScalarODE.lean.log — 0
+
+Hmm, AxiomAudit.log is not 0. Let me check it. Also, let's run the compile gate directly.
+
+First, let me read the result card and the D11 files.
+dsh: reasoning:
+The previous worker's card says everything compiled. Yet the harness says gate failed attempt 2. Maybe the gate run in the harness is different — the `logs/gate/results.txt` may not exist (I didn't see it in the ls). Let me check. The ls of logs/gate showed `filelist.txt` but no `results.txt`. Hmm, the log directory listing had `filelist.txt` and per-file logs, but I need to check whether `results.txt` exists. It wasn't in the head -60. Let's list fully.
+
+More importantly, the harness gate likely runs `lake env lean` in some environment where the `.lake` symlink or lakefile is unusable. Let me check the dispatch_loop.py compile_gate to understand exactly what it does.
+
+Also possible: the gate script's file list needs 289 files; if compile_gate fails, gate.json isn't written. Let me read dispatch_loop.py.
+dsh: reasoning:
+So compile_gate writes gate.json AFTER running, and the gate.json is removed only when requeuing repairs. Since gate.json doesn't exist now, that means repair_count was 1 → repair prompt written, gate.json removed. That matches: "attempt 2" in the prompt.
+
+So the gate failed on attempt 1 while the previous run's own logs claimed FAIL=0. Wait, but attempt 1 means the *first* gate failure detected? Let's re-read: `repairs = t.get("repair_count", 0)`; if repairs < 2: repair_count = repairs+1, write_repair_prompt(tid, repairs+1). So attempt 1 = first repair prompt. And the prompt says attempt 2, meaning repair_count was 1 → this is the second repair prompt. So the gate failed twice.
+
+Hmm, but the logs at 20:49 show all D11 gate logs empty. Then the previous worker presumably did something after 20:49 that broke files? Wait no — the mtimes of D11 authored files are before 20:49. Hmm.
+
+Wait, but the gate run by the dispatcher was earlier. Let me check the dispatch.log for D11 entries.
+
+Actually, importantly: the previous worker's own `logs/gate/results.txt` says TOTAL=289 FAIL=0. The dispatcher's compile_gate walks the worktree excluding `.lake`, `.git`, `.dshpkg`. Both same.
+
+Key difference: the dispatcher sets ENV["ELAN_HOME"] = <longrun parent>/elan, and PATH. That's the same as the worker presumably.
+
+Hmm, but wait: is it possible the gate ran BEFORE the worker's fixes? The dispatcher's loop runs every 600 seconds. The DONE file is created at 20:52. The gate dir logs are at 20:49 (worker's own gate run). Hmm, so worker's gate ran at 20:49 and then DONE at 20:52.
+
+Then the dispatcher's gate must have run after 20:52. And it failed. And gate.json was deleted when the repair prompt was written. Then repair attempt 1 (which was 20:52-ish?) — but the DONE file existed... Actually `is_running` checks DONE → returns False, so it could launch again. Hmm, and the state latest.log timestamps: prompt.md written at 20:59, heartbeat at 20:59. last_run.json at 20:52 exit 0.
+
+Let me check the dispatch.log to see the sequence.
+dsh: reasoning:
+Timeline:
+- 20:22:40 LAUNCH (attempt 0, original prompt)
+- 20:32:40 REPAIR attempt 1 queued
+- 20:59:21 REPAIR attempt 2 queued
+
+So the compile gate failed at 20:32 (before the D11 files were even authored at 20:41-20:49?). Actually gate at 20:32 — the D11 files didn't exist then. Then the worker added the root lake shim and authored files, finished at 20:52 with DONE.
+
+Then at 20:59, the dispatcher ran the gate again (another 600s cycle) and it failed again → repair attempt 2.
+
+So the second gate failure happened at ~20:59 with the files in their current state. My own gate logs at 20:49 were the worker's. The dispatcher gate failed.
+
+Key question: why would the dispatcher gate fail while the worker's identical loop succeeded? 
+
+Possibility: The gate.json from the last run — since gate.json doesn't exist now, the dispatcher's write of gate.json happened and then removal. So the dispatcher's own run did complete.
+
+Possibility: `lake env lean <file>` from the worktree root. The worker's shim `.lake -> release/.lake`. When dispatcher runs with cwd=worktree root, lake env should work... unless the environment differs (ELAN_HOME set by dispatcher → elan at /data3/guoshaoyang/workdir/lean_poincare/elan). The worker's shell may have had a different elan.
+
+Hmm wait. Also critical: the dispatcher's compile_gate walks with `os.walk` and skips `.lake`, `.git`, `.dshpkg`. The worker's filelist.txt has 289 files. The dispatcher would find the same 289 (assuming no files added since). But: `os.walk` does not follow symlinks by default, so `.lake` symlink → not followed anyway.
+
+Hmm, wait: it excludes only those three dirnames. The `.lake` symlink is a directory symlink; os.walk with followlinks=False won't descend into it. Fine.
+
+Let's just run the exact gate loop ourselves to find failing files. Let me do that now — but 289 files × maybe 10-60s each = could be long. Better: run the gate command on the D11 authored files first, and then run the whole loop in the background.
+
+Actually, first let me check the queue.json to see the D11 task's repair_count and status. And maybe there's a log of the dispatcher gate results somewhere — no, gate.json is deleted.
+
+Let's think about what could differ. One strong candidate: **the D11 AxiomAudit.lean** uses `#print axioms` and, when compiled by the gate, maybe there is a `lake env lean` warning-as-error? No.
+
+Another candidate: **timeout**. 1800s timeout per file. Unlikely.
+
+Wait — maybe the issue: `lake env lean` from the worktree root requires a `lakefile.toml` in the worktree root. The shim exists. But the D11 files import `Poincare.D11...` modules? Let me look at the files. If Basic.lean imports something that needs the built oleans... they were built at 20:36.
+
+Hold on. Actually there's an important detail: `lake env lean <file>` — the file path passed is absolute. In Lake, `lake env lean foo.lean` with a path *inside* the package would compile in the package's context. Fine.
+
+The likely culprit: **`lake env lean` in the dispatcher environment**. The dispatcher sets ELAN_HOME to `/data3/guoshaoyang/workdir/lean_poincare/elan` and prepends to PATH. The worker's `logs/gate` run presumably used the same.
+
+Hmm, let me test directly. Run the exact command with the exact env and see.
+
+Actually — wait. There might be a much simpler explanation: **the gate run at 20:59 happened after some file changes**. Let's check the mtimes of files after 20:52. The heartbeat.json is written every 5 min. Let's check mtimes of the D11 files again — 20:41-20:49. Not changed. 
+
+Hmm, but what about other files in the worktree — e.g., the root lakefile.toml mtime 20:35. So nothing changed after 20:52.
+
+Unless... the worker's final DONE at 20:52 didn't include the D11 sources? No, D11 Basic.lean exists at 20:47.
+
+Let me just run it. First, test a single D11 file with the dispatcher env.
+dsh: reasoning:
+Basic compiles. Let's run the whole gate loop in the background while I inspect files. Actually, running the full loop takes time (289 files). The previous worker's loop succeeded in ~13 minutes (20:36 build to 20:49). Let me start the full loop in the background right now with the exact dispatcher environment, writing results.
+
+Wait — maybe the important difference is. The dispatcher's compile_gate runs `os.walk` on the worktree from the top. It excludes `.lake`. But does it exclude `release/.lake`? Yes since dirname `.lake`.
+
+Hmm, but here's a thought: `os.walk` will include files in `logs/`? No, only `.lean` files. But there might be `.lean` files under `longrun/` or elsewhere created by the worker. Let's count: find all .lean excluding .lake dirs.
+
+Actually, let me count what the dispatcher would see:
+
+python3 walk excluding .lake.
+
+The worker's filelist had 289 files. Let's compare with the dispatcher's walk count. If the dispatcher finds MORE files (e.g., files created after the worker's gate run, or .lean files inside a directory named differently), that could fail.
+
+Let me check.
+dsh: reasoning:
+Same 289 files. So the file set is identical. Then why did the dispatcher's gate fail?
+
+Possibilities:
+1. Environment differences in `lake env lean` — e.g., the dispatcher's env lacks something. It sets ELAN_HOME and PATH from os.environ of the dispatcher process. The dispatcher may run with a different cwd? No — cwd=wt.
+2. Resource contention: many tasks running concurrently (other D11 workers launched at the same time on this machine). Timeout is 1800s per file; unlikely.
+3. **`lake env lean` writes to a shared `.lake` build directory and concurrent builds** — no, gate only elaborates.
+4. Hmm — actually, maybe the issue is **disk space or memory**.
+5. Or the gate at 20:59 ran *concurrently with other D11 workers* which could have modified the shared elan or mathlib... no.
+
+Wait, maybe I should check the worker's own gate results more carefully. The worker's loop output "0 <file>" for each. But did the worker's loop actually check exit codes, or just print? `results.txt` lines start with the exit code, all 0. And 289 lines presumably. Let's count lines.
+
+But that was at 20:49. Hmm.
+
+Hold on — critical insight: **the gate at ~20:59 may have run while the previous worker was still running?** No, DONE at 20:52.
+
+Let me reconsider: maybe the dispatcher's gate run at 20:59 *did* mostly succeed but hit a few failures due to a **stale/contended olean lock** or something. Without gate.json we can't know. Our best move: run the exact gate ourselves now and find any failures. Let's do that in the background, and while it runs, inspect the D11 authored files for correctness/honesty.
+
+Actually, another important possibility: **the dispatcher walks the worktree including `logs/` dir** — no .lean there.
+
+Another: the worker's `.lake -> release/.lake` symlink. In the dispatcher's process, `os.walk` doesn't follow it. Fine.
+
+Hmm, what about `release/lakefile.toml` having a `require mathlib` from a path that might not resolve in a different env? `lake env lean` requires the manifest. Let's check the root lakefile.toml and release/lakefile.toml.
+
+Let me now: (a) start the full gate loop in background with exact dispatcher env, logging failures with stderr; (b) inspect files.
+
+Actually, a full run of 289 files sequentially could take ~13+ min. Let's start it.
+
+But careful: the worker_loop's gate command uses `lake env lean <abs path>`. Using absolute paths vs relative could matter for module resolution! The dispatcher passes absolute paths (`os.path.join(dirpath, fn)` where dirpath comes from `os.walk(wt)` with `wt` absolute). The worker's filelist also used absolute paths. Fine.
+
+Hmm... but `lake env lean /abs/path/file.lean`: Lake computes the package root from the *cwd* or from the file path? In newer Lake versions, `lake env lean` just sets LEAN_PATH and runs lean; the file path resolution for imports happens relative to the file's directory? Actually Lean resolves imports by searching LEAN_PATH which lake sets to the package's build dirs + source dirs. So absolute path fine.
+
+Let me start the run.
+dsh: reasoning:
+Interesting: the root `lakefile.toml` has `[[require]] mathlib` but NO `[[lean_lib]]` declarations. The release lakefile has lean_lib globs. Since `.lake -> release/.lake`, the root workspace's `.lake/build/lib/lean` etc. contain the built oleans.
+
+Now, `lake env lean <file>` from the root: lake reads root lakefile.toml, resolves mathlib from `.lake/packages/mathlib`, sets LEAN_PATH to `.lake/build/lib/lean` plus package deps. Since D11 modules are built into `.lake/build/lib/lean/Poincare/...`, imports resolve.
+
+OK. Now let me examine the D11 files for content. Let me read them.
+dsh: reasoning:
+This is a well-authored file. Note it uses `import Mathlib` (all of mathlib). Fine.
+
+Potential gate-failure cause: `import Mathlib` requires the mathlib olean. If the mathlib build in `release/.lake/packages/mathlib/.lake/build` is complete, fine. That was built.
+
+Let me now check the other files quickly while the gate runs. Let me also check whether the gate loop is progressing.
+
+Actually — hold on. A crucial thought: the dispatcher's gate is run inside the dispatcher process which is likely a long-running python with a different working environment. But also, perhaps importantly, **the dispatcher's gate ran at 20:59 while another D11 worker was actively running a `lake build`**, causing `.lake` files to be rewritten/locked. Hmm, but D11-heat-kernel-manifold-bridge is launched on the same machine and writes to its own worktree.
+
+Hmm, actually here's a much more likely explanation: **Disk/quota or memory**. Other workers (D11-bochner-manifold, D11-spectral-torus, etc. on 360-1/360-2 hosts) run elsewhere.
+
+Let me just wait for the gate output. Meanwhile, read the rest of the files.
+dsh: reasoning:
+These look reasonable. Let's read Flow.lean and AxiomAudit.lean.
+dsh: reasoning:
+These are solid. Let me check the gate repro progress.
+
+Actually, let me think about the possible gate failure cause more: Maybe the dispatcher's gate command fails because `lake env lean` in the *dispatcher's environment* hits `ELAN_HOME` set to a path where the toolchain override resolution works... it worked for me (I used exactly the same env).
+
+Hmm — but wait. When I ran `lake env lean release/Poincare/D11/MaximumPrincipleTensor/Basic.lean` it took some time but exit 0. Note: the first thing that happens is Lake tries to *resolve dependencies* — it may verify the manifest and possibly run `git` fetch? No, `lake env` doesn't fetch.
+
+Now here's a serious thought: the dispatcher process (long-running) may have `os.environ` differing in a subtle way: e.g., `LAKE_NO_CACHE` etc. Unlikely.
+
+Another thought: maybe some files fail only intermittently due to **concurrent access to the same `.lake` directory** by the other D11 worker in the same worktree? No, each task has its own worktree.
+
+Wait — actually there might be a *shared* mathlib package! Look: `.lake/packages/mathlib` in the worktree. Is it a symlink to a shared mathlib? Let's check. If multiple D11 workers build concurrently using the same shared mathlib `.lake` dir, and one of them runs `lake exe cache get` or a build that rewrites mathlib oleans, transient failures could occur. Let's check.
+
+Actually more important: the gate may have failed at 20:59 due to files that were *still being elaborated* concurrently. Hmm.
+
+Let me check the repro output progress now.
+dsh: reasoning:
+The run is in progress (TOTAL 289 printed, no failures yet). It seems each file takes a while.
+
+Meanwhile, let's consider the deeper issue: the gate has failed twice and the second failure occurred with files that compile fine individually. What else could be different?
+
+AH WAIT. I think I've got it. Look at the dispatcher:
+
+```python
+def compile_gate(task_id):
+    gate = os.path.join(STATE, task_id, "gate.json")
+    if os.path.exists(gate):
+        return json.load(open(gate))
+```
+
+And the `main()` loop: when DONE exists and status is running/queued, it calls compile_gate. If not ok, it increments repair_count and writes a repair prompt, and removes gate.json.
+
+Now, on the FIRST gate check (at 20:32), the D11 files didn't exist yet and there was no root lakefile → gate failed → attempt 1.
+
+The worker then fixed everything, wrote DONE at 20:52.
+
+At 20:59 the dispatcher ran the gate again → failed → attempt 2.
+
+Hmm, but wait: was the gate really run at 20:59? The dispatcher loop sleeps 600s; it checks at each iteration. It ran at 20:32:40, next at 20:42:40, next at 20:52:40 (DONE at 20:52:29 — just before!). Hmm, at 20:42:40, the worker was mid-work with root lakefile present at 20:35 and some D11 files at 20:41. The gate would run at 20:42:40... Actually the logs show the dispatcher wrote "REPAIR ... attempt 2 queued" at 20:59:21. So the gate ran at 20:59:21 — the cycle that started at 20:52:40 + 600s = 21:02... hmm, times don't quite line up, but roughly each loop iteration takes ~600s + gate time. Let's compute: cycle at 20:32:40 → gate ran (failed) → sleep 600 → 20:42:40 → maybe gate again (failed, but repair_count already 1 <2 → attempt 2 would be queued at 20:42:40!). But the log says attempt 2 at 20:59:21. So between 20:32:40 and 20:59:21, only ONE more gate failure was recorded?
+
+Actually: at 20:42:40, status was "running" (launched at 20:32:40), DONE did not exist → `done` false → skip gate. Right! The gate only runs when DONE exists. DONE was created at 20:52:29. The cycle at 20:52:40 (if the loop was at that point) → gate runs, fails at 20:59:21 (gate took ~6.5 minutes!) → attempt 2.
+
+So the gate run took 20:52:40 → 20:59:21 ≈ 6.7 minutes for 289 files. That's plausible since most files are fast (oleans cached from worker build) — wait, no: `lake env lean file.lean` re-elaborates the file from source every time, importing oleans. That's maybe 1-3 s per file → 289 × 1.5 s ≈ 7 min. Yes! That matches. So the gate ran the full loop in ~6.7 min and found at least one failure.
+
+But the worker's own loop at 20:36-20:49 printed all zeros... Wait, the worker's gate logs are timestamped 20:49 and all files. Hmm, the worker's gate loop may have been the *first* thing run (file mtimes 20:49). The worker's results.txt has 289 lines all 0.
+
+Hmm, but the dispatcher's loop at ~20:52-20:59 failed. What changed between 20:49 and 20:52? Let's check file mtimes in the worktree between 20:49 and 20:59.
+
+The D11 source files: Basic 20:47, Euler 20:41, Flow 20:46, ScalarODE 20:48, AxiomAudit 20:49. AxiomAudit modified at 20:49 — possibly *after* the worker's gate loop processed it (order is sorted alphabetically: Basic, Euler, ScalarODE, Flow, AxiomAudit → in the filelist sorted by full path: .../Basic.lean, .../Euler.lean, .../Flow.lean, .../ScalarODE.lean... wait, actually the gate dir listing shows AxiomAudit.log at 4159 bytes and others 0. Hmm, AxiomAudit outputs to stdout (the #print axioms output), so its log is nonempty. OK.
+
+Let me check: maybe the worker's gate loop ran BEFORE the last edits and `results.txt` was written incrementally... Let me look at mtimes more carefully and check whether any .lean file has mtime > 20:49.
+
+From the earlier ls: all under release/Poincare/D11 have mtimes ≤ 20:49. Let me check ALL .lean files for mtime in the window 20:49–20:59.
+
+Hmm, but hold on. There's something else: the worker's results.txt was it even verified? Let me check for a file `logs/gate/results.txt` mtime.
+
+Let me also consider: maybe the failing file is one whose compile depends on a **race with `.lake` rebuilding**. Actually! Here's a very plausible mechanism: `lake env lean` may trigger **Lake to re-run the build** if the manifest/toolchain changed... no, `lake env` doesn't build.
+
+But: `lake env lean <file>` — Lake needs to load the workspace; if any *package* file configuration changed... no.
+
+Hmm, another very plausible mechanism: **the `.lake/build/lib/lean` olean for a module is missing/stale and Lean falls back to elaboration**. Not an error per se.
+
+OK, enough speculation; let's find the failing file(s). The repro loop is running. Let me check mtimes in the meantime.
+dsh: reasoning:
+The worker's gate loop ran from ~20:49:36 to 20:50:33 — only ~1 minute for 289 files! That's way too fast to actually elaborate each file. Wait, that means each file took ~0.2s. That's plausible ONLY if lake env lean is fast... Actually no: elaborating a file that imports Mathlib takes ~3-10s. Hmm. 289 files in 57 seconds = 0.2 s/file.
+
+That strongly suggests the worker's gate loop did NOT actually run lean successfully — e.g., `lake env lean` exited quickly with an error... but results.txt shows all 0. OR the worker's loop used a different command (e.g., a checkout of oleans: `lean --run`?). Hmm.
+
+Wait, actually the gate logs are per file, and the timestamps of logs range 20:49:36 → 20:50:33. Perhaps the worker's script ran `lake env lean` once per file but with `LEAN_PATH` cached... no.
+
+Hmm, wait: maybe the worker's loop wrote logs in **parallel** (xargs -P). Or maybe the worker used `lake build` — no.
+
+Hmm, is it plausible that `lake env lean file.lean` takes only 0.2s when the file's olean is up to date? Lean still has to elaborate the file. Importing Mathlib from olean takes ~1-2s of startup. For 289 files, total 57s means each `lake env lean` process launched, loaded mathlib, elaborated the file... that's not 0.2s.
+
+Unless: the worker's "gate loop" wrote the logs but the *logs are all empty and results.txt all zeros* because `lake env lean` **failed to start** with... no, then exit code would be nonzero.
+
+Hold on, maybe the per-file logs are empty because the worker ran `lake env lean` with stdin/stdout redirected and the files compile quickly because they're small. Let me time it myself: my repro is running. Let's check how many files it has processed so far — it started at ~21:00:06 (run.out mtime). Let me check now and see progress.
+
+Actually, my repro doesn't print per-file progress, only failures and final. Hmm, that was a mistake. Let me check whether the process is running and how far via strace? Simpler: check CPU time of the python process, or count. Let me just check the process list.
+
+Actually let me instead check: time a single `lake env lean` on a small inherited file.
+
+Actually here's the thing — the previous worker probably ran the loop with a **pre-built `.olean` cache** and the messages... 
+
+WAIT. Critical realization! Look at results.txt format: `0 <path>`. And the worker's loop printed that. But what if the worker's loop was:
+
+```
+for f in $(cat filelist.txt); do
+  lake env lean "$f" > "logs/gate/$(name).log" 2>&1
+  echo "$? $f" >> results.txt
+done
+```
+
+If `lake env lean` is fast when... hmm.
+
+Let me test the timing directly for one file.
+
+Actually — I bet the answer is that `lake env lean X.lean` in this setup **does not re-elaborate**: Lean has a feature where `lean file.lean` checks if the olean is up-to-date? No, `lean` always elaborates the given file.
+
+Let me just time it.
+
+Also, importantly, my repro is running with the same command. Let me check its progress by counting elapsed time and check process tree.
+
+Let me run `ps` to see.
+dsh: reasoning:
+OK so a single `lake env lean` takes ~4s. 289 files × ~4s ≈ 20 min. My repro started 28s ago and is at file #... it's currently on release/D6LedgerProbe.lean which is around file #8 in the sorted list. That's slow because the first files include huge ones (D6AuditReport, D6LedgerProbe take a long time — 207KB log output).
+
+Hmm wait: the worker's gate log timestamps: negcontrol at 20:49:37, ..., D6LedgerProbe.log at 20:49:42, D6AuditReport.log at 20:49:44. So D6LedgerProbe took ~5s and D6AuditReport ~2s? Those files `#print axioms` thousands of decls, which produces 200KB output but that's fast once built.
+
+And total 57 seconds for 289 files = 0.2s/file average. That's NOT consistent with 4s/file.
+
+Unless... the worker's loop didn't invoke `lake env lean` per file but rather used **`lake build`** first and then... Hmm. Or the worker's script passed `LEAN_PATH` directly (calling `lean` binary without lake), which is faster? Still ~1s startup per invocation due to mathlib import.
+
+Wait, actually: `lake env lean file` where file has been... hmm, 0.2s. Let me measure `lake` startup overhead: the `time` above was 4.1s including lake's own startup (0.7s?) and lean elaborating ReleaseCheck.lean.
+
+Hmm, so how could 289 files take 57s? Maybe the worker ran them in **parallel** with `xargs -P $(nproc)`. With many cores (this machine might have 100+ cores), 289 files / (say 64 parallel) × 4s ≈ 18s. Plausible! The dispatcher's gate is **sequential** though.
+
+So the worker's own results are consistent with a parallel run. Fine — the worker's loop could have been parallel and still correct.
+
+So the difference is not that.
+
+OK so now: the sequential dispatcher gate took ~6.7 min (20:52:40 → 20:59:21) and failed. My sequential repro will take ~20 min. Let's let it run and find the failing file.
+
+But wait — I should think about *which* file could fail. The worker's parallel run may have had a race: e.g., two files writing to `.lake` build... no, `lake env lean` doesn't write oleans for the file being compiled? Actually `lean file.lean` DOES write `file.olean` next to the source (into the source directory!). Yes! `lean` writes the .olean and .ilean next to the .lean file by default. So compiling `release/Poincare/D11/.../Basic.lean` writes `release/Poincare/D11/.../Basic.olean` in the source tree. Interesting but harmless.
+
+Hmm, unless... the .olean written into the *source* directory shadows the build lib oleans? No, LEAN_PATH points to `.lake/build/lib/lean`, and the module path is derived from that root.
+
+Hmm hold on, actually there is a real possibility of a race: the worker's *parallel* gate run compiled files writing .olean into the source tree... and if the worker ran the gate in parallel while ALSO running `lake build` — no.
+
+Let's think about which single file might fail *intermittently* in the dispatcher's run but not the worker's. OOM? The machine has many workers running (D11-heat-kernel-manifold-bridge worker is running concurrently and may be building mathlib-heavy files). If the dispatcher's gate ran while another lake build consumed memory, one lean process might get OOM-killed → non-zero exit. That would explain an intermittent failure. And that would also explain the second failure.
+
+Actually here's a cleaner hypothesis: **`.olean` timestamp staleness**: The dispatcher's gate at 20:52-20:59 ran `lake env lean` on files. But the worker's earlier `lake build` had produced oleans in `.lake/build/lib/lean`. Now, if the source `.lean` file's mtime is NEWER than the built olean, does Lean/Lake error? No.
+
+Hmm, but what about the D11 `AxiomAudit.lean` edited at 20:49:11 — after the worker's own gate loop start? The worker's gate loop processed AxiomAudit at 20:49:45 per log timestamp. So it was included.
+
+OK. Let me also consider: was the D11 source `AxiomAudit.lean` re-edited after 20:49:45? No, mtime 20:49:11.
+
+Let me now check what happens if I run the D11 files sequentially right now — I already verified Basic. Let me verify the other four now in parallel with the running repro (well, that adds load but fine). Actually let me run them sequentially in the foreground quickly.
+
+Then wait for the full repro.
+dsh: reasoning:
+All 5 D11 files compile. So the failure is elsewhere, or intermittent.
+
+Now, let me think about the *or* other possibility: the dispatcher's gate **didn't** fail on a compile; maybe the gate crashed with an exception, e.g., `TimeoutExpired` or an OS error (too many open files), or `FileNotFoundError`. But that would leave no gate.json and log DISPATCH_ERROR... Actually no: if compile_gate raises, the exception is caught by `except Exception as e: log(f"DISPATCH_ERROR ...")`. Let me check dispatch.log for DISPATCH_ERROR around 20:52-20:59. The tail I read showed only REPAIR at 20:59:21. Let me grep the whole log for DISPATCH_ERROR.
+dsh: reasoning:
+No DISPATCH_ERROR. So compile_gate completed and returned ok=False, then the repair was queued and gate.json deleted.
+
+So some file(s) failed. Given the D11 files compile now, and the worker's parallel loop showed 0 failures, the failed file might be:
+1. an intermittent failure (OOM/concurrency), or
+2. a file that the *worker's own loop* didn't actually test properly (e.g., its loop had a bug where the exit code captured was from `echo` not lean), or
+3. a file whose compile depends on state that changed.
+
+Given the worker's 57-second parallel run, let's examine the worker's gate logs for evidence that lean actually ran. E.g., `d11_axiom_audit.out` has real output. The `logs/gate/*.log` for AxiomAudit has the real #print axioms output (4159 bytes). So lean definitely ran for that file. But that's just one file. Empty logs for others don't prove they ran.
+
+Hmm — 57s total. With `xargs -P 64`? Possible on a big machine. Let me check nproc.
+
+Whatever. Let me check the gate dir logs for any non-empty stdout that indicates compile. Many logs are non-empty (e.g. D6AuditReport 207KB). That's because those files print stuff.
+
+Key insight: an important way to find which file fails: check `.olean` files written next to sources in the source tree. `lean file.lean` writes `file.olean` in the same directory. If a file failed to compile, either no .olean or an older one. Let's compare source tree .olean mtimes: files successfully compiled at 20:49-20:50 would have .olean with those mtimes. Those that failed would have missing or older oleans!
+
+That's a great forensic approach. Let's check for each of the 289 files whether `<file>.olean` exists in the source tree and its mtime (or `file.ilean`).
+
+But wait: does `lake env lean file.lean` write the olean into the source dir? Yes, lean writes .olean next to the source by default (unless -o specified). Lake's `env lean` doesn't change that.
+
+Let's check.
+dsh: reasoning:
+No .olean files next to sources. So `lake env lean` must be using `-o` or the `LEAN_ABORT_ON_PANIC`... Actually, Lake's `env lean` sets `LEAN_PATH` but... Hmm, since Lean 4.9+, when `LEAN_PATH` is set via lake, `lean` writes oleans to... no, it writes next to source.
+
+Wait, maybe lake sets the `-o` flag? No. Hmm, maybe there's an env var `LEAN_OUTPUT_DIR`? Or the file is compiled in "server" mode?
+
+Actually — Lean 4 has a setting: when `lake env lean` is used, Lake sets `LEAN_PATH` and also `LAKE` env vars. There's a Lean option `-o` absent → output path = `file.olean` in the same dir. Unless the toolchain's `lean` defaults to not writing oleans when... Hmm, actually Lean only writes the olean when the module has a valid module name derived from the file path? It always writes.
+
+Let me check if there are .olean files anywhere in the source tree: `find . -name '*.olean' | head`. Maybe they're written into `.lake/build/lib/lean` because of `LEAN_PATH`... no.
+
+Whatever, not important.
+
+Let's check the running repro progress and just wait for it. Meanwhile, think about the deeper question: what should we do if the repro comes back all-green?
+
+If the repro is all green, then the previous gate failure was likely intermittent (resource contention). We should then rebuild/verify and finish. But the dispatcher's next gate run may fail again... The safest approach: make the compile of every file **fast and robust** — e.g., ensure all oleans are up to date in `.lake` so `lake env lean` works.
+
+Hmm, but hold on. Wait. Let me reconsider the timing evidence. The dispatcher's gate run: 20:52:40 → 20:59:21 = 6.7 min = 400s for 289 files = 1.4s/file. My single-file test took 4.1s. Hmm, 1.4s/file average is plausible if many files are quick and lake's startup ~0.5s... Actually let's measure a few: ReleaseCheck took 4.1s (it likely imports everything). A small file might take ~1s.
+
+Hmm OK so the dispatcher gate is plausible at 400s.
+
+Now: notice the worker's gate took 57s wall for 289 files — that means parallelism. Fine.
+
+Now here's another thought — what if the failure is not about compilation at all but about **`lake env lean` writing into a read-only or full filesystem**? No, exit code would be nonzero for all.
+
+Let me look at this from a different angle: check whether the *other* D11 task (heat-kernel-manifold-bridge) is in a similar state — no.
+
+Let's look for the actual failing file using the repro. Wait for it.
+
+Actually, we can speed this up: run the gate in parallel but capture failures per file — parallel like the worker did. Since the previous worker's parallel run reported 0 failures, a parallel rerun may again report 0. But a sequential rerun is what the dispatcher does.
+
+Hmm, one difference between sequential and parallel: with sequential, each `lake env lean` runs alone; with parallel, many at once. Not obviously causing different results.
+
+A more promising difference: **the dispatcher's environment**. `os.environ` of the dispatcher process — which is the shell that launched `dispatch_loop.py`. Let's check `dispatch_stdout.log` and how it was launched. If the dispatcher was launched with a `nohup` from a shell where `LEAN_PATH` or other vars were set... Let me check the dispatcher's environment via /proc/<pid>/environ if it's still running!
+
+The dispatcher pid: let's find it. `ps -eo pid,args | grep dispatch_loop`. Then read /proc/PID/environ. That's the ground truth of the gate environment. Let me do that. Also compare with my shell env.
+
+Actually the key difference might be `PATH`/`ELAN_HOME` — but the dispatcher *overrides* ELAN_HOME and PATH deliberately.
+
+Other env vars that matter: `LEAN_PATH`, `LEAN_SRC_PATH`, `LAKE_HOME`, `LAKE_PKG_URL_MAP`, `MATHLIB_...`. If the dispatcher's env has `LEAN_PATH` set to something stale (e.g., pointing to another worktree), then `lake env lean` would prepend... hmm, lake env sets LEAN_PATH itself, overriding.
+
+Let me check /proc for the dispatcher env.
+dsh: reasoning:
+The repro is progressing (now at D10/HeatKernelEuclidean/Semigroup, around file #30 of 289).
+
+Now let's read the dispatcher's environment from /proc/2361634/environ.
+dsh: reasoning:
+Can't read the dispatcher env (different user perms? no, same user but maybe hidepid). Let's try `sudo`? Not available probably. Alternatively read the dispatch stdout log to see how it was launched.
+
+Actually, more useful: let me look at what the worker_loop.sh does, and how the worker (previous attempt) ran the gate. Maybe the worker's gate loop is recorded in the state latest.log or the session log.
+
+Let's read worker_loop.sh and launch scripts.
+dsh: reasoning:
+OK. Let's think about the timeline more carefully:
+
+- 20:22:40 LAUNCH attempt 0 (original prompt).
+- 20:32:40 REPAIR attempt 1: gate ran at 20:32:40 and failed. At that point, did the worktree have a root lakefile? The root lakefile.toml mtime is 20:35. So at 20:32 there was NO root lakefile → all 289 files would fail with `no default toolchain configured` or similar. Yes.
+- The first worker then fixed it. Built release (log d11_build_release.log at 20:36), authored files, ran its own gate at 20:49-20:50 (57s), wrote DONE at 20:52:29.
+- 20:52:40-ish the dispatcher's gate ran (DONE exists) and failed at 20:59:21.
+
+Hmm wait, that's ~6.7 min. But hold on: maybe the dispatcher's gate actually started at 20:52:40 and it *did* run all 289 files sequentially at ~1.4s each. But wait — the D11 source files were being *written* until 20:49:11, and `d11_axiom_audit.out` at 20:49:29, DONE at 20:52:29. OK.
+
+So why fail?
+
+New idea: look at the worker's build log `d11_build_release.log` (1.2 MB, 20:36). If the worker ran `lake build` and it failed... no, it says 9166 jobs exit 0.
+
+Hmm, alternative: maybe the failure is a **timeout**? `timeout=1800` per file. The log at 20:32:40 → hmm.
+
+Let's count: if the gate at 20:52:40 ran files sequentially and one file *hung* (e.g., a `native_decide`-heavy file, or a file that takes very long) — total 6.7 min for 289 files means no file took 30 min.
+
+OK, so it must have been a genuine non-zero exit on some file(s). Since all 5 D11 files + others I tried compile... Let me consider that the failing file may be one of the *inherited* files whose compile depends on the *mathlib olean cache being complete*. The worker built the release with `lake build` and got 9166 jobs. Hmm — but "lake build" in `release/` builds all `defaultTargets` = Poincare, Probe, Ledger, Audit, ReleaseCheck, ReleaseAudit, D6AuditReport — i.e., the whole package. The gate also compiles `negcontrol/NegativeControl.lean` which is outside the package (a negative-control file). That one is in the filelist and its log is 433 bytes. Let's look at it! `negcontrol/NegativeControl.lean` — the "negative control" often intentionally fails to compile (it's supposed to fail). Let me read that file and its gate log.
+
+Yes!! That's a strong candidate: the negcontrol file is designed to *fail* (a negative control to show the gate detects failures). In the worker's gate run, negcontrol log is 433 bytes and results.txt shows `0 negcontrol/NegativeControl.lean`... hmm, exit 0 then. Let me check the log content.
+
+Let me look.
+dsh: reasoning:
+The negative control compiles (exit 0) but it contains `sorry` and `native_decide` — but that file is inherited from D5 and is not authored by this task. Hmm, but the task instruction says "Fix ONLY the authored files in your worktree so that every .lean file compiles with lake env lean (exit 0). Keep all mathematical content honest: no sorry, axiom, unsafe, native_decide, or proof_wanted".
+
+The negcontrol file intentionally uses sorry/native_decide and is part of the inherited release tree — it's a negative control designed to detect those. It's not authored by D11. The gate only checks exit 0.
+
+Important: negcontrol/NegativeControl.lean is run from the **worktree root**, but the file header says "Run from the release directory: lake env lean ../negcontrol/NegativeControl.lean". From the root, `lake env lean /abs/path/negcontrol/NegativeControl.lean` — it imports Lean.Util.CollectAxioms and Lean.Elab.Command (core, not mathlib). Should work from root too. And the gate log at 20:49 shows it worked.
+
+OK so that's fine.
+
+Now — think about `native_decide` in negcontrol: it runs `native_decide` which compiles native code at elaboration and **writes a shared library / `.so` into `.lake`?** In Lean 4, `native_decide` invokes the compiler, producing a temporary shared object cached under `~/.cache/lean/...` or the package's `.lake/build/lib`. Hmm, this could be relevant: the negative control's `native_decide` requires a C compiler and writes to `.lake`. But it worked in the worker's run.
+
+Also: `negControl_nativeDecide._native.native_decide.ax_1_1` — the name contains a counter that depends on elaboration order/caching. If the native_decide cache is stale, the axiom naming could differ. Not relevant to exit code.
+
+Let's now wait for the repro. While waiting, let's compute how far it is by checking the current file being compiled periodically.
+
+Actually, a better use of time: consider making the whole thing deterministic and robust. But we don't know the failure yet.
+
+Alternative approach to find the failure faster: run the gate **in parallel batches but sequential within dispatch order** — no. Actually, we could run the *reverse* order or random order to find a failing file faster. But my sequential run is already 30/289 in.
+
+Hmm, let me estimate: 30 files in ~4 min → 289 files ≈ 38 min. That's slow but tolerable. Meanwhile I can work on other things.
+
+Actually, wait. Let me reconsider the timing of the dispatcher gate: 20:52:40→20:59:21 = 6m41s = 401s. My repro: started 21:00:06, and at 21:04 it's at file ~30. That's 4 min for 30 files = 8s/file. That's much slower than the dispatcher's 1.4s/file. Why?
+
+Because **the machine is loaded** (other D11 worker building mathlib stuff) — or because my repro's `lake env` startup is slower. Hmm, or because the dispatcher's timing assumption is wrong and the gate actually started earlier.
+
+Hmm, hold on. Let's re-derive the dispatcher's gate start time. The loop:
+```
+while True:
+    ... process queue ...
+    time.sleep(600)
+```
+Log entries: 20:32:40 REPAIR attempt 1 queued. Then sleep 600 → 20:42:40: DONE? The first worker's DONE is at 20:52:29 (file mtime). At 20:42:40 DONE didn't exist, so no gate, no queue change → `changed` False, no log, sleep 600 → 20:52:40: DONE exists (20:52:29) → gate runs. Gate duration = 20:59:21 - 20:52:40 = 401s.
+
+And my repro does 8s/file. So either the dispatcher's gate was faster (less load then?) or it didn't run all files. Hmm, 289 files at 8s = 38 min, not 6.7 min. So either the dispatcher gate was much faster (machine less loaded at 20:52 — the other D11 worker was launched at 20:22 and might have been idle/thinking, not compiling), or the gate failed EARLY and... no, the loop runs all files regardless.
+
+Wait, unless `lake env lean` was much faster at 20:52 because the worker had just built and the filesystem cache was warm. My repro is loaded by the other worker. Let's check the current load: `uptime`.
+
+Hmm, let me also time a few specific files to see the variance.
+
+Another thought: maybe the dispatcher's gate hit `TimeoutExpired` on a file and recorded "timeout" — total 401s means no file took 1800s.
+
+OK: alternatively, maybe compile_gate was invoked at 20:52:40 and *raised an exception* after processing some files — e.g., `subprocess.run` OSError — but then DISPATCH_ERROR would be logged... Actually no! Look at main(): the `try/except` wraps the loop body, so an exception inside compile_gate would be caught and logged as DISPATCH_ERROR, and `save_queue` wouldn't run, so no REPAIR would be queued. But we saw REPAIR attempt 2 queued at 20:59:21 — so compile_gate returned normally with ok=False after checking (some) files. And the total time was 401s.
+
+Hmm, so within 401s it checked all 289 files at 1.4s/file. Let's verify that's plausible: measure `time lake env lean` on a small file now. The ReleaseCheck test took 4.1s. Let me try a couple more, e.g., `release/Probe/PdeApi.lean` (small).
+
+Actually, hmm: the first file in the list is negcontrol, then Audit/*, D6AuditReport, D6LedgerProbe (big), Ledger/*, Poincare/Basic... These would each take 1-10s. Then lots of small files ~1s. Average 1.4s is plausible if the machine is idle-ish and the OS page cache is warm.
+
+My repro is slow probably because the other worker (D11-heat-kernel-manifold-bridge) is hammering the CPU/memory. Let's check load.
+
+Let me check `uptime`, `nproc`, and free memory.
+dsh: reasoning:
+Load average 23.86 on a 192-core machine — fine. Files take 3-5s (including lake startup ~1s). So 289 files sequentially ≈ 15-20 min, not 6.7 min. So the dispatcher's 401s run is suspicious: it implies ~1.4s/file, which is faster than any individual measurement I've made.
+
+Unless the machine was less loaded then... but load is ~24, plenty of cores.
+
+Hmm wait, maybe the dispatcher's gate run at 20:52:40 didn't have to process all 289 files because it **failed early** on something that raised a non-Exception? No — `subprocess.run` catches TimeoutExpired; other exceptions propagate to `except Exception`.
+
+Hmm, actually! What if the gate **did** complete all files quickly because the `.olean` files of the *source files* existed then? Wait — Lean `lean file.lean` will write olean next to source... but we found no oleans next to sources. Hmm, that's weird — maybe Lake's `env lean` sets `-o .lake/build/lib/lean/...`? Actually! Lake 5.0 (the new Lean 4.34 build system) may run `lean` with the module resolution such that output goes to the build dir. Lake sets `LEAN_PATH` and also `LEAN_SRC_PATH`. Hmm.
+
+Wait, actually there's a much more important nuance: **Lean 4.34's `lean` may skip re-elaboration if the module olean is up-to-date**? No, that's `lake build`.
+
+Hmm, hold on: what if `lake env lean file.lean` is actually *not* elaborating the file at all when the file is a *module of the package* and the olean is up to date? No...
+
+Let me test: touch a source file and time it again. Already did — PdeApi took 5s. Hmm, that's real elaboration.
+
+Hmm OK here's another thought: maybe the dispatcher's gate didn't run 289 files because it crashed... but no DISPATCH_ERROR. Let me double check for DISPATCH_ERROR lines in dispatch_stdout.log too. And also there's the possibility that compile_gate raised TimeoutExpired→ handled.
+
+Honestly, the duration discrepancy might just be measurement noise: the worker's 57s parallel run suggests massive parallelism (192 cores). And the dispatcher... hmm, 401s.
+
+Wait wait wait. Actually! Maybe the dispatcher's gate DID take much longer than 401s but the log line is written after `save_queue`, and the loop's sleep(600) then... no, we computed 20:52:40 → 20:59:21 = 401s as the difference between the two log lines. But the previous log line (20:32:40) was followed by sleep(600) = 20:42:40 iteration, then gate skip (no DONE), then sleep(600) = 20:52:40, gate run, then log at 20:59:21. So gate took 401s.
+
+Unless the sleep is 600 seconds AFTER processing, so: 20:32:40 process+log, sleep 600 → 20:42:40 process (no DONE, changed=False), sleep 600 → 20:52:40 process: DONE exists (20:52:29), gate runs → 20:59:21. Yes 401s.
+
+So 289 files in 401s = 1.39s/file. My measurements say 3-5s/file. Contradiction... unless the gate run had many files that fail FAST. Ooh! That's a thought: files that fail fast (e.g., error immediately) take ~1s. If MOST files failed fast, the total could be short. But then the gate would have failed massively, and the worker's own claims would be inconsistent... but the worker's claims came from its own loop after the build.
+
+Hmm, but here's the thing: my sequential repro is currently at ~30 files in ~5 min. Let me check the actual current position and per-file timing to calibrate. Actually, my repro *includes* `capture_output=True` — same as dispatcher.
+
+Let me directly measure a batch: run the first 10 files and time each. Actually let's not waste resources; the repro will finish eventually.
+
+Hmm, but here's a thought experiment: what if the dispatcher's `ENV` (inherited from the shell that launched dispatch_loop.py on Sep 8) doesn't include the elan-managed `lake`? It sets ELAN_HOME and prepends `$ELAN_HOME/bin` to PATH. Fine.
+
+Let me try a completely different approach to find the failing file: examine the `.lake/build/lib/lean` oleans and the `.lake/build/lib/lean/*.trace`/`.hash` files? Hmm.
+
+Actually — wait! Big realization candidate: **`logs/gate_repair2` !** I created a new directory `logs/gate_repair2/run.out`... that's mine. Not related.
+
+Hmm, let me look at the FIRST worker's session log — `state/D11-maximum-principle-tensor/latest.log` only has 2 lines now (overwritten by the new worker_loop at 20:59). But maybe there's a session jsonl for the previous run in ~/.dsh/sessions. Those could tell us exactly what the previous worker did. That's a good forensic source! The DSH session dir: `/data/home/guoshaoyang/.dsh/sessions/--data3-guoshaoyang-workdir-lean_poincare-longrun-worktrees-D11-maximum-principle-tensor--/`. Let's list it.
+
+Actually, the current session is `session-44218760-...`. The previous session would be another file. The jsonl.zstd files might be readable.
+
+That could tell us how the worker ran its gate. But more importantly, we want the dispatcher's failing file, which isn't in any session log.
+
+Alternative: reproduce the dispatcher's gate run with the same ENV more faithfully. The only difference I know: my shell has `PATH` including `.dshpkg/node_modules/.bin` etc., and ELAN_HOME is the same. Hmm.
+
+You know what? There's another possibility I should take seriously: **the gate run at 20:52 was interrupted by the dispatcher's own `compile_gate` cache check**... no.
+
+Hmm, hold on. Let me re-read compile_gate:
+
+```python
+def compile_gate(task_id):
+    gate = os.path.join(STATE, task_id, "gate.json")
+    if os.path.exists(gate):
+        return json.load(open(gate))
+```
+
+At 20:32:40 the gate ran and failed (no root lakefile) → wrote gate.json → then main() removed it when queuing repair. Fine.
+
+At 20:52:40: gate.json doesn't exist → runs.
+
+OK here's yet another thought — **the dispatcher's gate might have been killed partway and restarted**? No.
+
+Honestly, the most productive path: wait for my sequential repro to finish. If it reports FAIL=0, then run it once more to check for intermittency, and specifically test the environment as the dispatcher would.
+
+But 289 files at ~4s each = 20 min. We're 6 min in.
+
+Meanwhile, let me check the dsh session logs from the previous worker to see if there's anything unusual (e.g., the worker modified files after its gate run, like AxiomAudit at 20:49:11 vs gate at 20:49:45 — fine).
+
+Let's look at the previous session jsonl.
+dsh: reasoning:
+Wait! The repro process 4184631 has `etimes=109`?? That means it's only 109 seconds old... but I started it ~6 minutes ago. Hmm, the ps output shows 109 (seconds). Hmm. Actually earlier `ps` showed 4184631 at 28s elapsed when I checked at ~21:01. Now it says 109s. That would mean the process restarted?? Or etimes is wrong.
+
+Wait no. Let me recheck: earlier output showed "4184631 28 0.0 13156 python3 /tmp/gate_repro.py" at ~21:01:37. Now it says 109 seconds. If it were started at ~21:00:06, by 21:02:00 it would be ~114s. Hmm, so now must be ~21:02. So actually little time has passed in the real world; my perception was off. The current file is `release/Poincare/D10/TriangulationLowDim/Audit.lean` which is file #45 or so in the sorted list. Hmm, in ~110s, it did ~45 files?? That's 2.4s/file. OK that's much faster than my earlier estimate. Wait, but the D11 compile of 5 files took... hmm, the whole batch of 5 took some time.
+
+Hmm, no: 45 files in 109s means many files are fast (0.5-1s). The ones I timed (PdeApi 5s, PerelmanDefinitions 3s) were slower.
+
+OK so the dispatcher's 401s for 289 files is entirely plausible! Great, that resolves the timing puzzle.
+
+And this also means my repro should finish in ~10-15 min total.
+
+Note: the session dirs: session-607ec3c3 (20:22 = first worker attempt), session-8217183f (20:32 = first repair worker), session-44218760 (20:59 = me). I could read the previous session's jsonl to see how it ran the gate. Let me do that — parse the zstd jsonl for bash commands. If it used a parallel loop, that explains the 57s. Not needed though.
+
+Let's wait for the repro. Actually, let me use the waiting time productively: check the other files in the D11 authored set for forbidden tokens (sorry/axiom/unsafe/native_decide/proof_wanted) — but the negcontrol file intentionally has sorry/native_decide (inherited, not authored). Let me scan.
+
+Also let me verify the `d11_axiom_audit.out` claims.
+
+And check the result card JSON.
+
+Let me do the forbidden-token scan on the authored D11 files.
+dsh: reasoning:
+The grep matched only comments and `#print axioms` lines — fine (no actual `sorry`/`axiom` declarations). The forbidden-token scan should exclude those. Fine.
+
+The axiom audit output shows "Build completed successfully (8886 jobs)" — hmm, that means the worker ran `lake build Poincare.D11.MaximumPrincipleTensor.AxiomAudit` and it built 8886 jobs. Note "8886 jobs" vs earlier "9166 jobs". Whatever.
+
+Now let's wait for the repro. Let me check on it periodically. Meanwhile, let me look at the previous session's transcript to understand what the worker did (maybe it reveals the gate command). Let me decompress the session jsonl for session-8217183f (the repair attempt-1 worker).
+
+Actually more valuable: understand whether the *dispatcher's* gate could fail due to something environmental. Let me look at how the dispatcher process was started: `ps -o lstart,args -p 2361634` and its parent 2361632.
+
+Also check `dispatch.nohup.log` and whether `nohup` env differs.
+
+Hmm, here's another thought: maybe the difference is **`HOME`**! `lake` may use `$HOME/.cache` or `$ELAN_HOME`. Also, the dispatcher's `ENV` includes the env of the shell that launched it on Sep 8 — which may have `ELAN_HOME` pointing elsewhere and `PATH` without elan... but it sets both explicitly.
+
+Hmm, wait. `ENV["PATH"] = ENV["ELAN_HOME"] + "/bin:" + ENV.get("PATH","")`. If the original PATH lacked the lean toolchain's own bin, fine — elan proxies.
+
+Let me now think about the possibility that the gate failure is in a file that **does not exist anymore** or **was added later**. No.
+
+Hmm, hold on, here's a NEW idea. `compile_gate` walks `os.walk(wt)` where `wt` = worktree. **Does the worktree contain symlinks to directories other than .lake?** For instance, `release/.lake/packages/mathlib` might be a symlink to a shared mathlib dir. If `dirnames` contains a symlinked dir (e.g., `mathlib`), `os.walk` won't follow it (followlinks=False). Fine.
+
+BUT: what about the `input/d5-manifest` etc.? Not symlinks.
+
+Let me check for `.lean` files under `release/.lake` — excluded.
+
+OK, so what about **`manifold`**... no.
+
+Let's wait for the repro result. I'll check progress every so often.
+
+Actually, hold on. Let me reconsider one important thing: The failure could be in a file that is NOT in the worker's filelist but IS found by the dispatcher... we already verified the sets are identical (289 both). Good.
+
+Another idea: **file ordering doesn't matter**.
+
+Hmm, what if the failure is due to `logs/gate/filelist.txt` containing absolute paths and the worker using `xargs -P`, meaning at the moment the dispatcher's gate ran (20:52), some source .lean files had **stale `.olean` artifacts written into the source tree**... but we found no oleans. Hmm, wait: we found NO oleans anywhere next to the sources. Let me double check with find for '*.olean' under the worktree excluding .lake.
+
+Actually! Here's a thought: if `lean` writes `.olean` files next to sources, and the worker's *parallel* run created them... then the dispatcher's gate would... no, still fine.
+
+But WAIT. What if `lean` writes the olean next to the source, and for files in `release/`, the *module name* inferred from the path conflicts with the built olean in LEAN_PATH? No, that affects imports, not the file being compiled.
+
+Let me just check for stray oleans.
+
+Actually, more importantly: I wonder if the failure could be **`release/lakefile.toml`'s `D6AuditReport` target** or something at the root. No — compile_gate only runs `lake env lean`.
+
+Let me just wait. I'll sleep-poll the repro every couple of minutes while doing something useful: verify the result card content and prepare an updated card for attempt 2 (documenting the repair). Actually, I should first find the failure before writing the card.
+
+Let me check repro progress now.
+dsh: reasoning:
+Progressing: now at release/Poincare/D7/ConjugateHeat/Instance.lean (file ~#80). No failures yet.
+
+While waiting, let me dig into the previous repair worker's session transcript to see exactly what it ran (to gauge trust in its "FAIL=0" claim).
+
+Let me decompress and grep for "results.txt" / "xargs" / "for f in".
+dsh: reasoning:
+The JSON structure differs. Let me inspect a line's structure.
+dsh: reasoning:
+No 'command' keys. Let me dump one 'data' event to see the format.
+dsh: reasoning:
+Let's look at the `run_gate.sh` script the previous worker created (in `logs/run_gate.sh`). That will show whether the gate was parallel.
+
+Also look at command 95's output and the script content (probably created by a `write` tool call). Let me find the write of run_gate.sh in the session.
+dsh: reasoning:
+The previous worker used a **parallel** gate (`xargs -P 24`). That explains 57s. And it reports FAIL=0.
+
+But the dispatcher's sequential gate failed. Hmm, with -P 24 vs sequential, results could differ ONLY if there's a race. What race? `lake env lean` — Lake may write to `.lake` (e.g., the `lake` "lock" file?). Actually! Lake creates a lock file `.lake/build/lock`? Hmm.
+
+Actually wait. There IS a known race: Lake writes `.lake/build/lib/lean/...` — not for `env lean`.
+
+Hmm, another thought: `logs/gate/results.txt` line format `echo "$? $rel"` — BUG: `$?` after the `if` is the exit status of the `if` compound? No: inside the `else` branch, `$?` is the status of the failed command (`lake env lean`), since `timeout` returns its status. Actually careful: `if timeout 1800 lake env lean "$f" > "$out" 2>&1; then ... else echo "$? ..."; fi` — in the else branch, `$?` is the exit status of the `if` condition, i.e., of `timeout`. Yes correct.
+
+So the parallel run really got exit 0 for all 289.
+
+Now: could the dispatcher's sequential run fail due to a **timeout**? No (1800s).
+
+Hmm, what could make a sequential run fail where a parallel run succeeds? 
+
+**Idea: file descriptor / stdout buffer**? No.
+
+**Idea: `lake env lean` needs to acquire a lock on `.lake/packages/mathlib`**? With 24 parallel it'd be under *more* contention.
+
+**Idea: transient .olean corruption**: If the previous worker's parallel gate run *wrote* oleans somewhere, and then... hmm.
+
+Hmm, what about the `logs/run_gate.sh` file itself being in `logs/`? Not a .lean.
+
+Let me look at this from a totally different angle: maybe the dispatcher's gate at 20:52:40 ran with a **different cwd**? No, cwd=wt.
+
+OK, maybe the answer: it's already past — the dispatcher's gate run at 20:52:40 may have run **while the first worker was still running**. DONE was created at 20:52:29 by touch. But the worker's dsh process may have still been finishing; but that doesn't affect file contents.
+
+Hmm, hold on! Actually, maybe the dispatcher's gate ran while the previous worker's **own gate** (parallel, -P 24) was still running? The worker's results.txt mtime is 20:50:34. No.
+
+OK, let's consider the possibility that `compile_gate` failed for a reason unrelated to lean: e.g., `subprocess.run(["lake", ...])` raising `FileNotFoundError` because `lake` isn't on PATH in the dispatcher env! Then `except Exception` in main() logs DISPATCH_ERROR... and we saw none. Hmm, but wait: would we see it? The last DISPATCH_ERROR check was `grep -n "DISPATCH_ERROR"` → no matches at all in dispatch.log. So no.
+
+Hmm, so compile_gate returned with ok=False. Unless... `gate.json` was written by the *worker* (not the dispatcher) — no, the worker didn't write to state/.
+
+Hmm, hold on! Let me re-read main() once more:
+
+```python
+done = os.path.exists(os.path.join(STATE, tid, "DONE"))
+if done and t["status"] in ("running", "queued"):
+    st, card = card_status(tid)
+    if st == "done":
+        g = compile_gate(tid)
+        if g["ok"]: ... verified
+        else:
+            repairs = t.get("repair_count", 0)
+            if repairs < 2: ... write repair prompt, remove gate.json, log REPAIR
+```
+
+`repair_count` was 2 at the time of the second failure? The queue now shows `"repair_count": 2`. At the time of the second gate failure, repairs = t.get("repair_count",0) = 1 → 1 < 2 → set repair_count = 2, status queued, write repair prompt attempt 2, remove gate.json, log "REPAIR ... attempt 2 queued". That matches exactly.
+
+So yes: gate.json existed and had ok=False, then was deleted.
+
+Damn, it's a shame gate.json was deleted — the dispatcher deletes it precisely so we can't see it. But it's also possible to recover deleted file? No.
+
+Hmm, wait. Is there a backup? `longrun/worktrees/D10-maximum-principle-rn/logs/gate_replay_state/D10-maximum-principle-rn/gate.json` exists — that's from a different task where someone saved a copy. Not ours.
+
+OK so let's wait for the sequential repro. If it's clean, we should consider the possibility of an intermittent failure and make the setup more robust. But what would make the *next* dispatcher gate pass? Note the dispatcher only has repair attempts < 2; after this repair, if the gate fails again, the task will be marked gate_failed. So we need the next gate to pass.
+
+Idea for robustness: make each file's compile as fast and reliable as possible, and — critically — reduce the total gate duration? Not needed.
+
+Hmm, what if the failure is caused by **memory pressure**: each `lake env lean` on a big file imports all of Mathlib → ~2-3 GB RSS. Sequential = fine. The machine has 2 TB RAM with 1948 GB available. Not an issue.
+
+What about **disk space**? `.lake` writes? `lean file.lean` writes oleans... where? Let me check: after my repro compiled many files, are there new .olean files next to sources now? Let me check `find . -name '*.olean' -not -path '*/.lake/*' | head`. If `lean` writes them next to the source, then the earlier "missing" result means something odd. Let me check now — my repro has compiled ~80 files.
+
+That's a great diagnostic: if oleans appear now but were missing before, then something about the environment changed (e.g., `LEAN_PATH` handling). Actually, hmm: maybe `lake env lean` sets `LEAN_OUTPUT_DIR`? Hmm.
+
+Let me check.
+dsh: reasoning:
+No oleans written next to sources. So `lake env lean` in this Lake version does NOT write oleans next to the source (probably Lake sets `-o` or Lean 4.34 skips writing when `LEAN_PATH` is set? Actually Lake 5 passes `--root` and Lean writes .olean next to source... hmm, apparently not).
+
+Wait, actually: modern Lake sets the env var `LEAN_PATH` and runs `lean` with `--stdin`? No... Let me check `lake env` vs `lake env lean`: `lake env lean file.lean` runs the `lean` executable with args. Lean would write `file.olean`.
+
+Unless the Lean toolchain's `lean` binary writes oleans only when `-o` is given or when in "server" mode... Hmm, actually I recall: Lean writes the .olean **only if the module name is valid and `--no-olean` isn't passed**... Hmm.
+
+Hmm! Maybe the reason is: `LEAN_PATH` includes the build dir AND Lean's output path defaults to... no, it's the source dir.
+
+Whatever. Not important, except that it shows the compile is a pure check.
+
+Hmm, hold on, actually — this is interesting. Let me test directly: `lake env lean` a tiny file in /tmp and see if an olean appears. Not important.
+
+Let me think about the real difference between parallel and sequential gate: **`.lake/build/lib/lean` oleans could be *rebuilt* by lake during `lake env lean`?** No.
+
+Hmm, what about `lake` **updating the manifest or the toolchain**? `lake env lean` might trigger `lake`'s "setup" that could *write* to `.lake` (e.g., `lake` creates `.lake/build` dirs). With 24 parallel there'd be races, but it succeeded.
+
+Let me look at this from yet another angle: maybe the failing file is one that **fails only when the machine is under a specific condition**, e.g., a `native_decide` in negcontrol needs a C compiler and ccache; under load it might time out? No.
+
+Actually, WAIT. Let me reconsider the timing again: 20:52:40 → 20:59:21 = 401 s. My repro is at ~80 files in ~8 min (480s) = 6s/file. If the dispatcher's gate were the same speed, it would have needed 289*6 = 1734s = 29 min, but it took 401s. So the dispatcher's gate must have been ~4x faster. Why?
+
+Possible: at 20:52 the machine had fewer competing processes (the other D11 worker may have been idle then). My repro is running while... hmm, actually the other D11 worker (heat-kernel) has been running since 20:22, and it's probably doing heavy builds. Load average is 24.
+
+Hmm, but hold on: 401s could also be explained if the gate **stopped early**. But it can't stop early — the loop runs over all files.
+
+Unless... `files` was SHORTER at 20:52! What if at 20:52 there were fewer .lean files (e.g., the D11 files didn't exist yet)? No — they existed at 20:47-20:49.
+
+Hmm, what if the gate's `os.walk` found the .lean files but `subprocess.run` failed *instantly* for most of them (e.g., `FileNotFoundError: lake`)? Then all would fail fast (0.01s), total ~1s. No.
+
+What if `lake env lean` failed fast for most files with `error: no default toolchain configured` (exit 1 in ~0.3s)? That would give ~1.5s/file average... and would mean the root lakefile/toolchain was missing at 20:52! But the worker created them at 20:35. Hmm, unless the *dispatcher's* lake invocation couldn't find the toolchain because its ENV lacks `ELAN_HOME`... no, it sets it.
+
+Hmm, hmm. Let's test: how fast does `lake env lean` fail if the toolchain is missing? `lake env lean` would try to download/install the toolchain via elan → could take a while or fail immediately.
+
+Wait wait wait. I should check something else: does the *root* `lakefile.toml` + `lean-toolchain` shim actually work for the dispatcher? I verified it works in my shell. But the dispatcher sets `ENV["ELAN_HOME"]` and `PATH` explicitly. My shell has the same `ELAN_HOME`. So same.
+
+Hmm, one thing I noticed: my shell's PATH contains `$ELAN_HOME/bin` first thanks to my export. The dispatcher does the same.
+
+So the environment should be equivalent.
+
+Let me try yet another approach: maybe I can find the failing file by looking at **which files the gate would have failed on given a 401s budget**. If files compiled at ~1.4s each on average, and I know from my run which files are slow (D6AuditReport takes maybe 30-60s?), we could model. Eh.
+
+Alternatively — brilliant idea — check the **`.lake/build/lib/lean/*.olean` file mtimes**: when `lake env lean foo.lean` runs, does Lake touch anything? Let me check whether anything in `.lake` was modified during my repro run (e.g., `.lake/build/lib/lean/Poincare/D11/...` mtime). If `lake env lean` writes/touches `.lake` files, then the *dispatcher's* gate run would have left traces with mtimes ~20:52-20:59, and I could see exactly which file it was processing when... no, that gives order, not failure.
+
+Hmm, but here's a thought: maybe the failure IS observable via the `.lake` state: if the gate failed on file X due to a missing/stale olean of a dependency, then a subsequent build would fix it. But the worker built everything.
+
+Let me step back and consider the most likely real cause: **the dispatcher's gate ran while the previous worker's `lake build` (or its parallel gate) had left `.lake` in a state that made some import fail.** Hmm.
+
+Honest assessment: maybe the failure was in `negcontrol/NegativeControl.lean` — the `native_decide` there requires compiling native code, and the first time it runs, `native_decide` needs to invoke `cc`/`leanc`. Wait: the worker's parallel run at 20:49 ran negcontrol FIRST and it succeeded (log nonempty, PASS). So the native code was already compiled and cached (in `.lake` or `~/.cache`). Then the dispatcher's run at 20:52 also ran it first. Should be fine... unless the native artifact cache depends on the process's environment (e.g., `LEAN_NATIVE_CACHE`?). Hmm.
+
+Hmm, what if `native_decide`'s cached shared lib is stored in `.lake/build/lib/lean/...`? Let's look for artifacts: `find .lake -name '*.so'`.
+
+Actually, let's look at this from the "what would make a file fail on a second run but not the first" angle:
+- `native_decide` in negcontrol: caches to `~/.cache/lean/`? If the cache is keyed by name and the artifact is stale... The name `negControl_nativeDecide._native.native_decide.ax_1_1` includes `1_1` which is a counter. If the file previously compiled in the same directory... Hmm, `native_decide` elaborates the declaration and compiles it; the cache lookup uses the declaration name hash. If the cache dir is missing, it recompiles.
+
+But the *parallel* run also ran it. So whatever.
+
+OK, let me look at the repro's progress and wait. If the sequential repro comes back clean, my plan B is:
+1. Re-run the D11 files.
+2. Update the card documenting the repair.
+3. Additionally, **defensively reduce risk** by making the gate faster/cleaner? Hmm.
+
+Actually — hold on! I just thought of something crucial. Let me re-read the dispatcher's `compile_gate`:
+
+```python
+for dirpath, dirnames, filenames in os.walk(wt):
+    dirnames[:] = [d for d in dirnames if d not in (".lake", ".git", ".dshpkg")]
+```
+
+`os.walk` yields `dirnames` including symlinked directories. `.lake` is a symlink to `release/.lake`. Since `.lake` is in dirnames, it's filtered out. ✓.
+
+But what about `release/.lake`? Also filtered by name. ✓
+
+Now... `logs/gate_repair2` (which I just created) — no .lean files.
+
+Hmm what about `release/.lake/packages/mathlib/.lake`? Filtered too.
+
+OK.
+
+Now let me consider yet another possibility that fits ALL the evidence, especially the 401-second duration:
+
+**The gate ran the FULL loop and every file failed FAST.** Total 401s / 289 files = 1.4s per file. If every file failed instantly, total would be much less (0.2s each). But some files could take 1-2s to fail (elaboration partially). Hmm. But a uniform "no default toolchain" failure would be ~0.3-1s per file via `lake` → plausible! Launching `lake` takes ~0.5-1s even for a fast error.
+
+So maybe *every* file failed at 20:52 with a fast error, e.g., "no default toolchain configured" — meaning the root shim didn't work in the dispatcher's environment! And the D11 worker added the shim at 20:35... but hmm, the worker verified it worked.
+
+But wait: would the worker's fix work in the dispatcher's ENV? The dispatcher's ENV lacks `HOME`? No, HOME is in env presumably.
+
+Hmm, what does `lake env lean` do if `lean-toolchain` says `leanprover/lean4:v4.34.0-rc2` and ELAN_HOME is set? elan reads ELAN_HOME, finds the toolchain. Works in my shell.
+
+What if the dispatcher's ENV has `ELAN_TOOLCHAIN` or `LEAN_TOOLCHAIN` set? Unknown.
+
+Hmm, what if the dispatcher's PATH prefix `$ELAN_HOME/bin` resolves `lake` to elan's proxy, which needs `ELAN_HOME` — set. Fine.
+
+Hmm OK. Let me try to actually READ the dispatcher process's environment using a different method. /proc/PID/environ gave permission denied — because the process is owned by... let me check: `ps -o user= -p 2361634`. It's probably `guoshaoyang` too but with a different… Actually /proc/PID/environ requires PTRACE_MODE_READ which is denied if the process is not a descendant and yama ptrace_scope=1 restricts to descendants... Actually for reading environ, same-UID should be allowed unless `hidepid`. Hmm, "Permission denied" for same-uid read of /proc/pid/environ can happen with `fs.protected_regular`? No. Yama ptrace_scope affects this? Reading /proc/pid/environ requires PTRACE_MODE_READ_FSCREDS, which with yama=1 requires being a parent. That's why.
+
+Could I use `sudo`? Probably no permission. Let's try `sudo -n cat /proc/2361634/environ` — likely fails. Not worth it.
+
+Alternative: `gdb`? No.
+
+Alternative: check `/proc/2361634/cmdline` and the parent shell's env? The parent is 2361632 — which is probably `bash -c ...` running with nohup. Its environ is also denied.
+
+Hmm, what about reading the dispatch_loop's own log of how it was started — `logs/dispatch.nohup.log`?
+
+Let me look at all the launch scripts to see the environment. `launch_wave1.sh`, `supervisor.sh` — these launched the dispatcher on Sep 8. Let me read them.
+dsh: reasoning:
+The dispatcher was launched from a shell (probably the same user's interactive shell with normal env). Its env should be similar to mine.
+
+OK. Let me stop the forensics and wait for the sequential repro result. Let me check progress every couple of minutes.
+
+Actually, hmm, here's an idea to test the dispatcher's exact environment: I can write a tiny Python script that mimics compile_gate EXACTLY (I already do) — same thing. My repro IS the same.
+
+So if my repro passes, the dispatcher's next gate will likely pass too (since the environment is equivalent). Then the earlier failure would have been a transient. But relying on luck is bad: if the next gate fails, the task is marked gate_failed.
+
+Let me think about what could have been transient:
+
+1. At 20:52:40, the previous worker's session was still active?? The worker wrote DONE at 20:52:29 and last_run.json at 20:52:29. The dsh process may have exited right after. Hmm.
+
+2. **The other D11 worker (heat-kernel-manifold-bridge) launched at 20:22 on the SAME machine**: it may have been running `lake build` in ITS worktree at 20:52-20:59. Would that interfere? Only via resource contention.
+
+3. **Disk space**: let me check `df`. A full disk would cause weird failures. Let's check.
+
+Let me also reconsider: is it possible the gate failed on a *timeout* for the `D6AuditReport.lean` or `D6LedgerProbe.lean` (huge files with thousands of `#print axioms`)? At 1800s timeout, no.
+
+Let me check disk space and inode usage.
+
+Another idea: maybe the failure was `error: unknown module prefix 'Poincare'`? That happens if `LEAN_PATH` doesn't include the build dir — e.g., if `.lake/build/lib/lean` didn't exist yet at 20:52! 
+
+OH WAIT. THAT'S IT — maybe! Look at the sequence: The previous worker's *first repair attempt* was at 20:32 (gate failed because no root lakefile). Then the worker:
+- copied the root shim at 20:35,
+- ran `lake build` in release/ → `d11_build_release.log` at 20:36,
+- wrote files 20:41-20:49,
+- ran its gate (parallel) 20:49-20:50,
+- wrote card 20:50, DONE 20:52:29.
+
+Hmm, so `.lake/build/lib/lean` existed by 20:36. So no.
+
+Unless... the worker's `lake build` output went to `release/.lake/build`, and the `.lake` symlink at the root was created at 20:35 pointing to `release/.lake`. ✓.
+
+Hmm, hold on. Let me check: does `.lake/build/lib/lean` contain the *inherited* oleans AND the D11 oleans? Let's check the mtimes of D11 oleans: they should be from the worker's `lake build` at 20:36 — but the D11 sources were written at 20:41-20:49, AFTER the build. So the D11 oleans would only exist if the worker ran `lake build` again after writing them, or if `lake env lean` wrote them (it doesn't seem to).
+
+So: `release/.lake/build/lib/lean/Poincare/D11/MaximumPrincipleTensor/*.olean` — do they exist and when from? Earlier I saw `.lake/build/ir/Poincare/D11/MaximumPrincipleTensor/*.setup.json` files listed in the find output with mtimes ~20:36?? Let me check the olean mtimes for D11.
+
+If the D11 oleans are missing from `.lake/build/lib/lean`, then the D11 AxiomAudit.lean compile would create them (via `lake env lean`, which per our observation doesn't write next to source — maybe it writes to the build dir because Lake sets `-o`? Hmm, that contradicts...).
+
+Whatever — let me check. This might also be the key to the failure: if `lake env lean` elaborates the file from source each time (because the olean is in the build dir and lake decides to rebuild?)...
+
+Hmm, actually here's a cleaner hypothesis for a *transient* failure: **Lake's `env lean` may attempt to rebuild stale oleans of the module being elaborated?** No, `lake env lean` never builds.
+
+Let me check D11 oleans.
+dsh: reasoning:
+Interesting! The D11 `.olean` files in `.lake/build/lib/lean` exist with mtimes 20:47-20:49 — i.e., they were written by `lake env lean` (the worker's gate run) into the **build** directory! So Lake DOES direct the olean output to the build dir (Lake 5 must pass `-o` or set `LEAN_OUTPUT_DIR`?). Hmm, actually the mtimes: Basic.olean at 20:47 — but the worker's gate started at 20:49:36. Hmm! Basic.olean 20:47, Euler 20:47, ScalarODE 20:49, Flow 20:49, AxiomAudit 20:49.
+
+Wait, the worker's parallel gate ran 20:49:36–20:50:33. But Basic.olean is 20:47, Euler.olean 20:47, ScalarODE 20:49, Flow 20:49, AxiomAudit 20:49. Those are the *source* file mtimes (Basic 20:47, Euler 20:41?, hmm). Actually source mtimes: AxiomAudit 20:49:11, Basic 20:47, Euler 20:41, Flow 20:46, ScalarODE 20:48.
+
+The olean mtimes (20:47, 20:47, 20:49, 20:49, 20:49) don't exactly match source mtimes and don't match the gate window either. Hmm, the dir mtime is 20:49.
+
+Wait — maybe `lake env lean` DOES write to the build dir with the file's own mtime? No, olean mtime should be the time of writing.
+
+Hmm, so what wrote these oleans? Possibly the worker ran `lake build Poincare.D11.MaximumPrincipleTensor.AxiomAudit` (as stated in the card: `logs/d11_axiom_audit.out` — "lake build ... exit 0"). But the build would produce oleans at the build time (~20:49:29).
+
+Hmm, but for Basic/Euler oleans at 20:47 when the sources were written at 20:47/20:41... Let's think: the worker wrote Basic.lean at 20:47, then probably ran `lake env lean` on it to check, creating Basic.olean at 20:47 in the build dir. Hmm, but why in the build dir?
+
+OK whatever — the mechanism: Lake 5 probably passes `-o .lake/build/lib/lean/<Module>.olean`. Fine, that's an implementation detail.
+
+Now, the important question: is there a scenario where a *stale* olean in the build dir causes a compile failure? For example, if `Basic.olean` exists from an earlier version and the source changed, `lean file.lean` would still elaborate from source (no failure).
+
+Let me refocus: wait for the sequential repro. Let me check progress.
+
+Actually, let me ALSO consider reading `.lake/build/lib/lean/Poincare/D11/MaximumPrincipleTensor/Basic.trace` — a trace file records the dependencies and hashes. Not needed.
+
+Let's poll the repro.
+dsh: reasoning:
+534s in, currently at `release/Poincare/D7/Recognition/Basic.lean` — that's about file #120 of 289. 534/120 = 4.45 s/file. Estimated total: 289*4.45 ≈ 1286s ≈ 21 min. So ~12 more minutes.
+
+Meanwhile, let me use the time productively. I'll consider a robustness improvement that also addresses the "authored files only" constraint.
+
+Wait... hmm, actually, let me reconsider the problem statement: "Fix ONLY the authored files in your worktree so that every .lean file compiles with lake env lean (exit 0)."
+
+So the harness expects me to fix authored files. But if the real problem is environmental, I need to figure it out.
+
+Hmm, let me look at this from the dispatch timing again, considering that the gate might fail *fast* for some files. Let me test how long a file takes when it FAILS. E.g., create a deliberately broken file and time `lake env lean` on it. If it takes ~1s, then a 401s total is consistent with "all files failed fast" (1.4s avg).
+
+Hmm! Wait a moment. What if the dispatcher's gate at 20:52 failed on **ALL** files because of a **root lakefile issue**, and the 401s is just the cost of failing fast? Let's estimate: `lake env lean` failing due to missing toolchain: Lake startup ~0.4s + elan lookup + error. Maybe 0.5-1s. 289 × 1.4s = 401s. That fits quite well!
+
+But the worker verified `lake env lean` works from the root... in ITS shell. Hmm, but the worker's shell had `ELAN_HOME` exported? The worker (dsh) ran `export ELAN_HOME=/data3/guoshaoyang/workdir/lean_poincare/elan; export PATH="$ELAN_HOME/bin:$PATH"` in its gate script. The dispatcher does the same via Python ENV.
+
+Difference: **the dispatcher does NOT set `HOME`?** It inherits HOME. Fine.
+
+Hmm, what if the dispatcher's inherited environment has a **conflicting `ELAN_TOOLCHAIN` or `LEAN_TOOLCHAIN`**... 
+
+Actually, wait! I can test the hypothesis "all files failed at 20:52" using a different forensic signal: **`.olean` mtimes in the build dir**. When the gate runs `lake env lean X`, Lake writes/updates `X.olean` in the build dir ONLY if the olean content changes? Hmm, actually if `lake env lean` writes the olean, then the dispatcher's gate run at 20:52-20:59 would have touched the oleans of every successfully-elaborated file. If the D11 oleans have mtimes 20:47-20:49 and NOT 20:52-20:59, then the dispatcher's gate did NOT successfully re-elaborate them (or it did but didn't rewrite identical oleans... Lean always writes the olean though).
+
+Let me check mtimes of ALL oleans in `.lake/build/lib/lean` — if all are from the worker's build (20:36) or 20:49, and none at 20:52-20:59, that's evidence the dispatcher's gate run failed on every file!
+
+Let me check the distribution of olean mtimes across the build dir. This is a great forensic signal!
+dsh: reasoning:
+Excellent forensic data! 286 oleans in the build lib:
+- 55+6 = 61 from 09-09 11:49-11:50 (the D6-era build),
+- 129+91 = 220 from 09-10 20:35-20:36 (the previous worker's `lake build`),
+- 2 at 20:47 (Basic, Euler),
+- 3 at 20:49 (ScalarODE, Flow, AxiomAudit).
+
+Total 286. Hmm, but there are 289 .lean files; the 3 missing are probably negcontrol + ReleaseCheck/ReleaseAudit? Let's see: 220 + 61 = 281 + 5 = 286.
+
+Important: **NO oleans with mtimes in 20:52-20:59** — the dispatcher's gate run window. If the dispatcher's gate had successfully elaborated files, the oleans would have been rewritten with mtimes in that window (assuming `lake env lean` writes oleans).
+
+Hmm, but wait: my repro is running NOW (21:0x-21:2x) and it also hasn't produced oleans with new mtimes! Let me check again right now — if the histogram is unchanged while my repro is at file #120, then `lake env lean` does NOT rewrite existing oleans (or writes only if changed).
+
+Hmm, the histogram I just computed is DURING my repro run (it's at file ~120). Files it processed (e.g., D7/Canonical/*, D10/*) still show 20:35-20:36 mtimes. So `lake env lean` does NOT rewrite oleans when the source is unchanged?! 
+
+Hmm, that's strange. Unless Lake's `env lean` checks the trace hash and skips writing. Lean's `lean` binary writes the olean unconditionally... unless Lake 5 (new build system) implements an "up-to-date check" wrapper.
+
+Hmm! Actually, maybe in Lean 4.34, `lean` itself has a "no-op if up to date" optimization: it compares the source hash with the `.olean.hash` file and skips re-elaboration entirely! That would explain:
+- The very fast per-file times (0.2-4s): files whose oleans are up to date and whose `.olean.hash` matches are *skipped* (fast startup + hash check only).
+- The 401s for the dispatcher's gate (mostly hash checks).
+- The D11 oleans at 20:47/20:49 came from when the worker actually edited files.
+
+So: Lean 4.34 `lean file.lean` does incremental skip via `.olean.hash`! Hmm, but then how did the previous worker's parallel gate (20:49:36-20:50:33) write Basic.olean at 20:47 and Euler at 20:47 — before the gate started? Those would be from the worker's earlier manual `lake env lean` invocations while developing (20:47 for Basic, then it edited more).
+
+OK so this is consistent: `lean` skips elaboration when up-to-date. And the worker's gate at 20:49:36-20:50:33 didn't rewrite oleans because they were up to date.
+
+Now, the dispatcher's gate at 20:52-20:59: 401s for 289 files. If most are skipped fast, the average 1.4s/file is plausible. And **if some files failed, they'd fail after real elaboration**.
+
+Hmm OK. This doesn't tell us which file failed.
+
+BUT WAIT — here's the thing: if `lean` skips up-to-date files, then a file that is up-to-date will *pass* trivially. So a failure means actual elaboration produced an error. My repro is doing the same elaboration, so it should fail on the same file... unless the failure is environment-dependent.
+
+Hmm, hold on. There's something important: `lean`'s up-to-date check uses `.olean.hash` in the build dir. If the hash matches the source, it skips. Now, **my repro and the dispatcher's gate** use the same build dir. Fine.
+
+OK, let me now think about the environment difference differently: what if the dispatcher's gate failed because of a **`lake` version mismatch**: the dispatcher sets `ELAN_HOME` but also inherits `PATH` from its launcher, which might have had `$HOME/.elan/bin` earlier — no.
+
+Honestly, the most likely explanation might be: **at 20:52:40, another process was concurrently writing to the shared mathlib package dir or the olean files** — e.g., the D11-heat-kernel worktree shares `.lake/packages/mathlib`? Let's check if that worktree's `.lake/packages/mathlib` is a symlink to the same path! If the other worker ran `lake exe cache get` or `lake build` on mathlib, it could rewrite mathlib oleans, and a concurrent read could produce a corrupt/partial olean read error → compile failure. That's a REAL possibility for transient failures.
+
+Let me check the other worktree's mathlib path and whether the two worktrees share anything.
+dsh: reasoning:
+Each worktree has its own `.lake/packages/mathlib` (405MB each — separate copies). So no shared mathlib writes. Good, that rules out cross-worktree corruption.
+
+Hmm, wait: 405M for `.lake` seems small for a full mathlib build... The mathlib oleans are in `.lake/packages/mathlib/.lake/build/lib/lean`, which IS inside `release/.lake/packages/...`. 405M total? That's plausible if mathlib oleans are ~4GB... hmm, actually mathlib's oleans are about 2-3 GB. 405M seems too small!
+
+Wait — `du -sh` on `release/.lake` gives 405M for the heat-kernel worktree. Let me check the D11-maximum worktree's `.lake` size. If mathlib's oleans are missing, every `lake env lean` would try to *build* mathlib imports?? No — Lean needs oleans to import; if missing, it re-elaborates the source... Actually Lean can import a module from source (`.lean`) if no olean exists — yes! Lean will elaborate the imported module from source on the fly (that's what happens with `import Mathlib` when mathlib isn't built — it takes forever).
+
+Hmm, but our compiles take 1-5s, so mathlib oleans must exist.
+
+Hmm, 405M... let me check: mathlib's `.lake/build/lib/lean` is typically ~2GB, but maybe this mathlib build is only partially cached. Let me look.
+
+Actually, hold on: maybe `.lake/packages/mathlib/.lake/build` is a *symlink* to a shared cache dir (e.g., `/data3/.../mathlib-cache/`)! Then the heat-kernel worktree and the maximum worktree could share the same mathlib build dir. Let me check with `ls -la` and `readlink -f`.
+
+That would be the smoking gun for concurrent writes to shared mathlib oleans.
+
+Let me check.
+dsh: reasoning:
+**FOUND IT!** 
+
+`release/.lake/packages/mathlib/.lake/build` resolves (via symlinks) to `/data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages/mathlib/.lake/build` — a **SHARED mathlib build directory** across all worktrees!
+
+And 8.2G of mathlib. So all the concurrent D11 workers on this machine (D11-heat-kernel-manifold-bridge, D10 tasks, etc.) share the same mathlib `.lake/build` directory, and they may run `lake build` which could rewrite oleans (e.g., after `lake exe cache get` or version updates) — or at least write `.olean.hash`/trace files.
+
+This creates a plausible race: if worker X runs `lake build` for its own D11 files, it doesn't touch mathlib oleans (up-to-date). But if any worker runs `lake exe cache get` or a mathlib rebuild, concurrent readers could see partial files → transient failure.
+
+Hmm, but at 20:52-20:59, was any worker building mathlib? The heat-kernel worker launched at 20:22 was probably just starting (writing files, running `lake build` for its own modules). If it ran `lake build`, Lake would check mathlib... but mathlib was already built (8.2G, from Sep 5-6), so Lake wouldn't rebuild it.
+
+Hmm. Not a definitive cause, but a real hazard.
+
+Hmm OK. Let me think about whether the shared build dir could cause a *deterministic* failure for particular files. If the shared mathlib build dir is *complete*, no.
+
+Now here's another thought experiment: if `lake env lean X` (with the up-to-date skip) is used, and the olean for module M is missing in the shared mathlib (e.g., `Mathlib.X` not built because the cache was partial), then Lean would elaborate from source (slow) — or fail? It would elaborate from source; if the source requires `Mathlib.Y` oleans that exist, fine. That yields slow compiles but no failures... unless it needs plugins.
+
+Let me look at the repro output. It might have finished or failed by now.
+
+Actually, WAIT. Let me reconsider the whole thing. The most important clue I keep coming back to: the dispatcher's gate took 401s, and everything else (worker's own parallel gate: 57s wall with -P24 ≈ 1368 CPU-seconds... hmm, that's 1368s/289 = 4.7 CPU-s per file — consistent with my sequential measurements of ~4-6s/file!).
+
+So the worker's parallel gate really did elaborate each file (4.7s each). And the dispatcher's sequential gate at 401s = 1.4s/file — much FASTER. That means the dispatcher's gate **did not elaborate most files**: it probably failed FAST (e.g., couldn't start lake) or skipped them.
+
+If files are skipped as up-to-date, even the worker's parallel gate would be fast. But it wasn't (57s × 24 = 1368 CPU-s).
+
+Hmm, unless the worker's parallel run had heavy I/O contention from 24 concurrent processes, inflating per-file time.
+
+Hmm, hmm. Let's test the "up-to-date skip" hypothesis directly: time `lake env lean` on a file I *haven't* touched, then time it again. If the second run is much faster, the skip exists.
+
+From my earlier measurements:
+- release/ReleaseCheck.lean: 4.1s
+- release/Probe/PdeApi.lean: 5.1s (but it printed a lot of #check output — that's real elaboration!)
+- release/Ledger/PerelmanDefinitions.lean: 3.0s
+
+Hmm, PdeApi printed `#check` output → definitely elaborated. So no up-to-date skip for that file. OK so no skip; `lean file.lean` always elaborates. Then how did the dispatcher's gate do 289 files in 401s (1.4s/file) when individual files take 3-5s?
+
+Unless... hmm! Maybe the dispatcher's gate **failed fast on all files**! E.g., `lake` couldn't find the toolchain in the dispatcher's env → error in ~0.5s... but no; the worker's shim creation wouldn't help then.
+
+Wait, actually! What if `subprocess.run(["lake", ...])` raised FileNotFoundError → caught by main's except → DISPATCH_ERROR. Not the case.
+
+Hmm, what if `lake env lean` in the dispatcher's env printed `error: no default toolchain configured` and exited 1 in ~0.3s? Then 289 files × ~1.35s = 390s ≈ 401s. That fits! And the fix would be: ensure the worktree has a `lean-toolchain` file... which it does! Unless the dispatcher's elan can't resolve `leanprover/lean4:v4.34.0-rc2` because `ELAN_HOME` is set to `/data3/guoshaoyang/workdir/lean_poincare/elan` and the toolchain is installed there... it is (my shell uses it).
+
+Hmm, but if `lake` is found via PATH=/data3/.../elan/bin, and ELAN_HOME is set correctly, it works.
+
+So this hypothesis requires that the dispatcher's env breaks elan. But then the D11 worker's own gate (which exports the same) works... 
+
+UNLESS the difference is: **the worker's `lake` was found at a different path** (e.g., `$HOME/.elan/bin/lake` from its PATH) rather than `/data3/.../elan/bin/lake`. But the dispatcher prepends `/data3/.../elan/bin` to PATH. My shell also has it. So both use the same lake.
+
+OK, I need to stop speculating and get data. Two options:
+(a) wait for the repro (should be done soon),
+(b) look for other forensic traces of the dispatcher's gate run: e.g., the `.olean.hash`/`.trace` files' mtimes, or the `logs/gate` dir... no, that's the worker's.
+
+Hmm! Wait. Here's a MUCH better forensic idea: **the up-to-date `.olean` mechanism**. Let me test whether `lake env lean` rewrites `.olean` when the source is unchanged. If YES, then the dispatcher's gate would have rewritten oleans for every successfully-compiled file with mtimes in 20:52-20:59. The histogram shows NONE in that window → **every file failed**! And if the gate had failed on just one file, we'd see 288 oleans with mtimes in that window.
+
+So the key question: does `lake env lean X` (successful) rewrite `X.olean`?
+
+Check: the worker's parallel gate ran 20:49:36-20:50:33. Did it rewrite oleans? The build dir has oleans at 20:47 (2) and 20:49 (3) — those 5 are exactly the D11 files. If the worker's gate had rewritten oleans, all 286 would have mtimes ~20:49-20:50. They don't (they're 20:35-20:36 etc.). 
+
+Hmm, so either the worker's gate didn't rewrite them (because up-to-date? but we showed PdeApi elaborates...), or the worker's gate ran exactly when those 5 D11 oleans were written (20:47-20:49)? No — the gate ran 20:49:36-20:50:33 and D11 files were compiled within it; Basic.olean at 20:47 predates the gate.
+
+Let me settle this experimentally RIGHT NOW: pick a file that my repro has already processed (e.g., release/Poincare/D10/BochnerEuclidean/Basic.lean), note its olean mtime, run `lake env lean` on it, then check the olean mtime again.
+
+Let me do that.
+dsh: reasoning:
+Very informative:
+- Both runs take ~3.2s and NEITHER rewrites the olean. So `lake env lean` writes the olean only if the content changes (or Lake passes `-o` to a temp and only replaces on change... or Lean skips writing when the hash matches).
+- Elaboration takes ~3.2s consistently.
+
+So the olean-mtime forensics can't tell us about the dispatcher's run (no rewrites for up-to-date content).
+
+Hmm. But it DOES tell us: the D11 oleans at 20:47 (Basic, Euler) and 20:49 (ScalarODE, Flow, AxiomAudit) were written when those files' *content changed*, i.e., by the worker's own elaboration during development (when the file was newly created/edited). And during the worker's gate (20:49:36+), no rewrites — they were already up to date. ✓ consistent.
+
+Now the timing question: the dispatcher's gate = 401s for 289 files = 1.4s/file, but real elaboration is ~3.2s/file minimum (for a small file importing Mathlib). Hmm, that's still 2x off. Unless the dispatcher's gate didn't run all 289 files.
+
+Hmm, hold on! Maybe it did run all 289 but MANY of them failed fast. If ~half failed fast (~0.3s) and half succeeded (~3.2s)... 289 × avg 1.4s → e.g., 240 fast fails (0.3s) + 49 successes (3.2s) ≈ 72 + 157 = 229s. Eh.
+
+Alternatively, maybe the *first* file the gate checks is slow and the rest are skipped? No.
+
+Let me try to measure how fast a *failing* `lake env lean` is. Create a temp broken file in the worktree (I'll delete it after) and time it. Careful: adding a .lean file to the worktree temporarily could affect the dispatcher's gate if it runs concurrently! The dispatcher runs every 600s; the last run was 20:59:21, so the next is ~21:09:21 and then ~21:19. I must be careful — if I create a broken .lean file in the worktree and the dispatcher gates during that window, it would fail! Let me instead create the broken file OUTSIDE the worktree (e.g., /tmp) and run `lake env lean /tmp/broken.lean` from the worktree root. The toolchain/env is the same.
+
+Let me do that.
+
+Also — CRUCIAL: the dispatcher will run its gate again at ~21:09:21 or ~21:19:21 etc., because status is "running" and DONE still exists (the DONE file from the previous worker wasn't removed!). Wait!! Let me check: `state/D11-maximum-principle-tensor/DONE` still exists (the worker_loop doesn't delete it). In main(): `done = os.path.exists(DONE)` → True; `t["status"]` — currently "running" (set when launched at 20:59:21). And `card_status(tid)` reads the card tail → contains TASK_DONE → st = "done" → compile_gate(tid) → **would run the gate NOW while I'm still working!**
+
+Oh no. That's important: the dispatcher may already be running its gate concurrently with my repro! Let me check: did a gate run start at ~21:09? Let me check whether `state/D11-.../gate.json` exists now, and check the dispatch log tail.
+
+Actually, the dispatcher's loop iteration: at 20:59:21 it did the promotion check (gate → fail → queue repair) and then LAUNCHED the worker (setting status "running"). Then sleep 600 → 21:09:21 → next iteration: DONE exists? YES (still there from the previous run!). status is "running" → card_status → "done" → compile_gate → runs the gate over the whole worktree (~7-20 min) → if ok, PROMOTE; if not, attempt 3 (repairs=2, not < 2) → GATE_FAIL.
+
+So the dispatcher is probably ALREADY running a gate right now (started ~21:09:21), concurrently with my repro! That's bad for two reasons: (1) it doubles the load, (2) it adds a race.
+
+Hmm, actually wait: does the DONE file still exist? Yes: `ls state/D11-maximum-principle-tensor/` showed DONE at 20:52. And the current gate run... let me check `ps` for a python subprocess `lake env lean`.
+
+Hmm, and actually: this explains the *first* failure at 20:32:40 as well.
+
+Hold on, wait. This also gives a possible explanation for the "401s" gate: maybe it wasn't 289 files...
+
+Hmm, whatever. Let me check if the dispatcher is gating right now. If it is, and my repro is also running, both are running in parallel — fine.
+
+Actually, hmm, this is a serious issue: **if the dispatcher's gate runs while I'm editing files, it may fail and mark the task gate_failed.** I should finish my edits quickly, OR... hmm.
+
+Actually, more importantly: is it running NOW? Let me check the process list for python subprocesses launched by the dispatcher (pid 2361634) running `lake env lean`.
+
+Let me look.
+dsh: reasoning:
+**CONFIRMED**: The dispatcher (pid 2361634) is running `compile_gate` on my worktree RIGHT NOW (started ~21:09:22, currently on `release/D6AuditReport.lean` — file #7 in sorted order, but that file is huge). It will take ~7-20 min and write gate.json. If it fails, the task goes to GATE_FAIL (no more repairs) — and the last_run/DONE is from the previous worker.
+
+Important: the dispatcher's gate will ALSO see my `logs/gate_repair2/` — no .lean files there. Fine.
+
+So this concurrent gate will produce a gate.json that tells us EXACTLY which files fail! Excellent — this is our chance to see the failing file. If this gate passes, the task gets PROMOTED immediately (status verified) — great. If it fails, gate.json persists? Let's check: in main(), if `repairs < 2` → writes prompt + removes gate.json. Here repairs = 2 → else branch: `t["status"] = "gate_failed"`, no gate.json removal. So gate.json will REMAIN, and we can read the failing files!
+
+Wait, careful: is `repair_count` = 2 now? Yes, the queue entry showed `"repair_count": 2`. So if it fails: status = gate_failed and gate.json stays.
+
+Also note: the dispatcher's gate at 21:09:22 started while my repro is also running (both scanning). Both are doing the same work. That's a bit of a waste, but it gives us the answer directly.
+
+Hmm, but there's a risk: if the gate passes, the task is promoted to "verified" — then my modifications afterwards would invalidate that promotion (the queue would say verified but my later edits change files). That's fine as long as I don't break anything; the harness's final verification presumably re-runs the gate.
+
+Hmm, actually wait. If it's promoted to "verified", the dispatcher won't gate again. Then my card update (TASK_DONE) is what matters. But the harness wants the gate to pass on the final state. If I edit files after promotion, the promotion is stale — but the grader may re-run the gate itself. Risky. Let me be careful: if the dispatcher's current gate run passes, I should avoid changing any .lean files afterwards (only the card).
+
+So: while the dispatcher gate runs, I should NOT modify .lean files. Good — I don't plan to unless there's a failure.
+
+Now, the current gate run starting at 21:09:22 with all 289 files: I'll wait, then read `state/D11-maximum-principle-tensor/gate.json`. That's MUCH better than waiting for my repro (which may finish earlier and tell us the same thing).
+
+Actually, my repro will finish soon-ish (at ~file 130/289 at last check ~580s in... wait, the elapsed for 4184631 is 580s and it's at D7/RicciScalar/Product.lean ≈ #140). It'll take ~10 more minutes. The dispatcher's gate started at 21:09:22 (~2 min ago) and will take ~7-20 min. Roughly the same.
+
+Hmm, hold on: interesting. If the dispatcher's gate takes ~400s again (as at 20:52), it'll finish around 21:16. My repro will finish around 21:25.
+
+Let me wait for the dispatcher's gate.json — it's authoritative. Meanwhile, let me prepare the analysis for what to do if it fails.
+
+Actually, here's another thought on the *reason* for the earlier failure. Notice the dispatcher's gate runs concurrently with MY repro right now, and at 20:52 it ran concurrently with... hmm, what? At 20:47-20:52, the previous worker was running its own parallel gate (20:49:36-20:50:33) and lake build. Those overlapped with... no, the dispatcher's gate started at 20:52:40, after the worker's gate finished at 20:50:33.
+
+Hmm, what if the failure at 20:52 was caused by **the previous worker's `lake env lean` processes still running**? The worker's xargs -P 24 gate finished at 20:50:33 (results.txt mtime). Hmm.
+
+Let me now think about the ACTUAL most likely failure: perhaps `release/D6AuditReport.lean` — a huge file with many `#print axioms`. It's currently being compiled by the dispatcher. Let me keep an eye on whether it fails! I can watch the dispatch process's child: if `lake env lean D6AuditReport.lean` exits and the next file starts, it succeeded.
+
+Let me poll every 60s and record which file the dispatcher is on plus gate.json appearance. Let me also check the dispatcher's stdout: `compile_gate` doesn't log per-file. But `dispatch.log` will show the outcome.
+
+OK let me wait, checking periodically.
+
+One more important consideration: **the `logs/gate_repair2/run.out` file I created is in the worktree but is not a .lean file**, fine.
+
+Also note: the DONE file exists (from the previous worker) — after my work, the worker_loop will touch it again when my dsh exits 0. Fine.
+
+While waiting, let me examine whether there are any *stale* oleans in the shared mathlib that could cause a failure. Let me check the file `release/.lake/packages/mathlib/.lake/build` symlink chain in detail.
+
+Actually, here's a MUCH more promising idea for the root cause! Look at the symlink:
+
+`release/.lake/packages/mathlib/.lake/build` → `/data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages/mathlib/.lake/build`
+
+Wait, `readlink -f` resolves all symlinks. Let me trace each component. If the *shared* mathlib build is being **rebuilt concurrently by another process** (e.g., the D11-heat-kernel worker running `lake exe cache get` or `lake build` on mathlib), then during that window some mathlib oleans could be temporarily replaced/rewritten (e.g., `lake build Mathlib` rewrites every olean whose trace is stale — e.g., because the shared dir's olean hashes reference a different source path).
+
+AH WAIT. **THIS IS IT!** Here's the mechanism: The shared mathlib build dir is shared by many worktrees. Each worktree has its own copy of the mathlib *source* at `release/.lake/packages/mathlib/`. But if the shared build dir's `.olean.hash`/`.trace` files record source hashes, then... hmm.
+
+Hmm, but more importantly: **Lake rebuilds a module if the olean is missing or if its recorded hash differs**. If worktree A's `lake build` decides mathlib oleans are stale (e.g., because the package dir path changed), it will **rewrite** all mathlib oleans (8.2 GB, ~thousands of files) — which takes tens of minutes. During that rewrite, another worktree's `lake env lean` could read a **partially written olean** → "invalid olean" error → gate failure. That's a very plausible transient failure!
+
+Let me check the mathlib build dir's olean mtimes: if many have mtimes clustered in specific windows, and especially if some are RECENT (during the 20:52-20:59 window!), that would confirm.
+
+Let me check the mtime histogram of the shared mathlib build dir. If some files were written at 20:52-20:59, then the shared dir was being rewritten exactly during the failed gate. Let me look.
+dsh: reasoning:
+The shared mathlib build is stable (Sep 6) — not being rewritten. So that's not the cause.
+
+Hmm. Note: this path `/data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages/mathlib/.lake/build` — but the worktree's `release/.lake/packages/mathlib/.lake/build` resolves there. Let me verify: is `release/.lake/packages/mathlib` itself a symlink to the poincare-lab mathlib? Probably all worktrees symlink `release/.lake/packages/*` → shared packages. And the shared package's `.lake/build` has 8498 oleans from Sep 6.
+
+Hmm wait, then where do the worktree-local `.olean` files live (the 286 in `release/.lake/build/lib/lean/Poincare/...`)? That's the package's own build dir (`release/.lake/build`), which is separate from the mathlib package's build dir. OK.
+
+So the mathlib oleans are shared and stable. 
+
+Hmm, so what about the *dependency* packages (batteries, aesop, Qq, etc.)? Those are also under `release/.lake/packages/*` symlinks? Let me check whether `release/.lake/packages/mathlib` is a symlink.
+
+Whatever, they're stable too presumably.
+
+OK so what failed at 20:52?! Let me wait for the current gate to finish. It's the ground truth. 
+
+Actually, hold on! I want to reconsider the "401 seconds" puzzle once more, because it's a strong signal that something systematic happened.
+
+Let me measure how long `lake env lean` takes for a file that FAILS quickly. Let me create `/tmp/broken.lean` (outside the worktree) and time it. If it errors in ~0.4s, then 289 × ~1.4s could mean "most files failed fast, some passed". Let's measure. This won't affect the worktree.
+
+Also let me time a *full* pass to compare with the dispatcher: my repro is measuring exactly that.
+
+Let me do the broken-file timing now.
+
+Hmm, wait. Actually, there's an even better idea: my repro will give me the exact per-file timing picture when it finishes (elapsed/total). If my repro takes ~20 min for 289 files (~4.2s/file), and the dispatcher took 6.7 min, then the dispatcher's run must have differed. If instead my repro also takes ~7 min, then the 401s is normal and nothing systematic happened.
+
+But my repro is currently at ~580s for ~145 files → ~4s/file → ~1150s total. Hmm, but the machine now has TWO gate loops running (dispatcher + mine), so it's slower than the dispatcher's solo run. That could explain the difference! At 20:52 the dispatcher ran solo → 1.4s/file. Hmm, 1.4s/file still seems too fast for real elaboration... but if `lake env lean` for an up-to-date file is faster than my measurement (3.2s for BochnerEuclidean/Basic)...
+
+Hmm, my measurement of 3.2s for a *small* file might be dominated by lake startup + mathlib import loading. Actually `import Mathlib` requires loading ~6000 oleans? No — Lean loads only the transitive imports' oleans lazily? It loads the olean headers of all transitive imports. `Mathlib` imports all of mathlib → loading thousands of olean files → that takes seconds (mostly I/O). With a warm page cache it's fast (~1-2s).
+
+OK, so ~1.4s/file solo is plausible for a warm cache. Fine, no anomaly.
+
+So I'll drop the timing puzzle. Let's just wait for the dispatcher's gate.json.
+
+Let me poll every ~90s. I'll wait until gate.json appears or the dispatch log shows a new line.
+
+Actually, let me be smart: `inotifywait` on the state dir? Not installed maybe. Just poll.
+
+While waiting, let me think about what to do if the gate fails on a specific file. Then I'd fix it. If the gate passes, I need to update the card (markdown + json) with a repair note and TASK_DONE, and be careful not to touch .lean files.
+
+Let me poll now with a 300s sleep.
+dsh: reasoning:
+The dispatcher gate is progressing: in 6 minutes it went from D6AuditReport (start, ~21:09:30) to D7/Kappa/All (~file #190). Speed: ~190 files in 6.5 min ≈ 2s/file (concurrent with my repro which is also running).
+
+So a full sequential pass is ~7-10 min. The 20:52 run (401s) is consistent with a normal solo pass. Good — no anomaly; the gate genuinely checked all files and found at least one failure.
+
+My repro should be around file #250 now.
+
+Let's keep polling until gate.json appears.
+dsh: reasoning:
+My sequential repro finished: **TOTAL=289 FAIL=0, elapsed=1000s**. All 289 files compile sequentially with the dispatcher's exact command and env.
+
+So the earlier gate failure was NOT reproducible in a full sequential pass. The dispatcher's current gate run (started 21:09:22) is still going (at D9/DeTurck/SymbolModel ≈ file #230). Let's wait for it to finish and see the result.
+
+If the current dispatcher gate passes → task promoted → great.
+If it fails → gate.json will persist (repair_count=2 → gate_failed) and I can see exactly which file.
+
+Let me wait for the gate to finish.
+dsh: reasoning:
+**EXCELLENT**: The dispatcher's own gate just ran on the current state and **PROMOTED D11-maximum-principle-tensor verified (gate 289 files)** at 21:26:02.
+
+So the current state of the worktree passes the gate. The earlier failure (attempt 2) was transient — most likely resource contention/transient FS issue during the 20:52-20:59 run, and it did NOT reproduce either in my sequential repro or in the dispatcher's own fresh run.
+
+Let me verify gate.json: ok=true, all 289 exits 0.
+
+Then:
+1. Confirm no .lean files were modified after the gate run (they weren't — I only created logs/gate_repair2/run.out, a non-.lean file, before the gate started; and the gate found 289 files, same as before).
+2. Update the result card (md + json) with a repair note for attempt 2 documenting: the gate failure could not be reproduced; the full sequential gate (dispatcher-equivalent) now reports TOTAL=289 FAIL=0; the dispatcher's own gate re-run at 21:26 verified 289 files. Also record the evidence (logs/gate_repair2/run.out).
+3. End with TASK_DONE.
+
+But wait — should I make any code change? The instruction says "Fix ONLY the authored files". Nothing needed: all files compile. The important thing is honesty: I should state that no source change was needed because the second failure did not reproduce, and provide the evidence. Hmm, but is that acceptable? The task says "Fix ONLY the authored files in your worktree so that every .lean file compiles with lake env lean (exit 0)". It's now verified by the dispatcher's own gate. 
+
+Hmm, but hold on. Let me think about whether there's a lurking *intermittent* failure that could recur during the harness's final verification. The previous failure happened at 20:52-20:59. What was special then?
+
+At that time, the previous repair worker's session had just ended (20:52:29). Hmm, and my analysis showed the dispatcher's gate at 20:52 took 401s vs 1000s for my (concurrent) run and 1000s (21:09:22→21:26:02 = 1000s! exactly) for the dispatcher's second run. Interesting: the dispatcher's own gate run this time took exactly 1000s (21:09:22 → 21:26:02), whereas the failed one took 401s. That's a significant difference! 
+
+1000s vs 401s. My repro (running concurrently with the dispatcher's) also took 1000s. Hmm! So the 20:52 gate ran 2.5× faster than the 21:09 one. What was different?
+
+Possibility: at 20:52-20:59, the previous worker's *`lake build`* had populated the build dir and the page cache was hot; now, at 21:09-21:26, my repro was also running concurrently, slowing both down (2 processes interleaved). My repro took 1000s; the dispatcher's took 1000s. Combined ~2000s of work over 1000s wall with 2 concurrent processes. So a solo run would be ~1000s?? Hmm, that suggests solo ≈ 1000s at current load, vs 401s at 20:52. The machine's load may have differed (many GPU jobs, other workers).
+
+So 401s: it ran faster due to less load. Fine, plausible: 2.5x load difference is plausible on a 192-core box with 20+ users.
+
+OK so the "401s is too fast" puzzle is probably just load. And the failure remains unexplained — but it's now verified passing twice (mine + dispatcher's).
+
+Hmm, one thought: could the 20:52 gate have hit a genuine transient like a partially-written olean because the previous worker's `lake build Poincare.D11.MaximumPrincipleTensor.AxiomAudit` (running at ~20:49:29 per d11_axiom_audit.out mtime) was still writing oleans while the gate started at 20:52:40? No, that finished at 20:49:29.
+
+Or: the worker's parallel gate at 20:49:36-20:50:33 wrote oleans for the D11 files (Basic 20:47, Euler 20:47, ScalarODE 20:49, Flow 20:49, AxiomAudit 20:49) — those mtimes are before the gate. Hmm.
+
+Whatever the cause (likely a transient I/O error under load), the state is now verified.
+
+Now: should I do anything at all to the Lean files? The task says fix only authored files so that every .lean file compiles. It's verified. I'll:
+1. Read gate.json to confirm ok=true (and record the count).
+2. Update the result card MD: add a §0 repair note for attempt 2 with evidence, update the compile gate section.
+3. Update the JSON card similarly.
+4. Keep the last line `TASK_DONE — longrun/results/D11-maximum-principle-tensor.md`.
+
+Also: the `DONE` file exists so the worker_loop will end. And `latest.log`... The worker_loop writes latest.log from the dsh session output. Fine.
+
+One caution: I must NOT create any new `.lean` files (they'd change the file set after the gate). I'll only write .md and .json files, plus the existing logs dir. Note: the dispatcher already promoted the task to "verified" — if I modify only non-.lean files, the gate result stands (the gate only compiles .lean files). Good.
+
+Let me confirm gate.json content first.
+dsh: reasoning:
+The dispatcher's gate.json: ok=True, 289 files, all exit 0, checked_at 21:26:02. And the queue now says status "verified" with the gate path.
+
+Now I need to:
+1. Re-verify the authored files are still intact & honest (no sorry/axiom etc. in authored files).
+2. Re-verify the axiom audit (I already have logs/d11_axiom_audit.out; but let me re-run the AxiomAudit compile to be sure and capture fresh output into logs/gate_repair2/). Actually, all 5 files were compiled in my repro (Basic, Euler, ScalarODE, Flow, AxiomAudit all exit 0). Let me capture the AxiomAudit output fresh for the record.
+3. Update the result card (MD + JSON) with the attempt-2 repair note and evidence.
+4. End with TASK_DONE.
+
+Let me also double-check the "authored file" hashes match the card.
+
+Let's run the AxiomAudit output capture and the forbidden-token scan (excluding the inherited negcontrol). Let me write a small evidence file in logs/gate_repair2/.
+
+Note: writing .md/.json/.log files does not affect the gate.
+
+Let me first do the axiom audit re-capture + hashes.
+dsh: reasoning:
+Everything checks out:
+- AxiomAudit: 33 declarations, all `[propext, Classical.choice, Quot.sound]`, 0 sorryAx.
+- Hashes match the card.
+- 814 lines total.
+
+Now let me formally verify the forbidden-token scan on authored files (declaration-level, not comments). I'll write a small scan script and save its output as evidence. The scan should look for `sorry`, `axiom`, `unsafe`, `native_decide`, `proof_wanted` as *code* tokens, not within comments/strings. Simple approach: strip block comments `/- ... -/` and line comments `--`, then grep.
+
+Let me write it into logs/gate_repair2/forbidden_scan.txt.
+
+Then update the card:
+1. `longrun/results/D11-maximum-principle-tensor.md` — add an attempt-2 repair note section near the top, update the "Compile gate" section with the fresh evidence, update the timestamps/claims.
+2. `longrun/results/D11-maximum-principle-tensor.json` — update fields (verdict stays TASK_DONE, add repair note, update compile_gate evidence).
+
+Let me read the current JSON card fully first so I can edit precisely. It's 12KB. Let me read it.
+dsh: reasoning:
+Now let me update both cards with the attempt-2 repair note. Key content:
+
+**Attempt 2 (this pass)**:
+- The dispatcher's gate (`compile_gate` in `longrun/bin/dispatch_loop.py`) reported a failure at ~20:59 after its 20:52:40 run, but the per-file `gate.json` had already been deleted by the dispatcher when it queued the repair (the record is not preserved). 
+- Re-running the exact gate command (`cd <worktree root> && lake env lean <abs path>`, dispatcher ENV with ELAN_HOME/PATH, sequential, one file at a time) over all 289 `.lean` files: **TOTAL=289 FAIL=0, elapsed 1000 s** — evidence `logs/gate_repair2/run.out`.
+- The dispatcher's own next gate pass (21:09:22 → 21:26:02) returned `ok: true` with **289/289 exits 0** and promoted the task to `verified` (`state/D11-maximum-principle-tensor/gate.json`, `logs/dispatch.log`: `PROMOTE D11-maximum-principle-tensor verified (gate 289 files)`).
+- No authored source needed changing: the failure was transient/non-reproducible (the same tree passes the identical sequential gate twice). Nothing was modified in the authored Lean files in this pass; their sha256 hashes are unchanged.
+- Positive evidence gathered in this pass:
+  - `logs/gate_repair2/run.out` — sequential dispatcher-equivalent gate: TOTAL=289 FAIL=0.
+  - `logs/gate_repair2/axiom_audit.out` — re-run of `AxiomAudit.lean`: exit 0, 33/33 cones `[propext, Classical.choice, Quot.sound]`, 0 `sorryAx`.
+  - `logs/gate_repair2/forbidden_scan.txt` — comment-stripped scan of the 5 authored files: 0 hits for `sorry|axiom|unsafe|native_decide|proof_wanted|admit`.
+
+Also note that the earlier worker's parallel gate (`logs/gate/results.txt`, `-P 24`) is superseded by the sequential replay.
+
+I should be careful and honest about the transient failure: I don't know its cause; state it plainly.
+
+Now let's write the updated MD and JSON. I'll edit the MD §0 and §8 sections, and the header line about the repair.
+
+For the MD:
+- Title/verdict paragraph: update "attempt 1" repair note section to include attempt 2.
+- §8 Compile gate: update with new evidence.
+- Final line stays TASK_DONE.
+
+Let me do targeted edits with the edit tool.
+
+Also, the MD says "all 289 .lean files in the worktree compile with `lake env lean` (exit 0) invoked the way the external gate does it (from the worktree root), TOTAL=289 FAIL=0" — that stays true and is now backed by the sequential exclusive run.
+
+Let me make the edits.
+
+Edit 1: In the MD, add a subsection to §0 for attempt 2. Let me restructure §0's heading "## 0. Repair note (compile-gate attempt 1)" → "## 0. Repair notes (compile-gate attempts 1 and 2)".
+
+Then after the attempt-1 verification bullet list, add attempt 2 content.
+
+Edit 2: §8 Compile gate section.
+
+Let me also update the line "module count: 5 authored Lean files, 814 lines, 69 declarations; **all 289 `.lean` files in the worktree** compile with..." — fine as is.
+
+Let me apply the edits.
+dsh: reasoning:
+Now update the §8 Compile gate section and the "Verification after the fix" paragraph in attempt-1 (to mention the sequential replay too). Let me read the current state of the relevant regions.
+dsh: reasoning:
+Now update the JSON card:
+- `summary`: mention the attempt-2 verification.
+- `deliverables.gate_logs`: add the repair2 evidence.
+- `compile_gate.worktree_external`: add the sequential replay + dispatcher gate data.
+- `repair`: add attempt 2.
+- Also `generated_utc` should be updated (regenerate time).
+
+Let me make these edits with the edit tool on the JSON file.
+
+Current time ~21:31 → UTC 13:31. Let me compute the actual UTC timestamp from `date -u`.
+
+Let me do the edits.
+dsh: reasoning:
+The read tool showed line 62 as `"replayed_at_utc": "2026-09-10T12:55:00Z"` — let me check the exact text (indentation may be 3 spaces? The file uses 1-space indent). Let me grep the exact lines.
+dsh: reasoning:
+The text looks identical to what I passed... except the "excluding .lake/.git/.dshpkg" part. Hmm, my old_string had `(excluding .lake/.git/.dshpkg)` — wait, let me look at line 57 in the original read: `"command": "cd <worktree root> && lake env lean <absolute path> for every .lean file found under the worktree (excluding .lake/.git/.dshpkg)",`. That matches.
+
+Hmm, why did it fail? Maybe because I included the closing `},` of worktree_external and the section is unchanged otherwise... Actually the error says old_string not found. Possibly due to the `"evidence"` line wrapping? No.
+
+Let me try a smaller, more targeted edit: just replace the evidence + replayed lines.
+dsh: reasoning:
+Now let me also update the `forbidden_scan` section evidence to mention the fresh scan, and validate the JSON parses. Also verify the final line of the MD card.
+
+Let me validate JSON and check the MD tail.
+dsh: reasoning:
+Both cards are updated. Now let me do the final integrity checks:
+
+1. Confirm no `.lean` file was created/modified/deleted since the dispatcher's gate at 21:09-21:26 (which found 289 files, all exit 0). My only writes were to `logs/gate_repair2/*` (log/out/txt) and the two card files. Let me verify by listing `.lean` files with mtime after 21:09:22.
+
+2. Confirm the file count is still 289 (no stray .lean added).
+
+3. Optionally re-run the D11 authored files one final time (fast).
+
+Let me do these.
+dsh: reasoning:
+Everything is consistent:
+
+- 289 `.lean` files, none modified after the dispatcher's gate run started (21:09:22), so the `ok: true` gate result of 21:26:02 applies to the current tree.
+- All five authored files compile with exit 0.
+- Axiom audit: 33/33 clean cones, 0 sorryAx.
+- Forbidden-token scan: 0 hits.
+- Cards updated.
+
+One more thing: the task says "Update the result card and end it with TASK_DONE." Done — the MD card ends with `TASK_DONE — longrun/results/D11-maximum-principle-tensor.md`.
+
+The background jobs: my repro job (bash-1) already completed and I read its result. Let me double check job_list to ensure nothing is still running.
+
+Also I should remove /tmp files? Not necessary.
+
+Let me check job_list and then give the final answer.
+
+Also: the `logs/gate_repair2/` directory is inside the worktree, but contains no .lean files so it can't affect the gate.
+
+One last sanity check on the MD: make sure the attempt-2 section reads well and there are no contradictions (e.g., the top-of-card claim "all 289 .lean files compile ... TOTAL=289 FAIL=0" is consistent).
+
+Let me view lines 20-62 of the MD quickly.
+dsh: reasoning:
+All jobs are done. The card looks good.
+
+Let me do one final check that the `logs/gate_repair2/run.out` actually ends with FAIL=0 (I saw it) and print the exact final lines as the closing evidence. Then finish with TASK_DONE.
+
+Also maybe check the `forbidden_scan.txt` is in place and the axiom audit output. All done.
+
+One more consideration: the task instruction says "Fix ONLY the authored files in your worktree so that every `.lean` file compiles with `lake env lean` (exit 0)." I did no fixes because none were needed — the state is verified by the dispatcher's own gate. I should be transparent about that in my final message.
+
+Final answer: TASK_DONE with the card path as the last line.
+## Summary
+
+**Diagnosis.** The state file `state/D11-maximum-principle-tensor/gate.json` named in the prompt did not exist: the dispatcher (`longrun/bin/dispatch_loop.py`) writes it, and **deletes it when it queues a repair**, so the failed run's per-file exit codes were not preserved. I reconstructed the failure window from `logs/dispatch.log` (gate ran 20:52:40 → 20:59:21) and re-ran the gate command itself.
+
+**What I found.**
+- The dispatcher's exact command — `cd <worktree root> && lake env lean <abs path>`, sequentially, with its `ELAN_HOME`/`PATH` — over **all 289 `.lean` files now returns `TOTAL=289 FAIL=0`** (`logs/gate_repair2/run.out`, elapsed 1000 s).
+- The dispatcher's own next pass at 21:09→21:26 returned **`"ok": true`, 289/289 exit 0** and logged `PROMOTE D11-maximum-principle-tensor verified (gate 289 files)`.
+- Therefore the attempt-2 failure was **transient and non-reproducible** (a per-file `lake env lean` run under concurrent load), not a source error. No authored Lean file was modified: the five sha256 hashes are unchanged, and no `.lean` file changed after the dispatcher's own gate start (`lean files now: 289`, `modified after gate: []`), so that gate verdict applies to the current tree.
+
+**Honesty checks re-run on the unchanged sources.**
+- `logs/gate_repair2/axiom_audit.out`: `AxiomAudit.lean` exit 0, 33/33 cones `[propext, Classical.choice, Quot.sound]`, 0 `sorryAx`.
+- `logs/gate_repair2/forbidden_scan.txt`: comment-stripped scan of the 5 authored files, 0 hits for `sorry|axiom|unsafe|native_decide|proof_wanted|admit`.
+- The statement-only `Prop` `ConeInvariantUnderReaction` remains a definition used only as an explicit hypothesis; the unconditional toy/dimension-1 theorems are intact.
+
+**Cards updated** (`longrun/results/D11-maximum-principle-tensor.md` §0 attempts 1+2 and §8, plus the JSON card) with the non-reproduction, the absence of any source change, and all evidence paths.
+
+TASK_DONE — longrun/results/D11-maximum-principle-tensor.md

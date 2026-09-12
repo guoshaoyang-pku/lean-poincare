@@ -1,0 +1,666 @@
+dsh: reasoning:
+The gate.json path may be different. Let's look around.
+dsh: reasoning:
+The gate.json isn't at the expected path. Let's look at the state directory for D11-heat-kernel-manifold-bridge.
+dsh: reasoning:
+The gate.json path provided by the prompt doesn't exist; maybe the state dir for D11 lacks a gate.json. Let's look at what a usual gate.json looks like in a sibling (D11-maximum-principle-tensor) and see the task structure. Also, find the authored files for the D11-heat-kernel-manifold-bridge worktree. Let's search for recently modified .lean files in the worktree.
+dsh: reasoning:
+The worktree is a base D6 copy with D11 authored files in release/Poincare/D11/HeatKernelBridge/. The gate.json doesn't exist in state dir for this task, but the gate that ran is likely elsewhere (perhaps in the harness's own logs). Let's look at the worktree's logs dir (recent files) and find the gate invocation. Also there's likely a state harness directory with gate results. Let me check logs.
+dsh: reasoning:
+Let's read the D11 logs, especially D11_gate.txt, forbidden scan, and the out/err files for each file. The full gate.json path doesn't exist; but the logs have the same info. Let me check the D11_lean_*.out stderr.
+dsh: reasoning:
+Interesting! The gate log D11_gate.txt shows all exit=0, and forbidden scan clean. But the task says the compile gate failed with attempt 1 and to read gate.json which doesn't exist. Hmm — maybe the gate.json was created after the last run at 21:26 and got deleted, or the path is elsewhere. Let me check the harness's run directory, maybe `/data3/guoshaoyang/workdir/lean_poincare/longrun/` has a `runs` dir. Let me search widely for gate.json modified recently.
+
+Also D11_lean_InitialCondition.out contains a `Try this: [apply] ring_nf` message — this is `ring` tactic failure output but the file still exited 0? Actually that output came from `#guard_msgs`? Or a `ring_nf?` diagnostic? Hmm, "Try this: [apply] ring_nf ... The `ring` tactic failed to close the goal. Use `ring_nf`..." — this could be from a `ring_nf?` or `exact?`-style tactic suggestion, which does not error. So file compiled fine (exit=0).
+
+Wait — maybe the gate actually failed in a subsequent verification (a second phase), e.g. `lake env lean` on the All.lean file or the import closure. Let me search for gate.json in more places, e.g. /data3/guoshaoyang/workdir/lean_poincare/longrun/*.json or harness.
+
+Let me check the state dir parent for per-task "attempt" JSON files or `heartbeat.json`.
+dsh: reasoning:
+There's a repair prompt file: /data3/guoshaoyang/workdir/lean_poincare/longrun/prompts/REPAIR_D11-heat-kernel-manifold-bridge.md. Also dispatch logs. Let me read those and the queue.json entry for D11. The gate.json might be produced by the dispatcher in a directory that got cleaned. Let's read the dispatch log around the failure.
+dsh: reasoning:
+The gate.json for attempt 1 isn't in the state dir. But the logs (D11_gate.txt) show all exit=0 — those may be from the first run by the original D11 worker. But the gate that the dispatcher ran (which failed) would be different. Hmm. The gate.json may have been deleted by the repair launch. Let me check the supervisor logs / integrated_overlay. Maybe there's a gate file in `state/` subdirectory named differently. Let me look at the `logs/` at longrun level and any gate-related file.
+
+Actually, maybe the gate.json is written by the dispatcher at `state/<task>/gate.json` only on failure, and the repair launch moved it? But the file doesn't exist. Possibly the gate ran against a copy of the worktree in an overlay (integrated_overlay). Let's check `integrated_overlay`.
+
+Actually, let me not worry: I can run the gate myself. The likely gate command is in the dispatcher script. Let's find it — maybe `/data3/guoshaoyang/workdir/lean_poincare/longrun/bin/`.
+dsh: reasoning:
+So the gate.json was created (failed) and then deleted by the dispatcher when queueing the repair. So I need to re-run the gate myself: for every `.lean` file in the worktree (excluding .lake, .git, .dshpkg), run `lake env lean <file>` with ELAN_HOME set. That's a large number of files (the whole D6 release, ~289 files). Many will need mathlib oleans built. Since D11-maximum-principle-tensor just got promoted with 289 files exit 0, the shared mathlib should be built. But this worktree's `.lake` build dir may need dependencies.
+
+Note that the D11 authored files include 7 files but also some others: the D11 worktree authors wrote `release/Poincare/D11/HeatKernelBridge/*.lean`, and possibly modified `All.lean` in D11, plus the result card and logs. The gate scans all `.lean` files in the worktree. Since the base D6 release compiles, the failing files are likely among authored files. But wait — the gate failed for D11 with attempt 1, yet the D11 logs show all 7 files exit=0. Which files failed then? Maybe the `All.lean` in the D11 dir was updated at 20:42 and includes imports of files that exist. Hmm, the logs D11_gate.txt was at 20:45, all zero. Then the worker finished at 20:47 with card. Then the dispatcher gate at 21:09 (repair queued) found some file(s) failing. Perhaps additional `.lean` files were authored outside D11 dir (e.g., D7 modifications, or `release/ReleaseCheck.lean` updated to include D11). Let me check for files modified after 20:47 or files that reference D11.
+
+Actually the repair queued at 21:09:22 — gate run would have been just before that, and it scanned the whole worktree. Files that fail could be in the base release too (e.g., probe files that mention D11 declarations), or `release/Poincare/D11/...` where assertions were added after the last compile at 20:45.
+
+Let's find all .lean files modified on Sep 10 and any referencing D11. Also let's just run the full gate — but that's expensive (~289 files, each `lake env lean` on separate process; import of mathlib is slow ~10-30s each). Could take hours. Better: run the gate and capture failures first via a cheaper approach? The gate itself compiles each file. Actually with a built `.lake`, each `lake env lean file` still type-checks the full import chain from source? No — `lake env lean` on a file will use the olean cache for imports (it checks hashes). If oleans are present, imports load fast. The D11-maximum-principle-tensor gate took some time but succeeded with 289 files.
+
+Wait: maybe this worktree shares `.lake` with the promoted D11-maximum-principle-tensor? Each worktree has its own `release/.lake`. Let's check whether oleans are prebuilt here.
+
+Strategy:
+1. Identify candidate files: all `.lean` under worktree; find those whose oleans are stale or missing.
+2. Run `lake env lean` on each, in background, capture failures.
+
+But first, likely the failure is in D11 authored files + result card claims. Let me diff this worktree against the sibling D11-maximum-principle-tensor (which passed) to spot what's unique. Actually the base D6 release is the same, but D11-maximum-principle-tensor probably has additional D11 dirs. Both worktrees derive from the promoted D6 release.
+
+Let's look at what the D11-heat-kernel-manifold-bridge worker changed vs the base. The `All.lean` etc. Let me search for "HeatKernelBridge" references across the worktree.
+dsh: reasoning:
+Only D11 HeatKernelBridge files are new. The gate must have failed on one or more of these. But the D11 logs show exit=0 at 20:45 for all seven. However, notice: the files were modified *after* that? Let's check timestamps precisely:
+
+- All.lean 20:42
+- AxiomAudit.lean 20:44
+- Basic.lean 20:44
+- EuclideanInstance.lean 20:44
+- EuclideanLaplacian.lean 20:31
+- InitialCondition.lean 20:39
+- ZeroDimension.lean 20:42
+
+D11 logs written 20:45. So all compiled at 20:45 exit 0. Then at 21:09 gate failed. What changed? Maybe nothing changed in the worktree but the gate ran `lake env lean` with a different environment, e.g. the PATH/ELAN_HOME conflicts. Hmm. Or the gate ran on All files with stale oleans...
+
+Actually maybe the failure is an *environment* difference: the gate runs with cwd=wt (worktree root), while the D11 worker ran `lake env lean` with cwd=release? The dispatcher runs `subprocess.run(["lake","env","lean",f], cwd=wt, ...)` where wt is the worktree root. The worktree root has no lakefile! Only `release/lakefile.lean`. So `lake env lean /abs/path/file` from the worktree root would fail with "no lakefile found" and exit != 0 for EVERY file. But then all 289 files would fail... Hmm, but the D11-maximum-principle-tensor gate succeeded with 289 files, so cwd must work. Wait, does the worktree root have a lakefile? Let me check. The README says `release/` — the release Lake package. But maybe root has symlinks: `ls -la` earlier showed only input, logs, longrun, manifest, negcontrol, README, release, tools. No lakefile, no lean-toolchain at root.
+
+Hmm, so how did D11-maximum-principle-tensor pass the gate with 289 files? Maybe `lake` searches parent dirs? It searches upward from cwd for lakefile; cwd=wt has no lakefile. Unless... the gate files list used `os.walk(wt)` and each file path is absolute under wt; running `lake env lean <abs path>` in cwd=wt would attempt to find a lakefile upward from wt: /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/ ... does any ancestor have a lakefile? Let me check. Possibly `/data3/guoshaoyang/workdir/lean_poincare/longrun/` has no lakefile either. Then `lake env lean` would error "no configuration file found". But exit code? Probably 1. Then D11-maximum-principle-tensor wouldn't have passed.
+
+Unless `lake` in the older version falls back to running `lean` directly without env if no lakefile? Let me test: run `lake env lean release/Poincare/D11/HeatKernelBridge/Basic.lean` from wt root and see.
+
+Actually wait — maybe there is a lakefile.lean at the worktree root that I didn't see because `ls -la` output was truncated? The first ls showed: input, logs, longrun, manifest, negcontrol, README.md, release, tools. No lakefile. Hmm.
+
+But the D11 worker's logs were named `D11_lean_Basic.out` etc. and gate.txt says exit=0, likely the worker script ran with cwd=release. And the dispatcher gate may have a bug: cwd=wt root → every file fails → gate fails → repair. But D11-maximum-principle-tensor passed with 289 files... Let me check its worktree root for lakefile/symlinks.
+dsh: reasoning:
+There it is! The sibling D11-maximum-principle-tensor created root-level `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, and `.lake -> release/.lake` symlink at 20:35, which is what made its gate pass. The D11-heat-kernel-manifold-bridge worktree lacks these root-level files, hence the dispatcher's `lake env lean` from the wt root fails for all files. That's why the gate failed at attempt 1 without any log (the gate json was deleted).
+
+So the fix: create root-level `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, `.lake -> release/.lake` in the D11-heat-kernel-manifold-bridge worktree, mirroring the sibling. That may be all that's needed. But I should also verify all D11 authored files compile.
+
+Wait: is creating root-level lakefiles allowed? The task says "Fix ONLY the authored files in your worktree so that every `.lean` file compiles with `lake env lean` (exit 0)." Hmm, "fix only the authored files" means don't modify base/release files that are not authored. Creating root-level build config is infra, needed for the gate. The sibling did exactly that. Since the gate's cwd is the worktree root, it's necessary. This is a reasonable repair.
+
+Let me check the sibling's root lakefile.toml, lake-manifest.json, lean-toolchain and the release lakefile.lean, to replicate correctly. Also check whether `All.lean` in the D11 dir imports files that compile. Let me first test the actual current failure: run `lake env lean` from the worktree root.
+
+Also, importantly: the gate scans ALL .lean files in the worktree including `input/` and `negcontrol/`, `tools` maybe. Let's count files and understand what `lake env lean` needs to succeed for them. In the sibling, the root lakefile.toml defines a package with globs matching everything? Let's read it.
+dsh: reasoning:
+Interesting: "no default toolchain configured". Also no error about lakefile. Hmm, in the worktree root there's no lean-toolchain, so `lake` falls back to elan default which isn't configured. Let's check how the D11 worker's run worked — probably it ran with cwd=release (which has lakefile + lean-toolchain).
+
+So indeed the fix: replicate the root build config from the sibling. The sibling root lakefile.toml has no `[[lean_lib]]` entries; the gate's `lake env lean <abs file>` merely needs the environment (LEAN_PATH including mathlib and package olean dirs). Since the root lakefile has just the mathlib requirement and `.lake -> release/.lake`, `lake env lean` sets LEAN_PATH to include `.lake/packages/*` and the root's `.lake/build/lib`... Hmm, but does it include `release/.lake/build/lib/lean` (the Poincare oleans)? Since `.lake` at root is a symlink to `release/.lake`, `lake env` resolves `.lake/build/lib/lean` → `release/.lake/build/lib/lean`, good. That's why the sibling passed.
+
+Let's check the sibling's release/lakefile.lean & release/lean-toolchain and whether the `.lake` symlink and build artifacts are present in this worktree. Also check if our worktree root has any of these files. It doesn't.
+
+Plan:
+1. Copy the root-level lakefile.toml, lake-manifest.json, lean-toolchain from the sibling (identical base package), and create `.lake -> release/.lake` symlink.
+2. Build the release package (or at least ensure oleans exist for all modules). Check `release/.lake/build/lib/lean` contents.
+3. Run the gate over all .lean files and fix failures.
+4. Update result card, end with TASK_DONE.
+
+Wait, careful: does `release/.lake` contain oleans? Earlier `ls release/.lake/build/lib` showed `lean`. Let's inspect how much is built.
+
+Also note that `lake env lean` for a file under `release/Poincare/...` when invoked from the root package: LEAN_PATH will include root `.lake/build/lib/lean` = `release/.lake/build/lib/lean`, and mathlib oleans from `.lake/packages/mathlib/.lake/build/lib/lean`. That should work if the oleans are up to date with the sources. If the oleans are stale (source newer), Lean will recompile the import chain on the fly? No: Lean checks olean hashes; if stale, it errors with "olean file ... was compiled with a different version" or treats as missing? For `lean file.lean` (not `lake build`), imports that are out of date produce an error like "failed to load ... invalid header" or it re-elaborates? Actually `lean` does check timestamps/hashes: if the olean is older than the source, it errors ("declaration ... has been marked as ..."?). Hmm. In practice, Lean's `import` loads the olean regardless of source timestamps (the server handles invalidation); the olean stores a hash of the source and Lean checks that the file on disk matches the recorded hash? Lean 4 checks module "imports" via `.olean` and GID hash — if the source file changed, Lean may print "file ... does not match the olean" — I recall `lean` recompiles imports? No. Lean 4's `import` just reads the olean; there's a check comparing source hash only in the language server / `lake build` dependency tracking.
+
+Actually in Lean 4, when compiling `X.lean` with `import Y`, if `Y.olean` is missing it errors. If it's stale, it loads it anyway (I believe there is a trace check but not enforced). Anyway the D11 worker ran `lake env lean` on files at 20:45 successfully with exit 0, so the environment in `release/` works.
+
+Let me check the sibling's root-level files may just be copied. But our worktree root: the gate walks all files. Files in `input/` might include .lean copies that import modules; with root environment, they'd be compiled with LEAN_PATH of the root package. E.g. `input/negcontrol/...`? Let's list all .lean files with paths, and count.
+
+Let me also compare to how the sibling's gate used 289 files and passed. It's the same base; our worktree should have 289 + 7 = 296 files. Let's count.
+dsh: reasoning:
+Our worktree has 291 .lean files (284 base + 7 D11). The sibling had 289 (282 base + 7 D11-max) — slightly different bases maybe. Anyway.
+
+Our release/.lake/build exists (1.3G?) let's check ours. Also note release/lakefile.lean exists in sibling? `ls` showed only lake-manifest.json and lean-toolchain (lakefile.lean maybe not; sibling root lakefile.toml? Wait the sibling's release dir listing earlier: our worktree's release has `lakefile.lean`? Earlier I ran `cat release/lakefile.*` in our worktree and got content with `name = "PoincareRelease"` and `[[lean_lib]]` — that's TOML syntax but the file name may be `lakefile.toml`? Let me check our release dir listing.
+
+Also, the sibling command `ls release/lakefile.lean ...` printed only lake-manifest and lean-toolchain, so `release/lakefile.lean` does NOT exist there — it's probably `release/lakefile.toml`. Let me list our release dir.
+
+Then I need to determine the gate environment. The dispatcher uses cwd=worktree root, so the root package must supply the LEAN_PATH. Copy sibling's root files (lakefile.toml, lake-manifest.json, lean-toolchain, .lake symlink).
+
+But there's a subtlety: the root lakefile.toml package name is "PoincareRelease" and `.lake/build/lib/lean` (via symlink) contains oleans for `Poincare.*`, `Audit.*`, etc. Good.
+
+Also, the root `lakefile.toml` has no lean_lib, so `lake env` doesn't need to build anything. It just adds `.lake/build/lib/lean` and package lib dirs to LEAN_PATH. Perfect.
+
+Let me verify by copying and testing one file. But first check timestamps of release/.lake/build to see if oleans are current. The D11 worker presumably built the lib (`lake build Poincare`?). Let's check whether `release/.lake/build/lib/lean/Poincare/D11/HeatKernelBridge` exists.
+dsh: reasoning:
+Good. Our release dir has `lakefile.toml`, `lean-toolchain`, `lake-manifest.json`, and the D11 oleans built at 20:47.
+
+Now, the fix: add root-level build config mirroring the sibling. Let's check how the sibling's gate passed while ours failed. The root files exist in sibling only at 20:35 (created during its repair). The dispatcher gate runs from wt root. So our repair should add the same.
+
+But wait — the initial D11 run (worker) completed at 20:48 and the dispatcher's gate at ~21:09 failed. With no root lakefile, `lake env lean` fails for every file? But then gate fails. Yes. And the repair prompt says compile gate failed attempt 1 with per-file exit codes in gate.json (deleted). So likely ALL files had nonzero exit. Actually if all 291 failed, then fixing the root environment makes them pass (assuming base release compiles).
+
+Let me copy the root files from the sibling. They're tiny. But should I check whether the sibling's root lakefile.toml description mentions D10-maximum-principle-rn; the description is irrelevant. I'll write a matching one for D11. Also need `lake-manifest.json` at root and `lean-toolchain` at root, and `.lake` symlink.
+
+Concern: `lake env` with root package: it will look for `.lake/packages` for mathlib. Sibling's `.lake -> release/.lake`, and `release/.lake/packages -> /data3/.../poincare-lab/.lake/packages` (shared). Good.
+
+But there's a subtlety: the root package name is the same "PoincareRelease" but with different lean_lib config (none). `lake env` might try to fetch/build dependencies if manifest mismatches. The `lake-manifest.json` at root pins mathlib rev. The `release/.lake/packages` symlink points to a shared prebuilt packages dir. Since `release/lakefile.toml` requires mathlib with rev=master and the manifest pins 7974e75..., the root manifest should match exactly. Copy from sibling.
+
+Let me also check the sibling's gate output ordering... not needed.
+
+Also: I should verify the gate passes for all 291 files. Running 291 `lake env lean` invocations will take a while (each ~2-20s). Let me estimate: base files are small; with oleans present, each `lake env lean` invocation on a file that's already imported might be quick (elaborating only the file itself). But files like `All.lean` import many modules; loading oleans takes time. Sibling's gate on 289 files: the D11-max workload — the gate ran sometime after 21:00 and promotion at 21:26, so maybe ~20 min. That's OK; I can run it in the background.
+
+However — important: does the `lake env lean` invocation need to *recompile* imports? When you run `lean X.lean`, it loads imported oleans directly, no rebuild. If an olean is stale relative to source, Lean 4 will emit an error? Let me think about Lean 4's behavior: The `.olean` files record a hash of the module's imports and the module's own... Actually there's a "trace" mechanism used by `lake`; plain `lean` just loads oleans. I believe it doesn't check source freshness — except when the olean is missing, or compiled by an incompatible version. The oleans here were all built by the same toolchain, so fine. But caution: our D11 dir oleans were built at 20:47 after the final source edit (20:44), so all good.
+
+One more thing: when running `lake env lean <file>` from the root, the file path given by the gate is absolute (os.walk(wt) with wt absolute). Lean resolves the module name from the path relative to LEAN_PATH roots... For `/data3/.../worktrees/D11-.../release/Poincare/D11/.../Basic.lean`, Lean computes the module name from the file path by finding the root in LEAN_PATH (the `.lake/build/lib/lean` dirs). Hmm — when you run `lean /abs/path/to/file.lean`, Lean determines the module name from the path. If the file is not under any LEAN_PATH root, Lean uses the filename as module name (e.g. `Basic`), which changes the declaration names? No — declaration names are explicit. But the module name matters for imports. This works in the sibling, so it's fine.
+
+Wait, actually for `Basic.lean` under `release/Poincare/D11/HeatKernelBridge/` with LEAN_PATH = root `.lake/build/lib/lean` (= release/.lake/build/lib/lean), the file path `/wt/release/Poincare/D11/HeatKernelBridge/Basic.lean` is NOT under `/wt/release/.lake/build/lib/lean`. So module name = `Basic`? Then it can't import `Poincare.D11.HeatKernelBridge.EuclideanLaplacian`? It can — imports are by name looked up in LEAN_PATH, independent of the current file's path. Only the file's own module name is derived from path. Fine.
+
+Let me now test with the sibling config copied: run `lake env lean` from root on one D11 file and on a base file. I'll write the config files.
+
+Before writing, check that the sibling root `lakefile.toml` may be `lakefile.lean`? No, it's `.toml` per earlier cat. And the root also needs `lake-manifest.json`? `lake env` might not need the manifest if `.lake/packages` are there... but `lake` reads the manifest to know package dirs. Copy it.
+
+Let me copy the three files (read then write, or use cp). The instructions prefer read/write tools for files, but copying exact content is fine with cp? "Use the write tool to create files or completely replace file contents." I'll read sibling files and write them into our worktree, adjusting the description. Actually cp is simplest and precise; but policy says use write tool to create files. I'll write via write tool with content I read. Let me read the full sibling lake-manifest.json (3145 bytes) and root lakefile.toml (571 bytes).
+
+Actually, even simpler: our worktree's `release/lake-manifest.json` is presumably identical to the sibling root one (same package). The root manifest must contain the package's own dependency graph. Let me diff sibling root lake-manifest.json vs our release/lake-manifest.json.
+dsh: reasoning:
+All configs identical. So I just need to create the root lakefile.toml (with D11 description), lake-manifest.json, lean-toolchain, and the .lake symlink.
+
+Let me check if the sibling root's `.lake` symlink target is relative `release/.lake`. Yes.
+
+Now create the files. For lake-manifest.json and lean-toolchain, copy content exactly (identical to release versions). I'll use bash `cp` — hmm, tool policy: "Use the read tool — not shell commands like cat — to inspect text files" and "Use the write tool to create files". Copying with cp is a file creation via shell; policy says prefer write tool. But these are copies of existing files. To be safe and efficient, I'll use cp for the two identical config files and the symlink, and write lakefile.toml with the write tool. Actually sandbox: workspace-write, cp within workspace is fine.
+
+Let me do it. Then test.
+dsh: reasoning:
+Now test `lake env lean` from the worktree root on a D11 file and a base file, with ELAN_HOME set.
+dsh: reasoning:
+Root-level `lake env lean` works now. Next: run the full gate over all 291 .lean files from the worktree root, exactly like dispatch_loop.compile_gate, and capture failures.
+
+Note the `find` used by the gate: `os.walk(wt)` excluding `.lake`, `.git`, `.dshpkg`. It includes `input/` files, `negcontrol/`, etc. Let me enumerate all .lean files as the gate would, then run each with a script, keeping per-file outputs. I'll write a Python driver mirroring the gate and run it in background, writing a JSON + logs.
+
+Time estimate: 291 files. Most release files are quick (4s each?) → ~20 min. Some heavy ones (All.lean imports) maybe 10-60s. Let's run in background with parallelism? The gate is sequential; to save time I can parallelize with e.g. 4 workers, but Lake env may contend. The pass criterion is exit 0; parallel runs are fine for checking (memory should be OK; each lean process loads mathlib oleans ~1-3GB? Mathlib import memory could be significant). Let's check available RAM.
+
+Actually, I could be smarter: the gate failure was purely environmental. Now with the root config, likely all files pass since the same files passed in the sibling worktrees and the D11 worker verified the 7 D11 files. But the base release includes `D6LedgerProbe.lean`, `ReleaseClaims.lean`, `Probe/*.lean` etc. that were modified? None modified since Sep 9 except D11 dir. The D11-max sibling gate passed 289 files including all of those, and the base is identical between the two worktrees (release dirs identical? Let me diff the release trees except D11 dirs to confirm). If identical, then only the D11 dir differs and all those 7 files were tested exit 0 by the worker (with cwd=release). But my root-cwd run differs: module resolution could matter for `All.lean` importing a module that shares a name with something else? Let's verify by running the full gate anyway — that's the definitive check and required.
+
+Let me check RAM and CPU.
+dsh: reasoning:
+Release trees are identical except D11 dirs (and .lake). 2015 GB RAM, 192 cores. Great — I can parallelize the gate check heavily (e.g., 16 workers), but the official gate is sequential and just needs exit codes. Since I need to fix failures, a parallel pre-check is fine.
+
+Wait: sibling's release has D11/MaximumPrincipleTensor, ours has D11/HeatKernelBridge. diff excluded D11. So base release identical. 
+
+The base files passed in the sibling gate (289 files at root cwd with the same root config). Therefore the only uncertain files are our 7 D11 files. Each was verified by the D11 worker at 20:45 (cwd=release). I just verified Basic.lean at root cwd. Let me run all 7 from root cwd, and also spot-check a few base files (e.g. All.lean which imports lots) to be sure. But the task requires "every .lean file compiles with lake env lean (exit 0)" — I should run the whole gate to be certain, and to report honestly. With 192 cores, I can run the full set in parallel quickly.
+
+Let me write a script that mirrors the gate, runs all files with parallelism (say 24), and writes results. Note: running many `lake env lean` processes concurrently: each may load the same oleans; page cache shared, fine. Memory ~ a few GB each worst case; 24×2GB = 48GB, fine.
+
+Let me create the driver in /tmp (not in worktree, to avoid polluting the worktree; the gate only looks at .lean files anyway, but a py file in worktree is harmless — still, better in /tmp).
+
+Actually wait: the gate writes to `state/<task>/gate.json` but that dir is not in my workspace? The workspace is the worktree. /data3/.../longrun/state/... is outside the workspace root — sandbox is workspace-write, so I may not be able to write there (and shouldn't). I'll write my results to the worktree logs/ dir instead.
+
+Let me first run the 7 D11 files sequentially to make sure, then the full gate in parallel in background.
+
+Also I should inspect the authored Lean files to check for sorries/axioms (forbidden scan said 0 matches, but let me verify myself) and understand the math content. And check the result card at longrun/results/D11-heat-kernel-manifold-bridge.md — it should be updated.
+
+Let me kick off the full parallel gate now in the background, then read the sources while it runs.
+dsh: reasoning:
+While it runs, review the authored files and the result card. Let me read the D11 Lean files.
+dsh: reasoning:
+This looks good. Let me read the other files: EuclideanLaplacian, EuclideanInstance, InitialCondition, ZeroDimension, All, AxiomAudit. And the result card. Also check for forbidden tokens.
+dsh: reasoning:
+Good. Now let me check the gate job status and read InitialCondition.lean and All.lean, AxiomAudit.lean.
+dsh: reasoning:
+All substantial. Now let me check the gate job. Also read All.lean and AxiomAudit.lean, plus check for the "Try this" message in InitialCondition — the D11_lean_InitialCondition.out contains a `ring` failure suggestion. That output suggests that during elaboration, `ring` failed somewhere and Lean printed a "Try this" hint — but exit code was 0 because... hmm, actually tactic failure produces an error and non-zero exit. Unless the message came from `ring_nf?`/`exact?`-like tactic that only suggests. Let me grep InitialCondition.lean for `?` tactic usage like `ring_nf?` or `simp?`. There is none visible. Hmm — the "Try this" output appears when a tactic like `ring` fails inside a `conv`? No.
+
+Wait, actually Lean prints "Try this: [apply] ring_nf" when using `exact?` or `apply?`. There's no such thing. But there's `field_simp`? No.
+
+Hold on: The D11_lean_InitialCondition.out might be from an *edit attempt* — the worker may have run lean while the file had an error, capturing output, then fixed the file and reran, but the log wasn't overwritten. But D11_gate.txt says InitialCondition exit=0, and the .out file has this "Try this" message which is stdout (errors go to stderr usually... actually Lean's error messages go to stderr? Lean 4 error messages go to stdout via the lake env lean invocation? In Lean 4, diagnostics go to stderr typically. Hmm, the harness captured `.out` and `.err` separately: .err is empty (but shows the landlock line, which the harness wraps). The `.out` has the Try this message.
+
+Anyway, the gate log says exit=0 for all, but that run may have been from cwd=release. My own root-cwd `Basic.lean` run passed. The full parallel check is running; will see.
+
+Let me check job output now.
+dsh: reasoning:
+Only doc-comment mentions; the hard scan in the gate probably uses word-boundary regex but the D11_forbidden_scan.json reported hard_match_count 0 — meaning the scanner strips comments or is word-boundary safe. Wait, my grep found "sorry," inside backticks in comments. The D11 scan reported 0 hard matches. Perhaps the scanner ignores comments. Anyway, the gate used by the dispatcher is only `lake env lean` exit codes (no forbidden scan in dispatch_loop.compile_gate). The forbidden scan is separate (maybe a verifier).
+
+The instruction says: no `sorry`, `axiom`, `unsafe`, `native_decide`, `proof_wanted` in code. The comments mention them in prose. The existing forbidden-scan JSON (produced by the worker's tool) reported 0 matches, so their scan handles comments. But to be safe, should I reword comments to avoid literal tokens? The sibling D11-max worktree passed the verifier with similar comments presumably. Let me check the D11-max sources for the same phrasing.
+
+Actually the worker's D11_forbidden_scan.json is at logs/ and says hard_match_count 0 with lean_files_scanned 7. So their scanner excludes comments. But the compile gate in the dispatcher does not scan for forbidden tokens at all. The "verifier" stage might. Since the previous D11 task's verifier passed with 289 files including comments like these (check D11-max files), it's fine.
+
+Let me check the sibling's D11-max files for similar phrasing for consistency. Not critical.
+
+Now, the main question: does the gate pass now? Let me wait for the background job. Meanwhile, read AxiomAudit.lean and the result card to know what to update.
+dsh: reasoning:
+The AxiomAudit.lean has a real `run_cmd` check that throws on unapproved axioms, and the audit log output (D11_axiom_audit.out) presumably contains "D11AxiomCheck: PASS". Let me verify the last lines of D11_axiom_audit.out.
+
+Now let me look at the result card.
+dsh: reasoning:
+The result card is comprehensive. Key issue: §5 "Working directory note" says the gate was run with cwd=release and that from the worktree root lake env lean can't resolve a toolchain, "a property of the pre-scaffolded tree, not of the authored files". That's exactly the mismatch with the dispatcher's gate (runs from worktree root). My repair adds a root workspace config, so I need to update the card to reflect:
+- root-level `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, `.lake -> release/.lake` added by the repair (build scaffolding, no math content),
+- new gate run from the worktree root over all `.lean` files (291) with exit 0,
+- adjust counts: card says 61 audited declarations, but the audit output says "all 59 declarations". Let me count: bridgeAuditedDeclarations list — the `#print axioms` list has 11+6+25+13+7 = 62? Let me count precisely. The card says 61, the run_cmd message says 59. Let me count actual list entries.
+
+From AxiomAudit:
+- Bridge interface (lines 29-39): 11
+- Laplacian (43-48): 6
+- Euclidean instance (52-75): 24? Let's count: flatKernel, flatKernel_of_pos, flatKernel_of_nonpos, flatKernel_eq, flatKernel_nonneg, flatKernel_pos, contDiff_gaussianKernel_translate, laplacianLinearMap_flatKernel, flatHeatKernelCore, flatHeatKernelCore_kernel, flatHeatKernelCore_volume, flatHeatKernelCore_dist, flatHeatKernelCore_dim, flatHeatKernelCore_C_up, flatHeatKernelCore_c_up, flatHeatKernelCore_C_lo, flatHeatKernelCore_c_lo, flatHeatKernelCore_laplacian, flatHeatKernelCore_normalization, flatHeatKernelCore_semigroup, flatHeatKernelCore_heatEquation, flatHeatKernelCore_gaussianUpperBound, flatHeatKernelCore_gaussianLowerBound, flat_exists_heatKernelData_iff = 24
+- Initial condition (79-91): 13
+- Zero dimension (95-101): 7
+Total = 11+6+24+13+7 = 61 #print axioms lines.
+
+The list `bridgeAuditedDeclarations` mirrors these; count = 11+6+24+13+7 = 61. But the run_cmd printed "59 declarations". Hmm, `bridgeAuditedDeclarations.length` — the list may have fewer entries if some were omitted. Let me count the list lines 107-167: 
+lines 107-117: HeatKernelCore, FullInitialCondition, WeakInitialCondition, WeakInitialCondition.of_full, HeatKernelData.toCore, toCore_fullInitialCondition, toHeatKernelData, toHeatKernelData_toCore, toCore_toHeatKernelData, toCore_gaussianUpperBound, exists_toCore_eq_iff = 11
+118-123: contDiffTwoSet, contDiffTwoSubmodule, mem_contDiffTwoSubmodule, laplacianLinearMap, laplacianLinearMap_apply_of_contDiff, laplacian_comp_sub = 6
+124-147: flatKernel, of_pos, of_nonpos, eq, nonneg, pos, contDiff_gaussianKernel_translate, laplacianLinearMap_flatKernel, flatHeatKernelCore, _kernel, _volume, _dist, _dim, _C_up, _c_up, _C_lo, _c_lo, _laplacian, _normalization, _semigroup, _heatEquation, _gaussianUpperBound, _gaussianLowerBound, flat_exists_heatKernelData_iff = 24
+148-160: tendsto_rpow..., tendsto_exp_neg_div, tendsto_prefactor..., tendstoUniformlyOn..., integrable_exp..., prefactor_mul_eight, setIntegral_compl_ball..., tendsto_setIntegral_compl_ball..., tendsto_setIntegral_ball..., flatKernel_tendsto_integral, flatKernel_tendsto_integral_of_hasCompactSupport, flatHeatKernelCore_weakInitialCondition, flatHeatKernelCore_weakInitialCondition_apply = 13
+161-167: volume_euclideanSpace_fin_zero, integrable_euclideanSpace_fin_zero, flatHeatKernelCore_fullInitialCondition_zero, flatHeatKernelData_zero, flatHeatKernelData_zero_kernel, flatHeatKernelData_zero_volume, flatHeatKernelData_zero_toCore = 7
+Total 61.
+
+But the audit printed "all 59 declarations". Why? Possibly duplicate names in the list (deduplicated by `collectAxioms`? No, it iterates). Hmm, the run_cmd loop iterates over the list; length is 61 unless... wait maybe the log line wrapped? The message said "all 59 declarations". Let me re-check the D11_axiom_audit.out head/tail: tail says 59. Possibly 2 entries appear twice in the list (e.g., `HeatKernelCore.exists_toCore_eq_iff` etc.)? No, duplicates would make length larger, not smaller.
+
+Wait: maybe the `#print axioms` list has 61 lines but the programmatic list has 59 entries. Let me count exactly with a script. Also the card says 61. There's an inconsistency to resolve: the card's claim of "61/61" while the programmatic check says 59. The card says "61 audited declarations ... (programmatic Lean.collectAxioms re-check: PASS)" — the PASS message says 59. This is a minor honesty issue: I should fix the card to say the audit covers 59 programmatic + 61 `#print axioms` lines? Let's compute exactly.
+
+Let me count the list entries programmatically. Also check whether the 61 `#print axioms` lines are all distinct.
+
+Actually the difference might be because the two `#print axioms` for `HeatKernelCore.toHeatKernelData_toCore`... no.
+
+Let me count with grep/python.
+dsh: reasoning:
+Both are 61 entries, all distinct, same set. Yet the run_cmd printed 59. That's odd. Unless the log D11_axiom_audit.out is from an older version of AxiomAudit.lean (before 2 entries were added). The file was modified at 20:44, and the log at 20:45. Hmm.
+
+Wait, maybe the run_cmd loop's `bridgeAuditedDeclarations.length` is evaluated as `List.length` = 61. The printed "59" — let me re-read the tail: "D11AxiomCheck: PASS — all 59 declarations". Hmm.
+
+Could there be an issue where the `run_cmd` was run by Lean with a cached olean from an earlier compile (when the list had 59 entries)? `lake env lean AxiomAudit.lean` re-elaborates the file from scratch (no caching of the file itself unless olean exists and is used...). When you run `lean X.lean`, Lean loads imports' oleans but elaborates X fresh. It doesn't reuse X's own olean. So the list should be current at that time.
+
+Actually, maybe the log D11_axiom_audit.out was produced by an earlier version of the file containing 59 entries, and then the worker added two entries and recompiled the *olean* via `lake build` (which would print... no, the "D11AxiomCheck" message appears when compiling AxiomAudit.lean with `lake build` too, and the log would capture it). The worker's log at 20:45 vs file mtime 20:44 — the log should reflect the 20:44 version if it ran after.
+
+Let me just run the audit now and see what it prints. That's part of the gate check anyway (AxiomAudit.lean is in the file list). Let me check if the background gate has finished; then run the audit explicitly (or check logs/repair_gate/...AxiomAudit...out).
+
+Actually the parallel gate writes stdout of each file to logs/repair_gate/<tag>.out. Once done, I can grep the AxiomAudit output.
+
+Let me check job status.
+dsh: reasoning:
+170 files fail with exit 1, and none of the D11 bridge files are in the bad list! The failures are all over the base release (D7, D8, D9, D10). Why? Because the root-level `.lake/build/lib/lean` only contains oleans for modules that were built... wait, the sibling passed all 289 files. Hmm. What's different?
+
+Ah — the failures are probably "unknown module" or "olean not found" for the *imported* modules, because the root package's LEAN_PATH includes `.lake/build/lib/lean` (via symlink) and `.lake/packages/*/.lake/build/lib/lean`. The failing files import modules like `Poincare.D7.Canonical.Basic` which... maybe those oleans exist but are stale? Or maybe the error is different: perhaps `lake env` from root doesn't add `release/.lake/build/lib/lean` but `.lake/build/lib/lean` resolved through symlink — should be fine.
+
+Let's look at the stderr of one failing file. My script wrote stdout/stderr to logs/repair_gate/<tag>.{out,err}. Let's inspect one.
+dsh: reasoning:
+The olean `release/.lake/build/lib/lean/Poincare/D7/Compactness/Basic.olean` does not exist. So the build dir is incomplete — the release package had only been partially built (D6 modules + D10 + D11). The sibling D11-maximum-principle-tensor worktree had a full build (1.3G including all modules). Our worktree's `.lake/build` must be missing many module oleans.
+
+Wait, earlier `ls release/.lake/build/lib/lean/Poincare/` — let me check what's there. And compare with the sibling's build directory. The sibling's release/.lake/build is 1.3G with everything built at/after its repair (it ran `lake build` for the whole lib). Our worktree's build may only contain the modules needed for D11 (D10 + D7 HeatKernel deps) plus D6.
+
+So to make all 291 files compile, I need to build all the oleans for the modules that files import. That means running `lake build` on the release package (all libs) from the release dir. That could take a long time (the full D7/D8/D9 release is large — sibling's build took maybe ~30+ min?). But wait — could I instead point our worktree at the sibling's already-built oleans? The shared prebuild is at `poincare-lab/.lake/packages` (mathlib only). The project oleans are per-worktree.
+
+Alternatively: many failing files are in the base release that the D11 task shouldn't need to fix... but the gate scans ALL .lean files in the worktree, so they all must compile. Hmm, but hold on: how did the original D11 worker's gate script (D11_gate.txt) only check the 7 D11 files? Because the worker's own tooling only checked authored files. The dispatcher's gate checks all. The sibling got past it by doing a full `lake build` of the release package, producing oleans for everything (and since oleans exist, `lake env lean <file>` loads them fast).
+
+Key question: do the failing files fail merely because *imported* oleans are missing, not because their own source is broken? The error above says the olean of an imported module is missing. So yes: building the package will fix all of them (assuming sources compile — they did in sibling).
+
+Do I need to modify the base sources? No — the sibling's identical base passed. I just need to build the package to produce the oleans.
+
+How long? Let's check what's in our build dir and in the sibling's, and estimate. The sibling worktree apparently ran `lake build` (maybe with `-j`?). 192 cores available. Building the full PoincareRelease package (289 modules, many heavy D7 files with mathlib imports) could take a while but mostly parallel: maybe 10-30 min with high parallelism.
+
+Important: `lake build` writes to `release/.lake`, which is shared via the symlink with root `.lake`. Fine.
+
+But careful: we should not *modify* base sources. Building only creates oleans. That's allowed ("build artefacts under release/.lake/ are the only other writes" per the card).
+
+Plan:
+1. Run `lake build` for the whole release package from `release/` (or root; root has no lean_lib so `lake build` at root builds nothing; must run in release/). Use `lake build Poincare` etc. The lakefile defines libs: Poincare, Probe, Ledger, Audit, ReleaseCheck, ReleaseAudit, D6AuditReport; defaultTargets includes them all. So `cd release && lake build` builds everything.
+
+Actually, to save time, we only need the oleans of modules that are *imported* by the 291 .lean files, i.e. all modules in the `Poincare.+` glob plus Probe/Ledger/Audit drivers and the top-level files. That's basically everything anyway. `lake build` with default targets builds all libs.
+
+Hmm, but there's a subtlety: will `lake build` recompile modules whose oleans are absent — yes. Will it also try to rebuild all of mathlib? Mathlib is a package dependency, prebuilt in the shared packages dir; `lake build` by default builds only the current package's targets, not dependencies (lake builds deps only if needed? `lake build` in a package builds that package's default targets; dependencies are built as required — but the oleans are already there so no work).
+
+Let me verify the mathlib package path works: `release/.lake/packages -> poincare-lab/.lake/packages`. Check `poincare-lab/.lake/packages/mathlib/.lake/build/lib/lean/Mathlib.olean` exists.
+
+2. After the build completes, re-run the full parallel gate; all should pass.
+
+3. Then update the result card: add a §5 note about root workspace config + full-tree gate (291 files, all exit 0), correct the 59 vs 61 discrepancy (run the audit to see the actual message), and mention reproduction.
+
+Wait — about the "59 declarations" discrepancy: the current AxiomAudit.lean has 61 entries in both the #print list and the programmatic list. When I run it now, it should print 61. The log out file was perhaps from an earlier iteration. I'll rerun and record the actual output; then update the card to match (61). Good.
+
+Also note: the parallel gate ran AxiomAudit.lean — was it among the bad list? AxiomAudit imports D11.HeatKernelBridge.All which imports D7.HeatKernel.Basic etc. Those oleans exist (the D11 oleans were built at 20:47). Since the D11 files aren't in the bad list, AxiomAudit, All, Basic, etc. all passed! Great: 7 D11 files + D6 drivers passed. Actually let me confirm: the bad list has 170 files, none under D11/HeatKernelBridge. And the total was 291; 121 passed. Which ones passed? Probably the D10 HeatKernelEuclidean files, D6 files, etc.
+
+So the remaining work: build the missing oleans for the rest of the release package, then re-gate.
+
+Let me first check the state of the build dir and start the build in the background. Use `lake build` with high parallelism (default uses all cores?). Lake uses `-j` default = number of cores? In Lean 4, `lake build` defaults to the number of cores. Let's just run it. But memory: some files may use a lot; 192 parallel heavy jobs could OOM (2015 GB total, mathlib file compile can use ~2-7 GB). The sibling's build presumably succeeded. Let me limit to `-j 48` to be safe? Actually total RAM 2 TB; 48 × 5 GB = 240 GB, fine. Even 96 fine. Let's use -j 64.
+
+Let me check the sibling's build dir size and our build dir size, and confirm what's missing.
+
+Also — maybe there's a faster route: copy the sibling's `.lake/build` oleans? But the sibling's release sources are identical to ours for everything except the D11 dir, so its oleans for the shared modules are valid for our sources (olean compatibility depends on import closure; the D7/D8/D9/D10 modules' oleans are the same). Copying 1.3GB could be faster than rebuilding. But the olean paths are recorded relative? Oleans store module names and import hashes; the file paths don't matter. The `.olean.hash` and `.trace` reference source file paths? The `.trace` files contain the source path and dependency hashes — used by lake to decide staleness. If we copy the sibling's `build/lib/lean` tree into ours, the trace files would reference the sibling's paths (`/worktrees/D11-maximum-principle-tensor/release/...`), which could make lake consider them stale or mismatch. But `lake env lean <file>` doesn't check traces — it just loads oleans. And the gate only runs `lake env lean`, not `lake build`. So copying oleans would work for the gate.
+
+Hmm, but is copying build artifacts between worktrees honest/appropriate? The oleans are compiled from byte-identical sources (I diffed the release trees excluding D11 — identical). The result would be mathematically identical. However, the `.olean` files embed a "module hash" including... hmm, actually Lean oleans store the *source file's* content hash? There's a mechanism where the olean's imports are validated against the current environment: Lean loads imports, and there's `-o` etc. Lean checks that the olean's recorded module GID? I recall Lean 4 stores a hash of the module's own source? No, it stores the "githash"/toolchain in the `.olean` header for compatibility only.
+
+The safer, more defensible approach: build from source in our own worktree with `lake build`. It's clean-room and verifiable. Given 192 cores and prebuilt mathlib, the build might take 10-40 minutes. Let's do that — the task is a long-run worker; time budget is presumably generous. But I also want to avoid needless hours.
+
+Let me estimate: sibling's full build (1.3G oleans) — how long did it take? Its D11 logs might show. The sibling's root lakefile was created 20:35, gate promoted at 21:26 → build+gate within ~50 min. The build itself probably 20-40 min with parallelism (its logs dir may show `D11_...` timings). Let me peek at the sibling's logs for build logs and timing.
+
+Let me check the sibling logs directory.
+dsh: reasoning:
+The sibling's build logs show `lake build` took 1m18s for "01_lake_build.log" (probably with incremental state) and the d11_build_release.log shows a full build of 9166 jobs completing. The full build in our worktree: 81 oleans now vs 286 in sibling. We need to build the remaining ~205 project modules. Given 192 cores and warm mathlib, likely 5-20 min.
+
+Note: sibling's `d11_build_release.log` was written at 20:36 (its worker did a full build). The file is 1.2MB.
+
+Let's start `lake build` in our release dir with `-j` high. First, check the lake version and whether `lake build` will try to download/update deps (no network maybe). The manifest is pinned and packages present via symlink; should be fine.
+
+Actually, a concern: running `lake build` in `release/` will build the default targets: Poincare, Probe, Ledger, Audit, ReleaseCheck, ReleaseAudit, D6AuditReport. That's everything. Good.
+
+Let me run it in the background with logs.
+
+One more consideration: `lake build` may try to rebuild oleans of the *D11* modules if it considers them outdated. That's fine.
+
+Also `lake build` writes `.olean.hash`/`.trace`; no source modification.
+
+Let me launch: `cd release && lake build -j 64 2>&1 | tee logs/repair_build.log`? Writing into release/logs doesn't exist; use worktree logs dir. Note `tee` returns exit of tee; use pipefail.
+
+I'll run in background and monitor.
+dsh: reasoning:
+While the build runs, let me plan the card update and check a couple of other things.
+
+1. Check the `.olean` for modules that exist: which 81 modules are built? Probably D6 base + D10 HeatKernel deps. Once the build finishes we'll re-gate.
+
+2. Verify the forbidden scan tool exists and run it fresh to record evidence: `input/d5-tools/scan_forbidden.py`. Let me check.
+
+3. The card needs updating:
+   - §5 compile gate: state the new root workspace scaffolding and full-tree gate (291 files, 291/291 exit 0, checked from worktree root as the dispatcher does).
+   - The claim "The worktree root contains no Lean package ... so the gate is run with cwd=release" must be corrected: the repair added root-level `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, `.lake -> release/.lake` so the root-run gate works; gate now runs exactly as the dispatcher does.
+   - Correct declaration count if needed (audit says 59 vs card 61 — need to verify by rerunning audit; likely 61 after rebuild).
+   - Regenerate the JSON card to match? Let me read the JSON card to see its structure; it may mirror the md. The instructions say "Update the result card" — probably both md and json ideally. Let me inspect the JSON.
+
+4. The card also references D11_gate.txt, logs/D11_lean_*.out etc. I'll add the new evidence: logs/repair_gate.json, logs/repair_lake_build.log.
+
+Let me look at the JSON card and the scan tool while building.
+dsh: reasoning:
+The python failed silently? The output only shows the ls part. Probably python3 succeeded but output was empty? No — "d=json.load(...)" then walk prints. The output got cut? The result shows only the ls output. Maybe the json file is not a dict at top-level or the command's stdout was merged oddly. Actually the output shows `[stderr] landlock-run` only; the python output is missing entirely. Maybe the JSON card doesn't exist? It does (we saw it). Let me rerun separately.
+
+Also the build job finished already with exit 0! Very fast (incremental? no — it says completed). Let me check the log tail and then re-run the gate.
+dsh: reasoning:
+`lake build -j 64` failed: "unknown short option '-j'". In Lean 4's lake, the parallel option might be `-j` only for older versions or it's `--jobs`? Actually `lake build -j` should work in recent versions... The error says unknown short option '-j'. Let me check `lake build --help`. Maybe the correct flag is `-j` with no space? `lake build -j64`? Or `lake --jobs`? Let me check.
+
+Let me just run `lake build` without -j. The default parallelism is probably number of cores anyway.
+dsh: reasoning:
+No -j option shown for this lake (old style). Parallelism is automatic. Let's just run `lake build` in the background.
+dsh: reasoning:
+While that runs, let me examine the compile_gate section of the JSON card, the forbidden scan tool, and prepare the updates.
+
+Let me print the JSON card's compile_gate, totals, forbidden_scan, integrity sections fully.
+dsh: reasoning:
+Now I understand the JSON structure. I'll update:
+
+- `compile_gate`: command now the dispatcher-style `lake env lean <abs path>` with cwd = worktree root, over all 291 `.lean` files, all exit 0; log `logs/repair_gate.json`; keep the 7-file table as an additional entry maybe. Also `note` corrected.
+- `totals`: add `worktree_lean_files_gated: 291` maybe; keep declarations_audited: 61 (verify with rerun).
+- `integrity.files_written_outside_d11`: list the root scaffolding files (lakefile.toml, lake-manifest.json, lean-toolchain, .lake symlink) as build scaffolding added by the repair, plus logs. Currently `[]`. The card md says "nothing outside release/Poincare/D11/HeatKernelBridge/ was modified (build artefacts ... aside)". Now we've added root config files. Honesty requires documenting them.
+- `generated_utc`: update to new time.
+- Maybe add a `repair` section documenting attempt 1.
+
+The md card: update §5 and §0 bottom line, §7 deviations? and the final TASK_DONE path.
+
+Also note the card's §4 says 61 declarations; the audit log said 59. Let me rerun AxiomAudit after the build and see. If it prints 61, all good.
+
+Also the md line 12 says "All **61** audited declarations"; line 241-249 mention 61. If the audit prints 61 now, fine.
+
+Let me also check the forbidden scan tool: run it on the D11 dir to reproduce 0 matches. And maybe run it over the whole tree? The gate is only compile; the instruction says no forbidden tokens in authored files. I'll run the D11 scan.
+
+Let me check the scan tool usage.
+dsh: reasoning:
+Good. Now let's check build progress.
+dsh: reasoning:
+The whole package built in 67 seconds. Let me check the olean count and then re-run the full gate.
+
+Note: the build maybe did not build all modules because of default targets? Let's check olean count: expect ~286.
+dsh: reasoning:
+288 oleans (sibling had 286; ours has 288 because of the 7 D11 files vs 7 in sibling and possibly different module sets). Build completed successfully with 9173 jobs. Now re-run the full gate (291 files) in parallel.
+dsh: reasoning:
+All 291 `.lean` files now compile with `lake env lean` from the worktree root (exit 0), in 80 seconds.
+
+Now: verify the official dispatcher gate would produce the same. The dispatcher runs sequentially from wt root with the same env; it should pass. Note: the dispatcher's `compile_gate` would take ~291 × avg time sequentially; that's its business.
+
+Next steps:
+1. Run the D11 AxiomAudit to confirm the declaration count and PASS message (my parallel gate already ran it, so logs/repair_gate/release__Poincare__D11__HeatKernelBridge__AxiomAudit.lean.out should have the output). Let me check it.
+2. Run the forbidden scan fresh and record.
+3. Update the md and json result cards: compile gate section, integrity (root scaffolding files), generated time, totals.
+4. Maybe add the gating evidence logs to logs/ (already: repair_gate.json, repair_lake_build.log, repair_gate/*).
+5. Also verify no D11 file was changed by me (only added root config + logs). Confirm the 7 D11 files are unchanged from the original worker's version: I haven't edited them.
+
+Also should I verify that the root `lakefile.toml` doesn't break anything else, e.g. `lake build` from root would build nothing (no lean_lib) — fine.
+
+Let me check the audit output now.
+dsh: reasoning:
+Excellent:
+- AxiomAudit now prints "all 61 declarations" PASS (matching the card's 61).
+- Forbidden scan: 7 files, 0/0, exit 0.
+- All 7 D11 files exit 0 in the full-tree gate.
+
+Now update the result cards.
+
+First, let me also verify the source hash of the D11 files hasn't changed (we didn't touch them) and that I only added root config + logs. Let me compute a diff against... well, I know I only created lakefile.toml, lake-manifest.json, lean-toolchain, .lake symlink, and logs. Let me record hashes of root config files for the card.
+
+Also, for full honesty, let me double check whether `input/` contains any .lean file that the gate compiled; there were 291 files total. Let me list the file paths outside release/ in the gate results to know what they are.
+dsh: reasoning:
+291 = 290 under release/ + 1 negcontrol/NegativeControl.lean.
+
+Now update the result card. Let me plan the edits to the md:
+
+1. Header: add a repair note / update `Generated (UTC)`? The card is the task's deliverable; I'll update the generated timestamp to the repair time (now ~2026-09-10T13:35Z or whatever local time 21:35+08:00). Let me compute current UTC.
+
+2. §0 bottom line table:
+   - `compile gate (lake env lean, cwd release/)` → change to full-tree gate result: 291/291 exit 0 from worktree root.
+   - `bridging scaffold modified` → mention root workspace scaffolding files added.
+   - The line "7 Lean files, 1224 lines, 61 audited declarations" can stay but note 291 files gated overall.
+
+3. The blockquote at lines 11-15: update to mention the full-tree gate (291/291) and the root workspace config.
+
+4. §5 Compile gate: rewrite. Include:
+   - why attempt 1 failed (dispatcher gate runs from worktree root; no toolchain/lakefile there → every file exit ≠ 0),
+   - the repair: added root `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, `.lake -> release/.lake` (build scaffolding only, no math content; mirrors the promoted D11-maximum-principle-tensor worktree),
+   - `cd release && lake build` → Build completed successfully (9173 jobs), gives oleans for every module,
+   - full gate: 291/291 `.lean` files (290 under release/ including the 7 D11 files, + negcontrol/NegativeControl.lean) exit 0 from the worktree root, `logs/repair_gate.json`, per-file logs `logs/repair_gate/`,
+   - keep the 7-file table (from original run under cwd=release) as historical evidence? Keep it but note it was the authored-file check. Actually cleaner: keep the table with new gate evidence.
+   - remove the old "Working directory note" paragraph, replacing with the repair note.
+
+5. §4: fine (61/61 confirmed). Maybe update the raw transcript reference: logs/D11_axiom_audit.out (old) and logs/repair_gate/release__Poincare__D11__HeatKernelBridge__AxiomAudit.lean.out (new). Add note.
+
+6. §7 Honest scope: add a bullet about the scaffold. Also integrity line in §1 (lines 53-59) says "no file outside release/Poincare/D11/HeatKernelBridge/ was written (build artefacts under release/.lake/ and the logs/D11_* evidence files aside)" — must now mention the root scaffolding files. Update.
+
+7. Reproduction §6: make the gate command the dispatcher-equivalent one from the worktree root; add root config note.
+
+8. Final line stays TASK_DONE with card path.
+
+Also update the JSON card correspondingly:
+- `generated_utc`: new
+- `compile_gate`: new content: command `lake env lean <file>` (cwd = worktree root), `worktree_lean_files_gated: 291`, `all_zero: true`, `log: logs/repair_gate.json`, `authored_file_exit_codes` keep the 7, `note` updated, maybe `previous_attempt_failure` info.
+- `totals`: add `worktree_lean_files_gated: 291`, keep declarations_audited 61.
+- `forbidden_scan`: point to the refreshed scan maybe keep original + add repaired scan. Keep `report: logs/D11_forbidden_scan.json` (unchanged result 0/0) — I re-ran it; result identical. Maybe set `report` to both.
+- `integrity.files_written_outside_d11`: list the 4 scaffold entries + note logs.
+- Add `repair` section with attempt 1 cause/fix/evidence.
+- `headline`/`verdict` unchanged (math content unchanged).
+
+Let me get current UTC time.
+
+Then make edits with the edit tool. The md is 343 lines; I'll do targeted edits.
+
+Let me first get the time.
+dsh: reasoning:
+Now edit the markdown card. Let me make the edits carefully.
+
+Edit 1: header generated timestamp (line 6).
+Edit 2: blockquote lines 11-15.
+Edit 3: bottom-line table rows (lines 24, 31).
+Edit 4: integrity paragraph lines 53-59.
+Edit 5: §4 audit evidence lines 241-255 (add new transcript).
+Edit 6: §5 whole section (lines 259-287).
+Edit 7: §6 reproduction (lines 291-313).
+Edit 8: §7 add bullet.
+
+Let me write these edits.
+
+First, line 6: `- **Generated (UTC):** `2026-09-10T12:46:08Z`` → update to `2026-09-10T13:33:03Z (repair attempt 1)`.
+
+Blockquote lines 11-15:
+```
+> Every declaration is kernel-checked with no `sorry`, no `axiom`, no `unsafe`, no `native_decide`
+> and no `proof_wanted`. All **61** audited declarations depend only on
+> `[propext, Classical.choice, Quot.sound]` (programmatic `Lean.collectAxioms` re-check: PASS).
+> The seven authored files compile with `lake env lean` (exit 0), and the comment/string-aware
+> forbidden-token scan reports 0 hard and 0 soft matches.
+```
+→ add: "The full worktree compile gate — all 291 `.lean` files, run exactly as the dispatcher runs it (`lake env lean <file>` from the worktree root) — passes 291/291 exit 0 after the repair added the root workspace scaffold."
+
+Bottom-line table:
+- row `| compile gate (`lake env lean`, cwd `release/`) | **7/7 exit 0** (no warnings on stderr) |` → `| compile gate (`lake env lean <file>` from the worktree root, dispatcher form) | **291/291 exit 0** (7 authored + 283 packaged + `negcontrol/NegativeControl.lean`); evidence `logs/repair_gate.json` |`
+  Wait 290 release + 1 negcontrol = 291. "283 packaged" — let me count release files excluding D11: 290-7=283. Yes: 283 base + 7 D11 = 290 release, +1 negcontrol.
+- row `| bridging scaffold modified | **nothing outside `release/Poincare/D11/HeatKernelBridge/`** (build artefacts under `release/.lake/` are the only other writes) |` → `| bridging scaffold modified | **no mathematical source outside `release/Poincare/D11/HeatKernelBridge/`**; repair attempt 1 added the worktree-root workspace scaffold `lakefile.toml`, `lake-manifest.json`, `lean-toolchain`, `.lake -> release/.lake` (no Lean content), plus build artefacts under `release/.lake/` and `logs/` |`
+
+Integrity paragraph lines 53-59:
+"The D11 namespace is ... Nothing under `release/Poincare/D7/` or `release/D10/` was modified; ... and no file outside `release/Poincare/D11/HeatKernelBridge/` was written (build artefacts under `release/.lake/` and the `logs/D11_*` evidence files aside)."
+→ update the last clause.
+
+§1 file table stays (lines 42-51).
+
+§4 lines 241-255: update the programmatic text and transcript references.
+
+§5 rewrite entirely.
+
+§6 reproduction update.
+
+§7 add bullet.
+
+Let me do the edits one by one.
+dsh: reasoning:
+Now the integrity paragraph in §1 (lines around 53-59 originally, shifted). Let me view the current text to edit precisely.
+dsh: reasoning:
+Now §4 audit evidence. Let me view lines ~245-270.
+dsh: reasoning:
+Now update §6 reproduction. Let me view lines after 350.
+dsh: reasoning:
+Now update the JSON card. I'll write a Python script that loads the JSON, updates fields, and dumps it. But the policy says use edit/write tools for files. The JSON is large (14KB); using python to modify it programmatically is much safer for structure. The fs policy requires reading before write; I've read it. I'll use a Python script with json module — that's a shell command modifying a file. Alternatively, I can use edit tool for the specific JSON blocks. The JSON is machine-readable; targeted edits are feasible:
+
+- `"generated_utc": "2026-09-10T12:46:08Z"` → new
+- compile_gate block replace
+- forbidden_scan: add repair report
+- integrity: files_written_outside_d11
+- totals: add worktree gate count
+- add repair section maybe; and environment note.
+
+Let me view the exact JSON text of those parts to edit literally. Since the file is 14KB with indent 1, let me grep the relevant regions.
+dsh: reasoning:
+Now let me edit the JSON with targeted edits:
+
+1. line 4: generated_utc.
+2. totals: add worktree gate fields.
+3. compile_gate replace.
+4. forbidden_scan: add repair_report.
+5. integrity: files_written_outside_d11 list.
+6. Add "repair" section before "result_card" or after integrity? Add after compile_gate? I'll add a `"repair_attempt_1"` field after `"forbidden_scan"`.
+
+Let me perform edits.
+dsh: reasoning:
+Now validate the JSON parses and check the md/JSON consistency. Also verify the md's final line is TASK_DONE with the card path.
+
+Also: the md mentions in §0 "new files (only under ...) | 7 Lean files..." — fine.
+
+One more consideration: the card's front-matter blockquote says "The full gate — all 291 `.lean` files ... now passes 291/291 exit 0". Good.
+
+Let me validate JSON and read the surrounding sections to check formatting.
+dsh: reasoning:
+The cards look good. Now a few remaining checks:
+
+1. Confirm the 7 authored D11 Lean files are unchanged from the attempt-1 versions. I haven't edited them. To be sure, I can compare their sha256 with the JSON card's `files` hashes (recorded at 12:46Z). Let me verify the hashes in the JSON match current files. That's a strong check.
+
+2. Confirm the root config doesn't interfere with anything else; e.g. does the presence of `.lake` symlink + root lakefile change the `input/` files' compilation? Already gated 291/291.
+
+3. Verify no forbidden tokens across the whole worktree authored files. The instruction: no sorry/axiom/etc. in authored files — the D11 dir is clean per scan. But the *gate* also compiles base files; I didn't author them. Fine.
+
+4. Re-run the official gate one more time? My parallel run is equivalent (same command, same cwd, same env). The dispatcher will rerun it anyway when it sees DONE. One thing to double check: the dispatcher's `compile_gate` uses `subprocess.run(["lake","env","lean",f], cwd=wt, env=ENV, ...)` where `ENV` is built from `os.environ` of the dispatcher process plus ELAN_HOME/PATH. That matches my script (I built ENV the same way). `lake` is found via PATH from elan. Good.
+
+5. There's one more thing: the dispatcher's gate list `os.walk(wt)` excludes `.lake`, `.git`, `.dshpkg`. My run also excluded those. But my run happened while `release/.lake` existed — and the walk excludes any dir named `.lake` at any depth, so build oleans are excluded. Good. 291 files = same count as theirs.
+
+Wait — one subtlety: the dispatcher gate compiles files *sequentially*; if some file's compilation has a side effect of writing to the source dir or causing interference... no.
+
+6. Potential issue: running `lake env lean` from the worktree root when the file is inside `release/` may cause lean to consider the module path resolved... we verified pass.
+
+7. Check that the `input/` dir and `tools/` scripts don't get broken by the new root lakefile: e.g. `tools/d6_verify.py` might run `lake build` from the release dir. Not needed.
+
+8. Verify hashes of the seven files against the JSON card's `files` sha256.
+
+Let me do that now.
+dsh: reasoning:
+All 7 authored files are byte-identical to the attempt-1 versions. The repair is purely environmental.
+
+Now let me do a final sanity check on the md card for consistency issues:
+- §0 says "283 packaged" — 290 release files − 7 D11 = 283. Plus negcontrol = 291. ✓.
+- The card's §5 mentions "291/291 exit 0 in 79.9 s". ✓
+- §1 table "1224 lines". Let me verify total lines of the 7 files: 221+109+271+310+92+34+187 = 1224. ✓
+- §4: 61 declarations ✓ (audit prints 61).
+- The card's JSON `files` section has hashes for 7 files ✓ (validated).
+
+One more possible issue: the dispatcher's `card_status` looks at the tail 400 chars of the md for "TASK_DONE", and the md ends with TASK_DONE — ✓.
+
+The dispatcher's `is_running` check uses heartbeat (my session updated it). When this worker session ends with TASK_DONE, the DONE file... Actually the harness/worker_loop handles the DONE file. Let me check worker_loop.sh to see what it expects (e.g., writes DONE on exit). Let me read it — maybe I need to do nothing (the wrapper handles it).
+dsh: reasoning:
+The worker loop touches DONE when the dsh process exits 0. The dispatcher then runs the gate and promotes. So my job: finish the turn with TASK_DONE in the final message and the card updated.
+
+Before finishing, let me double-check everything one final time:
+
+1. All 291 .lean files compile — verified (logs/repair_gate.json).
+2. No forbidden tokens in authored files — verified (repair_forbidden_scan.json).
+3. Axiom audit passes with 61 declarations — verified.
+4. Result card updated (md + json) and ends with TASK_DONE.
+5. Root config files created in the worktree — these are the repair.
+
+Potential concern: will the dispatcher's `compile_gate` re-run and pass? It runs `lake env lean <file>` sequentially for 291 files. Each file load takes ~0.3-4s; total maybe 5-15 min sequentially. It should pass. But there's one risk: the dispatcher ENV may differ from my shell ENV. It uses `dict(os.environ)` of the *dispatch_loop process*, which was launched by the supervisor from some environment. It adds ELAN_HOME and PATH. That's what I replicated. The `lake` binary from ELAN_HOME/bin — same. The cwd = wt root. Same. Good.
+
+Another risk: `lake env lean <file>` may attempt to write a `.olean`/`.ilean` for the *source file* being compiled? No: plain `lean` invocation doesn't write oleans unless `-o` is given. It only reads. So no side effects.
+
+But wait — one important detail: when the dispatcher's gate ran at attempt 1, it created `gate.json` and then deleted it. It will regenerate it. Fine.
+
+One more check: the dispatcher's files walk is on the *worktree* and excludes '.dshpkg' too. My run excluded '.dshpkg' as well. There is a `.dshpkg` dir in the parent (`/data3/.../lean_poincare/.dshpkg`), not in the worktree. Fine.
+
+Let me also make sure the worktree has no leftover `gate.json`-like or stray artifacts that could confuse. The `logs/repair_gate/` contains 582 files (291 out + 291 err). That's fine, evidence.
+
+Also, should I verify that the root lakefile doesn't break the tools scripts that the *verifier* might run (e.g., `tools/d6_verify.py` runs `lake build` in release)? Let me check d6_verify.py quickly for cwd assumptions — if a verifier re-runs it from the worktree root, it might now behave differently (previously it would fail from root; it probably cds to release). Let me check.
+dsh: reasoning:
+The verify tool uses absolute `cwd=RELEASE` etc., so the root config doesn't affect it. Good.
+
+Now let me do one final complete check: re-run the official-style gate one more time with the exact dispatcher code path (sequential! no — sequential would take a while; my parallel run is equivalent). Actually, to be extra safe about the dispatcher's exact behavior, let me run the *actual* `compile_gate` function from dispatch_loop.py? I can import it and run — but it writes gate.json to the state dir (outside workspace, may be denied by sandbox). Let me instead replicate the exact loop sequentially for a small sample plus the full parallel run already done. A sequential full run would take ~291 × 1-4s ≈ 10-20 min. I have time budget? The long-run worker is fine to run longer. But is it needed? The command, env, cwd, and file list are identical; only ordering/concurrency differs. Lean compilations are independent processes. Parallel vs sequential cannot change exit codes.
+
+However, one real difference: in the parallel run I used `subprocess.run` with `capture_output=True, text=True`, same as dispatcher except timeout. Same.
+
+I'm confident. But let me at least run the dispatcher's exact `compile_gate` logic in a sandbox-safe way by copying the function to /tmp with STATE pointing to a temp dir inside the workspace. Actually simpler: my run_gate.py already mirrors it. Fine.
+
+Final checks:
+- The worktree root now contains `.lake` symlink. The dispatcher's `os.walk` excludes dirs named `.lake`, so it won't traverse the symlink (os.walk doesn't follow symlinks by default anyway).
+- Does `lake env lean` from root need `lake-manifest.json`? Yes and it's there.
+- `lean-toolchain` at root is used by elan/lake. ✓
+
+One more: the `input/` directory contains a `.lake`? No.
+
+Let me now also confirm the final card md renders the new §5 without broken markdown (view it).
+dsh: reasoning:
+The card looks consistent.
+
+One thing to double check in §5: "the pre-scaffolded tree had no ... .lake" — actually the release/ dir had .lake, but the root didn't. I wrote "no root-level lean-toolchain / lakefile.toml / .lake" — correct.
+
+Now, one last item: should I also confirm the claim in the card that `.lake` symlink is "same layout as the promoted D11-maximum-principle-tensor worktree" — yes, verified earlier.
+
+Let me also update the `manifest`? The task says "Update the result card" — done.
+
+Final: also ensure there is no stale `gate.json` in state dir (there isn't) — the dispatcher will regenerate.
+
+Let me clean up the transient /tmp script? Not necessary. Jobs: bash-1..4 all completed.
+
+Let me run one final verification pass as a sanity check: confirm `lake env lean` works from the worktree root for a couple of files *without* my custom ENV in the command (using the same env vars as dispatcher) — already done via run_gate.py. Fine.
+
+Also, I should double check the negative control file compiled (it's in the 291 with exit 0) ✓.
+
+Let me verify the final JSON card still matches the md's claims:
+- md §0 says "291/291" and json says 291/291 ✓
+- md says audit 61 ✓ json declarations_audited 61 ✓
+
+Everything done. Final answer: last line TASK_DONE with card path.
+
+Wait — before finishing, let me consider whether the dispatcher's gate might *also* be affected by the root `lakefile.toml` name collision: the package name "PoincareRelease" is shared with `release/`. The root lakefile has no lean_lib; `lake env` uses the root workspace, whose manifest points to `.lake/packages` (symlink to release/.lake/packages → shared). LEAN_PATH will include `.lake/build/lib/lean` (via symlink → release build) and the packages' build dirs. That's what makes it work. ✓
+
+One risk: the shared packages symlink `release/.lake/packages -> /data3/.../poincare-lab/.lake/packages`, and the root `.lake` symlink points to `release/.lake`. So `.lake/packages` resolves relative to `release/.lake`? No: `.lake` is a symlink at the root; resolving `root/.lake/packages` follows the symlink to `release/.lake/packages`, which is itself a symlink to the shared packages. ✓ (verified working).
+
+Also check: is the shared packages dir writable/stable? It's a prebuilt mathlib. Fine.
+
+I'm also wondering whether the grader might run the gate with a *fresh* environment where `~/.elan` default matters. The dispatcher sets ELAN_HOME, so fine.
+
+Final answer with TASK_DONE. Let me give a concise summary. Also mention the card path.
+
+Per the prompt: "Update the result card and end it with TASK_DONE." and "Last line: TASK_DONE or TASK_BLOCKED with the card path." I'll end my final message with the TASK_DONE line.
+Repair complete. Summary of what happened and what I did:
+
+## Diagnosis
+The dispatcher's compile gate (`dispatch_loop.py: compile_gate`) runs `lake env lean <file>` for **every** `.lean` file with `cwd` = **worktree root**. The pre-scaffolded D11 worktree had its Lake package only in `release/` — no root `lean-toolchain`, `lakefile.toml`, or `.lake` — so from the root `lake` could not resolve a toolchain and **all 291 files exited non-zero** before any type-checking. The 7 authored D11 files themselves were fine (all exit 0 in the worker's `release/`-cwd log, `logs/D11_gate.txt`).
+
+## Fix (build environment only — no math touched)
+1. Added worktree-root workspace scaffold, matching the promoted `D11-maximum-principle-tensor` layout: `lakefile.toml` (package `PoincareRelease`, mathlib req, no Lean sources), `lake-manifest.json`, `lean-toolchain` (`leanprover/lean4:v4.34.0-rc2`), and `.lake -> release/.lake`.
+2. Built the release package: `cd release && lake build` → `Build completed successfully (9173 jobs)`, exit 0 — this produced the ~200 missing imported oleans (the earlier failures were all `object file ... does not exist` for imports).
+3. Re-ran the gate exactly as the dispatcher does, from the worktree root, over **all 291 `.lean` files** (290 release + `negcontrol/NegativeControl.lean`): **291/291 exit 0** in 79.9 s (`logs/repair_gate.json`, per-file logs in `logs/repair_gate/`).
+
+## Honesty checks
+- The 7 authored D11 sources are byte-identical to their attempt-1 versions (sha256 re-verified against the card).
+- `AxiomAudit.lean` re-run: `D11AxiomCheck: PASS — all 61 declarations ... [propext, Classical.choice, Quot.sound]`, exit 0.
+- Forbidden-token scan re-run: 7 files, 0 hard / 0 soft, exit 0.
+- No `sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted` anywhere in the authored code or added files.
+
+## Card updated
+`longrun/results/D11-heat-kernel-manifold-bridge.md` and `.json`: corrected the compile-gate section (dispatcher form, 291/291, root scaffold rationale), integrity section (lists the added build-config files with hashes), reproduction commands, and a `repair_attempt_1` record (cause/fix/evidence). Math verdict and scope unchanged; both cards still end with `TASK_DONE`.
+
+TASK_DONE — /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D11-heat-kernel-manifold-bridge/longrun/results/D11-heat-kernel-manifold-bridge.md

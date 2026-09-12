@@ -1,0 +1,588 @@
+dsh: reasoning:
+Let me start by reading the gate.json and gate-build.log files to understand the current state.
+dsh: reasoning:
+The gate says "ok": false, with a failing file "ProbeScratch.lean" (exit 1) with unknown identifiers. The build itself completed successfully (8956 jobs) — but the gate marks ProbeScratch.lean with exit 1. Wait, let me re-read.
+
+The gate.json shows `"ok": false` and files list includes `"ProbeScratch.lean", "exit": 1` with diagnostics about unknown identifiers. But the build log tail says "Build completed successfully (8956 jobs)." Hmm, actually the log seems to be the D6 audit log (D6AUDIT entries). Interesting — the gate-build.log tail shows the D6 audit, which was a prior successful run? The gate.json is the current gate check: "ok": false because ProbeScratch.lean fails to compile.
+
+Wait — actually let me look more carefully. The gate.json has `"build_exit": 0` but `"ok": false` and one file `ProbeScratch.lean` with exit 1. So the gate check ran each file individually and ProbeScratch.lean failed. My task: "Fix authored source or report an infrastructure blocker." ProbeScratch.lean is a probe file (not my authored D12 file). The instructions say "Do not edit tests or negative controls." ProbeScratch.lean — is it a test/negative control? It's in release/ root. It's a probe that contains a bunch of `#check` commands with unknown identifiers. It was authored earlier (maybe by D6 or by this D12 worker in a previous invocation).
+
+Let me check the state: checkpoint.json exists at the worktree root, and longrun/results presumably has D12-volume-ibp files. Let me read the current checkpoint and results to understand what's been done so far.
+
+Also note: gate.json "ok": false. But wait — maybe the gate failure is due to ProbeScratch.lean which is at release root, and it was part of an earlier task's probing. Since the gate compiles the release package files, and ProbeScratch.lean fails, I need to fix it — either delete it or fix its contents. But "Do not edit tests or negative controls" — is ProbeScratch.lean a negative control? Let me check the negcontrol directory and the manifest. The negcontrol dir is at worktree root, not in release/. ProbeScratch.lean is in release/ root. Let me look at it.
+
+Actually wait — the gate.json lists files checked, and ProbeScratch.lean with exit 1. The gate's "ok" is false because of that. But hold on, maybe the gate requires all files to compile? The other files all exit 0. So my repair attempt #1: fix ProbeScratch.lean so it compiles (or the gate check will fail). Let me first read everything: checkpoint.json, results files, ProbeScratch.lean, and my D12 authored files.
+dsh: reasoning:
+The gate failure is caused by `ProbeScratch.lean` at the release/ root — a probe file that was authored during the API discovery phase, containing `#check` commands with several unknown identifiers. It fails to compile (exit 1), so the gate marks the package as `ok: false`.
+
+The instructions say "Do not edit tests or negative controls." Is ProbeScratch.lean a test or negative control? Let me check the manifest directory and negcontrol to see. The gate's file list includes ProbeScratch.lean as a file to compile. The negcontrol directory at worktree root — let me check what's in it and whether ProbeScratch.lean is registered as a negative control.
+
+The task says "Fix authored source or report an infrastructure blocker." ProbeScratch.lean is authored source in the release package that fails to compile. The repair is to fix it (replace the unknown #check identifiers with ones that exist at the pinned revision, or remove it). Since it's a scratch probe, the cleanest fix that doesn't weaken anything: rewrite the #checks to only reference identifiers that exist. The diagnostic shows the exact failing lines: 19, 20, 23, 42, 43, 56, 73, 77, 86, 91.
+
+Actually wait — the gate-build.log tail shows a D6 audit log with "Build completed successfully (8956 jobs)" — that's the D6 audit report output, from a prior build (probably the previous gate run logged a different build). Actually the log says gate-build.log contains D6AUDIT lines and "Build completed successfully (8956 jobs)". That's confusing. The gate.json says build_exit: 0 but ok: false, with ProbeScratch.lean exit 1. Perhaps the gate runs each file individually with `lake env lean` and reports per-file exit codes; the overall build (lake build) succeeded but the per-file check of ProbeScratch.lean failed. Wait, but if ProbeScratch.lean fails `lake env lean`, then `lake build` would also fail... unless ProbeScratch.lean is not part of the lake build targets (Lean builds only imported modules; if no one imports ProbeScratch.lean, `lake build` doesn't compile it). That's likely: ProbeScratch.lean is an orphan module, so `lake build` succeeds (8956 jobs) but the gate compiles every .lean file in the release package individually, and ProbeScratch.lean fails.
+
+Fix: make ProbeScratch.lean compile. The diagnostics list unknown identifiers. The simplest fix is to replace those #check lines with correct identifiers, or delete the file. Since the task says "Fix authored source", and ProbeScratch.lean is scratch probing code, I can rewrite it to contain only valid #checks. It's not in the D12 authored directory (release/Poincare/D12/VolumeIBP/), but it's authored source in the release package. It's not a test (tests/negcontrol are outside release? let me check). Let me look at the manifest directory and negcontrol.
+
+Also, I need to be careful: "Do not edit tests or negative controls." ProbeScratch.lean is neither; it's a probe scratch file. I'll fix it minimally: keep the valid #check lines, fix the invalid ones (replace with correct spellings found in the pinned mathlib, or comment them out). Actually, since it's a scratch file documenting an API probe, the honest fix is to correct the identifiers to what exists. From the diagnostic output I can see several correct forms:
+
+- `MeasureTheory.integral_withDensity_eq_integral_smul` — unknown. The checkpoint says the correct one is `integral_withDensity_eq_integral_smul0` at root namespace (MeasureTheory/Integral/Bochner/ContinuousLinearMap.lean:250). And `setIntegral_withDensity_eq_setIntegral_smul0` similarly at root.
+- `support` — unknown; correct is `Function.support`.
+- `isCompact_tsupport` — unknown. Correct may be `HasCompactSupport.isCompact_tsupport` or just remove. Let me check in mathlib at pinned revision.
+- `Matrix.det_toLin'` — unknown constant. The checkpoint mentions `LinearMap.det_toLin'`. So replace with `#check LinearMap.det_toLin'`.
+- `Matrix.nonsing_inv` — unknown; checkpoint says inv_def: `Matrix.inv_def`. Replace with `#check Matrix.inv_def`.
+- `Matrix.det_inv` — unknown. Maybe it doesn't exist; replace with something else or remove.
+- `Matrix.dotProduct` — unknown; use `Matrix.dotProduct`? No. There's `dotProduct` in scope as `Matrix.dotProduct`? Unknown. The actual name might be `Matrix.dotProduct` doesn't exist; it's `dotProduct` under... In mathlib, `Matrix.dotProduct` exists as `Matrix.dotProduct`. Hmm, unknown identifier says it doesn't. Maybe it's `Matrix.dotProduct` is under `Matrix.dotProduct` in recent versions? Let me check the pinned mathlib.
+- `Measurable.matrix_det` — unknown. The checkpoint lists `Continuous.matrix_det` only.
+
+The cleanest approach: replace the probe file's failing checks with verified-valid ones from the pinned mathlib source. Let me check the pinned mathlib to get exact names. The mathlib source is available in the lake packages directory: release/.lake/packages/mathlib (or similar). Let me look.
+
+Actually — an even simpler and more honest fix: rewrite ProbeScratch.lean to only contain checks that compile, and note in a comment that failing names were corrected. Let me first check where mathlib source is.
+
+Also I should verify the D12 module files themselves compile from release/, and rebuild. The gate files list shows all Poincare/D12/VolumeIBP/*.lean exit 0. Good. But my repair attempt is 1; the gate says ok: false solely due to ProbeScratch.lean. Fix it, rebuild, and re-run the per-file gate-style check for every file in the gate's list to make sure all exit 0.
+
+Let me look at the manifest directory and negcontrol to understand what's off-limits.
+dsh: reasoning:
+The negative control is only `negcontrol/NegativeControl.lean` (outside release/). ProbeScratch.lean is not a negative control or test; it's authored scratch source in the release package that the gate compiles. I should fix it.
+
+Plan:
+1. Fix `release/ProbeScratch.lean` so every `#check` compiles at the pinned mathlib revision. It's a historical API probe; I'll correct the failing names (the checkpoint already recorded the corrected names: `integral_withDensity_eq_integral_smul0`, `setIntegral_withDensity_eq_setIntegral_smul0` at root namespace, `Function.support`, `LinearMap.det_toLin'`, `Matrix.inv_def`, etc.). For names I'm unsure about (`isCompact_tsupport`, `Matrix.det_inv`, `Matrix.dotProduct`, `Measurable.matrix_det`), check the pinned mathlib source.
+
+2. Rebuild from release/ and re-run the per-file gate-style compile check for all files listed in gate.json to confirm all exit 0.
+
+3. Update checkpoint.json and results card with the repair evidence.
+
+Let me check the exact names in the pinned mathlib.
+dsh: reasoning:
+Findings:
+- `integral_withDensity_eq_integral_smul` and `...₀` are at ROOT namespace (not `MeasureTheory.`). Same for `setIntegral_withDensity_eq_setIntegral_smul₀`.
+- `isCompact_tsupport` — not found in Topology/Algebra/Support.lean. Let me check what it's called. Maybe `tsupport.isCompact` or `HasCompactSupport.isCompact_tsupport`? Let me grep.
+- `LinearMap.det_toLin'` exists at root namespace `det_toLin'` (in LinearAlgebra/Determinant.lean), so `#check det_toLin'` or `#check LinearMap.det_toLin'`.
+- `Matrix.det_inv` — no hits; doesn't exist. Replace with something that exists, e.g. `Matrix.det_units_smul`? Or `det_inv_of_invertible`? Let me grep for det_inv in LinearAlgebra/Matrix.
+- `Matrix.dotProduct` — `dotProductBilin` exists but not `Matrix.dotProduct`. There might be `dotProduct` in Pi/Basic. Actually `#check dotProduct` might work with implicit params. Let me check.
+- `Measurable.matrix_det` — doesn't exist; use `Continuous.matrix_det` + `Continuous.measurable` (already checked at line 92).
+
+Let me grep for the remaining ones.
+dsh: reasoning:
+- `isCompact_tsupport`: not found. The actual lemma might be named differently. Let me check `Topology/Algebra/Support.lean` for the HasCompactSupport namespace lemmas. Grep for "HasCompactSupport" in that file.
+- `Matrix.det_inv`: doesn't exist; there's `det_invOf` (different statement). Better: `Matrix.det_mul` or `Matrix.det_nonsing_inv`? Let me check what's around NonsingularInverse. There's likely `det_nonsing_inv`. Let me grep "nonsing_inv" det-related. Actually simpler: replace the `#check Matrix.det_inv` line with `#check Matrix.det_invOf` or `#check Matrix.det_mul`. Line 73 `Matrix.nonsing_inv` also doesn't exist (the def is `nonsing_inv` as a function? Let me check: `Matrix.mul_nonsing_inv` exists, so the def is probably `Matrix.nonsing_inv` — wait the error said unknown constant `Matrix.nonsing_inv`. Hmm but `Matrix.mul_nonsing_inv` exists. Let me grep for "def nonsing_inv".
+- `Matrix.dotProduct` exists as `dotProduct` defined in namespace Matrix? Line: `Data/Matrix/Mul.lean:72:def dotProduct [Mul α] [AddCommMonoid α] (v w : m → α)`. It's inside `namespace Matrix`, so `Matrix.dotProduct` should exist... but the error says unknown identifier `Matrix.dotProduct`. Wait, maybe it's protected or under a different namespace. Let me check the context of Data/Matrix/Mul.lean:72 — could be inside namespace `Matrix`. Let me check.
+
+Actually the error for line 86 was `Matrix.dotProduct` unknown. Hmm. Let me grep the namespace context.
+dsh: reasoning:
+OK. Findings:
+- `Matrix.dotProduct` — wait, Data/Matrix/Mul.lean has `open Matrix` inside the file? Actually the file begins with `open Matrix` and the `dotProduct` is defined inside `namespace Matrix`? Let me check whether there's a `namespace Matrix` in the file. The error in the diagnostic says `Matrix.dotProduct` unknown. Hmm, maybe dotProduct is defined in namespace `Matrix` but the file is Data/Matrix/Mul.lean — def at root of namespace Matrix. The diagnostic said "Unknown constant `Matrix.dotProduct`" — perhaps in this mathlib revision dotProduct is defined inside a different namespace or the file isn't imported. ProbeScratch imports Mathlib, so it should be in scope. Wait, actually maybe the issue: `open scoped` is fine, but maybe dotProduct is in namespace `Matrix` — hmm, the error is real: Unknown constant `Matrix.dotProduct`. Let me just test quickly with lake env lean. I'll write a quick probe and run it. But actually the diagnostic from the gate run already tells me exactly which lines fail: 19, 20, 23, 42, 43, 56, 73, 77, 86, 91. Line 86 is `#check Matrix.dotProduct`. Hmm.
+
+Let me look at whether there is `namespace Matrix` in that file.
+dsh: reasoning:
+So `dotProduct` is defined at root (before the first `namespace Matrix` at line 286 in Mul.lean). It's a root-level `dotProduct`, hence `Matrix.dotProduct` doesn't exist — the correct name is just `dotProduct`. OK.
+
+So the fixes for ProbeScratch.lean:
+- Line 19: `#check MeasureTheory.integral_withDensity_eq_integral_smul` → root namespace: `integral_withDensity_eq_integral_smul` (in namespace... wait, it's declared in `MeasureTheory/Integral/Bochner/ContinuousLinearMap.lean` — which namespace? The error said "Unknown identifier `MeasureTheory.integral_withDensity_eq_integral_smul`" and the checkpoint said these are at root namespace. Let me confirm quickly by grepping the namespace around line 250 of that file. The file name suggests namespace MeasureTheory, but checkpoint says "integral_withDensity_eq_integral_smul0 (root, ...)". I'll verify.
+- Line 20: `MeasureTheory.integral_withDensity_eq_integral_smul₀` → root.
+- Line 23: `MeasureTheory.setIntegral_withDensity_eq_setIntegral_smul₀` → root.
+- Line 42: `support` → `Function.support`.
+- Line 43: `isCompact_tsupport` — doesn't exist. Maybe the correct lemma: `HasCompactSupport.isCompact_tsupport`? Let me grep for "isCompact" in Support.lean.
+- Line 56: `Matrix.det_toLin'` → `LinearMap.det_toLin'` or root `det_toLin'` (declared in LinearAlgebra/Determinant.lean; namespace? It's `theorem det_toLin'` — check namespace. The file starts with namespace... let me check. Probably `LinearMap` namespace? `#check LinearMap.det_toLin'` per checkpoint.)
+- Line 73: `Matrix.nonsing_inv` — the doc says "giving a matrix `A⁻¹` (`nonsing_inv`)" — the def name might be `nonsing_inv` inside namespace Matrix? grep didn't find "def nonsing_inv" because the def may be defined via `local notation`... Let me grep for "nonsing_inv" definition. Line 25 mentions it. Let me search for "def nonsing_inv".
+- Line 77: `Matrix.det_inv` — no such theorem; replace with something valid like `Matrix.det_invOf` (exists per NonsingularInverse.lean:109) — but its statement `(⅟A).det = ⅟A.det` is trivial junk. Better: replace with `#check Matrix.det_mul` or drop. I'll use `Matrix.det_nonsing_inv`? Let me grep.
+- Line 86: `Matrix.dotProduct` → `dotProduct`.
+- Line 91: `Measurable.matrix_det` — no such lemma; replace with `#check Continuous.matrix_det` (already checked line 70) — maybe replace with `Measurable.det`? Or `Continuous.measurable` composed. I'll replace with something valid: `#check Measurable.det`? Let me check if Measurable.det exists (continuous maps are measurable: `Continuous.measurable` + `Continuous.matrix_det` gives measurability of matrix det). Simpler: replace line 91 with a comment noting derivation via Continuous.matrix_det + Continuous.measurable.
+
+Let me confirm namespaces quickly.
+dsh: reasoning:
+- `integral_withDensity_eq_integral_smul` is in `MeasureTheory` namespace? The file opens `open MeasureTheory` but the declarations at line 250 — let me check the namespace of the file. Actually, grep the top of the file for `namespace`.
+dsh: reasoning:
+So:
+- `integral_withDensity_eq_integral_smul` is inside `namespace ContinuousLinearMap` (namespace opens at line 31 and there's no closing `namespace MeasureTheory` shown; so the full name is `MeasureTheory.ContinuousLinearMap.integral_withDensity_eq_integral_smul`? Wait, files usually open `namespace MeasureTheory` first. Let me check lines 24-35. Actually grep showed `^namespace` matches at 31 (`ContinuousLinearMap`), 112, 121. So the file's declarations are in root-level namespaces `ContinuousLinearMap` etc., but `open MeasureTheory` at top. Hmm, but other files open `namespace MeasureTheory` via... Let me look at lines 26-35 of the file directly.
+dsh: reasoning:
+Confirmed: the file is at root namespace with `namespace ContinuousLinearMap`. So the lemmas are `ContinuousLinearMap.integral_withDensity_eq_integral_smul` etc. at root (since file has no `namespace MeasureTheory`). Wait — `open MeasureTheory` makes `MeasureTheory.ContinuousLinearMap` visible? No — `open` brings namespace prefixes into scope. `ContinuousLinearMap` at root is separate from `MeasureTheory.ContinuousLinearMap`... Actually mathlib's MeasureTheory files use `public section` and are often inside `namespace MeasureTheory`. This file has NO `namespace MeasureTheory`, so declarations are `ContinuousLinearMap.integral_withDensity_eq_integral_smul` at root level. And the checkpoint says "root namespace" — consistent: `#check ContinuousLinearMap.integral_withDensity_eq_integral_smul`? Hmm, but `ContinuousLinearMap` is also a structure at root. The namespace ContinuousLinearMap at root exists.
+
+So the fix for lines 19, 20, 23:
+- `#check ContinuousLinearMap.integral_withDensity_eq_integral_smul`
+- `#check ContinuousLinearMap.integral_withDensity_eq_integral_smul₀`
+- `#check ContinuousLinearMap.setIntegral_withDensity_eq_setIntegral_smul₀`
+
+Hmm wait, but with `open MeasureTheory` in ProbeScratch.lean and `open scoped BigOperators`, is `ContinuousLinearMap` in scope as namespace? Yes, root namespace. Good.
+
+- `det_toLin'` is inside `namespace Matrix` (line 74-80 of LinearAlgebra/Determinant.lean show `namespace Matrix` right after `equivOfPiLEquivPi`, and `det_toLin'` was found at line 228). So `Matrix.det_toLin'`... but the diagnostic said Unknown constant `Matrix.det_toLin'`! Contradiction? Wait — the diagnostic line 56 error is `Unknown constant Matrix.det_toLin'`. But the theorem exists at LinearAlgebra/Determinant.lean:228 inside namespace Matrix. Hmm. Maybe there are two `namespace Matrix` occurrences and `det_toLin'` is in the LinearMap namespace? Line 110 opens `namespace LinearMap`. Line 228: `theorem det_toLin' (f : Matrix ι ι R) : LinearMap.det (Matrix.toLin' f) = Matrix.det f`. If line 228 is after line 110's `namespace LinearMap` and no closing, then it's `LinearMap.det_toLin'`. That matches the checkpoint note "LinearMap.det_toLin' (matrix det bridge)". Good: `#check LinearMap.det_toLin'`.
+
+- `nonsing_inv`: the def. grep "def nonsing_inv" found nothing; it might be defined via `local notation "nonsing_inv"`? Hmm, docstring says "giving a matrix A⁻¹ (nonsing_inv)". Wait the grep for "def nonsing_inv" found nothing because maybe it's `def nonsing_inv :` split across lines. Let me not fuss: replace `#check Matrix.nonsing_inv` with `#check Matrix.det_nonsing_inv` (exists at line 412) — but that changes meaning; the file is a historical API probe. I think it's fine to correct names: `#check Matrix.det_nonsing_inv`, and line 77 `Matrix.det_inv` → also covered. Alternatively check `Matrix.inv_def` (exists: `A⁻¹ = A.det⁻¹ʳ • A.adjugate`? The checkpoint says Matrix.inv_def at NonsingularInverse.lean:172). Good replacements:
+  - line 73: `#check Matrix.inv_def`
+  - line 77: `#check Matrix.det_nonsing_inv` — statement requires [Invertible]? Let me check line 412 context: `theorem det_nonsing_inv : A⁻¹.det = A.det⁻¹ʳ := by` — need to check its hypotheses ([Invertible A.det]?). Whatever — #check just needs the name to resolve; typeclass variables are implicit. But wait — for #check to work, does it need instances? No, #check works with unresolved metavariables fine.
+
+- line 86: `Matrix.dotProduct` → `dotProduct`? But wait — with `open Matrix`... no. dotProduct is at root? Data/Matrix/Mul.lean line 72 is before namespace Matrix (line 286), so `dotProduct` is a root definition? Hmm, but actually there could be an earlier `namespace Matrix` in the file... grep showed namespaces at 286, 611, 1257 in Mul.lean, so line 72 is at root. But there's also `open Matrix` inside... wait, line ~59 shows `open Matrix`. Root `dotProduct`? Hmm, wait — actually, in mathlib, `dotProduct` is `Matrix.dotProduct`? The error message says `Matrix.dotProduct` unknown. Let me just quickly test with lake env lean in a scratch file. Actually simpler: I'll write the corrected ProbeScratch and compile it directly — iterative fix is fastest.
+
+- line 91: `Measurable.matrix_det` — doesn't exist. Replace with `#check Continuous.matrix_det` again? Already at line 70. Use instead `#check Continuous.measurable` (already line 92). Maybe replace line 91 with a comment: measurability of det follows via Continuous.matrix_det + Continuous.measurable. Or `#check Measurable.det`? Unknown. I'll replace with `-- Measurable.matrix_det does not exist; measurability of det follows from Continuous.matrix_det + Continuous.measurable` and keep it as comment. But a probe file is supposed to be checks... a comment is fine.
+
+- line 42: `support` → `Function.support`. 
+- line 43: `isCompact_tsupport` — doesn't exist in this revision. What exists: `tsupport` and `hasCompactSupport_iff_eventuallyEq`. Maybe `tsupport_eq_interᵢ` etc. Let me grep Support.lean for "tsupport" theorem names to find a valid replacement.
+
+Let me check quickly.
+dsh: reasoning:
+Good. `Matrix.det_nonsing_inv` exists. For the tsupport section, valid checks: `tsupport_mul_subset_left`, `HasCompactSupport.mul_left` etc. I'll replace `#check isCompact_tsupport` with a comment + `#check HasCompactSupport.mul_left` maybe. Actually to keep the probe informative, replace lines 39-44 with:
+
+```
+#check HasCompactSupport
+#check tsupport
+#check Function.support
+-- `isCompact_tsupport` does not exist at this revision; compactness follows from `HasCompactSupport` definitionally
+#check hasCompactSupport_iff_eventuallyEq
+#check HasCompactSupport.mul_left
+```
+
+And line 91: `#check Measurable.matrix_det` → comment + `#check Continuous.matrix_det` is already at line 70; use `#check Continuous.measurable` is at line 92. I'll make it a comment: measurability derived from Continuous.matrix_det + Continuous.measurable.
+
+Line 86: `Matrix.dotProduct` → `dotProduct`.
+
+Line 56: `Matrix.det_toLin'` → `LinearMap.det_toLin'`.
+
+Line 73: `Matrix.nonsing_inv` → `Matrix.inv_def`.
+Line 77: `Matrix.det_inv` → `Matrix.det_nonsing_inv`.
+
+Lines 19-20, 23: → `ContinuousLinearMap.integral_withDensity_eq_integral_smul`, `ContinuousLinearMap.integral_withDensity_eq_integral_smul₀`, `ContinuousLinearMap.setIntegral_withDensity_eq_setIntegral_smul₀`.
+
+Wait — need to double-check: are these actually in namespace `ContinuousLinearMap` at root, or under `MeasureTheory.ContinuousLinearMap`? The file has no `namespace MeasureTheory`, so it's root `ContinuousLinearMap`. But hold on: mathlib files under MeasureTheory/ typically are opened under `MeasureTheory` namespace via... no. This file starts `module`, `public import`, then `public section`, `open MeasureTheory`, then `namespace ContinuousLinearMap`. So declarations are `ContinuousLinearMap.foo` (root). But the checkpoint said "integral_withDensity_eq_integral_smul0 (root, ...)". So `#check ContinuousLinearMap.integral_withDensity_eq_integral_smul` — hmm, would the root namespace `ContinuousLinearMap` conflict with the structure `ContinuousLinearMap`? No — namespace and structure share the same name space in Lean 4; the namespace is root `ContinuousLinearMap`. OK.
+
+Let me now rewrite the failing lines of ProbeScratch.lean with edit calls, then compile the file, then run the full per-file gate check. Note the file also needs `#check Matrix.det_pos` at line 13 — that compiled fine per the diagnostic (errors were only the ones listed).
+
+The diagnostic errors: lines 19, 20, 23, 42, 43, 56, 73, 77, 86, 91. Line 43 was `isCompact_tsupport` and 42 `support`. Line 91 `Measurable.matrix_det`. Line 86 `Matrix.dotProduct`. Line 73 `Matrix.nonsing_inv`. Line 77 `Matrix.det_inv`. Line 56 `Matrix.det_toLin'`. Lines 19,20,23 the MeasureTheory.* ones.
+
+Let me make the edits.
+dsh: reasoning:
+Now compile ProbeScratch.lean from release/ with `lake env lean`. Note that running `lake env lean` on a file that imports Mathlib from the lake package will work. Let me run it.
+dsh: reasoning:
+ProbeScratch.lean now compiles (exit 0). Now I need to reproduce the gate's per-file check to confirm all files in the gate list exit 0. The gate compiled each file with `lake env lean` presumably. Rather than run all 90 files individually (could take a while, but they were all built already so .olean files exist — but `lake env lean` ignores cached oleans? No, it uses them if present and up-to-date).
+
+The most faithful reproduction: run the same per-file compile loop the gate uses. But I don't know the exact command the gate uses. Given `cwd` is release/ and files list includes relative paths, it likely ran `lake env lean <file>`. Let me run that for each file in the gate's file list and collect exits. Since all oleans exist and are fresh, each should be fast.
+
+Also rebuild via lake build to confirm overall build. Let me first run the full per-file loop in background (it may take a few minutes), and meanwhile update the result card and checkpoint.
+
+Actually, let me be careful about resource usage. `lake env lean` on files that import Mathlib root (like ProbeScratch.lean just did in 5s) is fast when oleans are cached. Files like Audit/CounterexampleAudit.lean import the project. Fine.
+
+Let me write a loop script:
+
+for f in <list from gate.json>; do lake env lean "$f" > /tmp/out 2>&1; echo "$? $f"; done
+
+I'll generate the list from gate.json with python. Then run in background.
+
+Also run `lake build` to verify the package builds. And re-run the D12 audit (the project has Poincare/D12/VolumeIBP/Audit.lean and an audit.py somewhere?). Let me check where audit.py is — checkpoint mentions audit.py; look under longrun or tools. Let me find it.
+dsh: reasoning:
+74 files to check. Let me write the per-file loop and run it in the background. Also find the audit.py — maybe under longrun/d12-logs or tools. Let me look at d12-logs and the VolumeIBP/Audit.lean to see how the audit is invoked.
+dsh: reasoning:
+The audit script (audit.py) was "task-local, run in release/" — let me find it. Maybe it's in release/Poincare/D12/VolumeIBP/ or release root? Let me search.
+dsh: reasoning:
+The audit.py is at release/Poincare/D12/VolumeIBP/audit.py. Now let me:
+
+1. Run the per-file gate compile loop (74 files) in background.
+2. Run `lake build` in background too (or after). Actually `lake build` might conflict with concurrent `lake env lean` runs — they use the same .lake cache; concurrent access could cause issues. Lean caches are fine for concurrent reads. But `lake build` might trigger rebuilds of files being compiled. Since all oleans should be current, lake build should be a no-op-ish. Let me run the per-file loop first in background, then run lake build after.
+
+Actually to be safe and fast, run per-file loop in background, and when it completes, run lake build. Or just run lake build first (it verifies everything compiles), then per-file. lake build compiles only modules reachable from the lakefile's lean_lib globs. The gate's per-file check is what matters. Let me run both sequentially in one background job: first lake build (full), then per-file loop. That's the faithful full check. Estimate: lake build is incremental — everything is built, so should be quick (a few minutes for 8956 jobs no-op checks? That was a fresh build before; incremental should be fast).
+
+Let me kick off in background.
+dsh: reasoning:
+While that runs, let me review the current result card and json to update them with the repair evidence once the build finishes. Let me read the current D12-volume-ibp.md and .json.
+dsh: reasoning:
+The background job finished already (fast — everything was cached). Let me read its output.
+dsh: reasoning:
+`lake build` exits 0 (8956 jobs) and all 74 gate-listed files compile individually with exit 0 — the gate failure is fixed.
+
+Now re-run the D12 axiom audit to make sure it still passes, and regenerate fresh source hashes (ProbeScratch.lean isn't in the D12 source_hashes list, but I should add it since I modified it — actually source_hashes covers the D12 layer; I could add ProbeScratch.lean since I touched it, or note it separately. Let me add it to the card as part of compile_evidence).
+
+Also run audit.py to confirm AUDIT PASS.
+
+Then update:
+- checkpoint.json: record repair attempt 1, gate fix, updated timestamps/elapsed.
+- result card md/json: add repair note, update compile_evidence with the per-file gate check and lake build, update elapsed time, keep TASK_DONE (the intended milestone claims still hold; the gate failure was a leftover probe file, now fixed).
+
+Wait — one consideration about the card status. The original card ended with TASK_DONE (request for acceptance). The gate failed because of the orphan probe file, which I have now fixed. My instructions: "Only your own longrun/results/D12-volume-ibp.md can complete this task." The task requirements also say the card must end with TASK_DONE if all intended milestone claims hold, or TASK_BLOCKED if only partial results. All milestone claims hold and now the gate should pass. So TASK_DONE is right.
+
+Let me also double check that the audit.py still passes and run it.
+dsh: reasoning:
+All D12 layer sources are unchanged (same hashes as before); only ProbeScratch.lean changed (new hash 5719a0e4...).
+
+Now update the result card (md + json) and checkpoint.json with the repair evidence:
+
+1. Add a "Gate repair (attempt 1)" section to the md card: the gate failed solely on the orphan probe file release/ProbeScratch.lean (10 `#check` lines referencing identifiers absent at the pinned mathlib revision — a historical API-discovery scratch file, not part of the D12 layer and not a test/negative control). Fixed by correcting the identifiers (verified against pinned mathlib source) — no theorem or definition changed; D12 layer sources byte-identical (same sha256). Full rebuild + per-file compile check: all 74 gate files exit 0, lake build exit 0, audit still PASS.
+
+2. Update compile_evidence in json with new entries; add ProbeScratch.lean hash to source_hashes (mark as fixed probe); bump updated_at and elapsed_hours.
+
+Let me compute the elapsed time: checkpoint says invocation 2 elapsed 7.9 hours at 2026-09-10T20:16:22Z. Now it's ~2026-09-11T04:20 local (+08:00) = 2026-09-10T20:20Z. Hmm, the checkpoint updated_at says 20:16Z and gate checked_at 2026-09-11T04:17:44+0800 = 2026-09-10T20:17:44Z. So this repair invocation adds ~0.2h (repair attempt 1). Total elapsed ≈ 7.9 + small. I'll say elapsed_hours 8.0 (invocation 2 continued, repair attempt 1).
+
+Wait — the checkpoint says "invocation": 2 and "elapsed_hours": 7.9. The repair happened between invocation 2 and 3? The gate checked at 04:17:44 +0800. Current time now — let me get the current UTC time to compute elapsed accurately. Let me run `date -u`.
+dsh: reasoning:
+Current time: 2026-09-10T20:23Z. Checkpoint updated_at was 20:16Z. So this repair round is a few minutes of the same invocation-2 window; elapsed stays ≈ 7.9–8.0 hours. I'll record elapsed_hours: 8.0.
+
+Now update the result card md. I'll add a repair section near the top and update compile evidence, plus change "Updated (UTC)" to now. Keep TASK_DONE at the end.
+
+Also update checkpoint.json: add a "gate_repair" entry in log, update updated_at, and record the gate fix evidence.
+
+Then re-check gate.json's expectation — the gate will be re-run by the dispatcher; I can't modify gate.json (it's in the shared state dir outside my worktree — actually /data/home/guoshaoyang/workdir/lean_poincare/longrun/state/ is outside the worktree; policy is workspace-write limited to the worktree. I should not try to edit it anyway).
+
+One more check: the gate runs files relative to release/ cwd. Does the gate also compile the negcontrol? No — negcontrol is outside release/. Fine.
+
+Also verify no stray files in release/ that the gate would compile and fail — the gate's file list is fixed (74 files), and all pass. But a future gate run might enumerate all .lean files in release/. Let me enumerate ALL .lean files under release/ (excluding .lake) and compile any not in the 74-file list, to be safe. The gate list came from a build of the package; but to be thorough, let me check for any other orphan .lean files.
+dsh: reasoning:
+Disk full? "No space left on device" on stdout for sort — likely /tmp or /dev/shm is full. Let me check disk usage.
+dsh: reasoning:
+/tmp is full (100%). That's a sandbox/tmp-area issue, not my worktree. Let me use a temp dir inside the worktree instead (e.g., under scratch/) for my temporary files. Let me redo the orphan-file check using worktree-local temp files.
+dsh: reasoning:
+The comm output shows ALL 74 files — that means the gate_files.txt comparison failed (all files listed as "only in all_lean.txt"). The issue: /tmp/d12_gate_files.txt may have been lost or the sed/sort ordering differs. Wait, comm lists lines only in file1 — every file shows up, meaning gate_files.txt is empty or has different format. Possibly /tmp was cleared (it was full — earlier sort failed; maybe the file got truncated). Let me check /tmp/d12_gate_files.txt content.
+dsh: reasoning:
+/tmp/d12_gate_files.txt was wiped (0 lines) — /tmp is full and probably got cleaned. I regenerated it into the worktree. Now redo the comparison and the per-file compile loop using worktree-local files.
+dsh: reasoning:
+Both directions of the diff are empty: the set of .lean files under release/ (excluding .lake) is exactly the 74 gate files. Good — no other orphans.
+
+Now, since /tmp was full, the earlier per-file check output files went to /tmp — but the run succeeded (PERFILE_FAILS=0) before the wipe... wait, actually the per-file check succeeded and finished before the /tmp wipe? The job finished with exit 0 and PERFILE_FAILS=0 — that ran with /tmp usable enough. But to be safe, let me re-run the per-file compile loop once more with worktree-local log files, since /tmp instability could theoretically have masked failures (the loop only reported FAILs it saw; each compile's stderr went to /tmp/d12_one.log which succeeded at the time). It's cheap to re-run now that everything is cached (ProbeScratch took 5s; the other 73 have fresh oleans so they're fast). Actually `lake env lean` on a file whose imports are cached is quick (seconds). Total maybe 2-4 minutes. Let me re-run it in the background with worktree-local logs, and meanwhile update the checkpoint and result card.
+dsh: reasoning:
+Now update the result card md and json. I'll edit the md to add a repair note and refresh the updated timestamp and compile evidence. Let me make targeted edits.
+dsh: reasoning:
+Now let me wait for the background per-file check job (bash-2) to finish. It's running the 74-file loop again. Meanwhile, let me double-check the gate's own build log expectation: the gate also checks the D6 audit-ish things? No — gate.json's files list is the 74 files with per-file exits. All pass.
+
+Also worth double-checking: did the gate possibly fail because the build was run while ProbeScratch.lean was stale vs the checked source? No — the diagnostic clearly shows compile errors of unknown identifiers.
+
+One more sanity check: the gate list includes "ProbeScratch.lean" with exit 1 before; my fix makes it exit 0. The gate might also require `source_sha256` in gate.json to change? No, gate.json records the previous state; the dispatcher will re-run the gate and regenerate it.
+
+Let me also confirm there are no other pre-existing issues: run the D12 audit's forbidden-token scan? audit.py presumably does that. It passed.
+
+Also — the instruction says "Provide #print axioms plus a fail-closed programmatic axiom audit for every new declaration". The audit covers that (63 cones). Good.
+
+Let me check the bash-2 job status.
+dsh: reasoning:
+Interesting! Now ProbeScratch.lean fails with *different* errors: `continuous_det` (line 12) and `Matrix.det_pos` (line 13) unknown. But earlier (my direct run and the first per-file loop), ProbeScratch compiled fine!
+
+Wait — my direct run earlier succeeded (exit 0). The first background loop also reported PERFILE_FAILS=0. Now the second loop reports failure at lines 12-13 with unknown identifiers `continuous_det` and `Matrix.det_pos`.
+
+Why the difference? Hmm. `#check continuous_det` — earlier this resolved? In the earlier successful run, the output tail showed results from section 13 onward... Actually the earlier output I saw was only the tail (last 20 lines). The full earlier compile exited 0.
+
+What changed between the runs? The second loop uses `../scratch/gatefix/logs/one.log` — path relative to release/. `lake env lean "$f"` with cwd release/ — same as before.
+
+Wait, there's a subtlety: `lake env lean` behavior can depend on whether the olean cache is fresh. First run: ProbeScratch compiled from scratch? No — it used cached oleans of Mathlib. Hmm.
+
+Actually, maybe the issue: concurrent `lake env lean` processes share `release/.lake/build/lib` cache writes. When multiple `lake env lean` run in parallel... but my loop is sequential.
+
+Alternatively — the difference: In the first per-file loop, ProbeScratch was checked BEFORE... no, order is alphabetical-ish from gate list; ProbeScratch is near the end both times.
+
+Hold on. Actually the difference could be this: the second loop's stdin! `while IFS= read -r f; do ... done < ../scratch/gatefix/gate_files.txt`. Inside the loop, `lake env lean "$f"` reads stdin — Lake/Lean might consume stdin? If the file list is redirected to stdin of the loop, and lean reads stdin... In the first loop, `lake env lean "$f" > /tmp/d12_one.log 2>&1` — same pattern with stdin redirect from /tmp/d12_gate_files.txt. Hmm.
+
+But the error is real: "Unknown identifier `continuous_det`" at line 12 and "Unknown constant `Matrix.det_pos`" at line 13. These errors did NOT appear in the original gate diagnostic (the gate diagnostic for ProbeScratch listed errors at lines 19, 20, 23, 42, 43, 56, 73, 77, 86, 91 — NOT lines 12-13). So in the original gate run, lines 12-13 compiled fine (`Continuous.matrix_det` line 11, `continuous_det` line 12, `Matrix.det_pos` line 13...).
+
+Wait, actually the original gate diagnostic showed the #check output for `Matrix.det_pos`? Looking at the gate diagnostic: it printed results for lines 11+ including `Matrix.IsHermitian.det_eq_prod_eigenvalues` (line 16). The errors began at line 19. So lines 12-13 were OK at gate time.
+
+Now `continuous_det` and `Matrix.det_pos` are unknown. This suggests the current compile is resolving against a DIFFERENT mathlib revision — or, more likely, the .olean cache got corrupted/partially rebuilt... OR: `lake env lean` is now picking up a different `Mathlib` — e.g., because the `.lake` package directory state changed?
+
+Hmm wait. Another possibility: concurrent runs. bash-1's loop was still running when I started... no, bash-1 finished before I started bash-2.
+
+Hmm, but actually — maybe the difference is that in bash-2's loop, when `lake env lean` runs for a file, lake rebuilds upstream files whose oleans are stale, and stdin consumption interleaves? Let me just directly re-run `lake env lean ProbeScratch.lean` and see.
+
+Actually, wait. I wonder if the issue is stdin: `lake env lean "$f" > log 2>&1` — Lean reads stdin? No.
+
+Let me look: are these identifiers really present in pinned mathlib? `continuous_det` — does it exist? grep earlier: I checked `Continuous.matrix_det` exists. `continuous_det`? And `Matrix.det_pos`? Hmm, in the original gate run the diagnostic printed `Matrix.PosDef.det_pos` (line 14 check) but line 13 `Matrix.det_pos`... the diagnostic printout shows outputs of the successful checks — including possibly line 13's? The gate diagnostic printed for line 11-16. Let me check the mathlib source for `det_pos` and `continuous_det`.
+dsh: reasoning:
+- `Matrix.PosDef.det_pos` exists (Analysis/Matrix/PosDef.lean:85 — inside namespace PosDef presumably). So `Matrix.det_pos` unknown is correct! But the ORIGINAL ProbeScratch had `#check Matrix.det_pos` at line 13 and the original gate run did NOT report an error for it... wait, the original gate diagnostic printed:
+
+```
+Matrix.IsHermitian.det_eq_prod_eigenvalues ... 
+```
+and errors starting at line 19. Since the gate prints diagnostics as it goes, line 13's `Matrix.det_pos` would have errored... unless `Matrix.det_pos` DID exist at gate time. Hmm, but the gate's diagnostic only includes the first/last errors? The diagnostic field for ProbeScratch.lean shows a long text. It contains #check outputs and the error lines 19,20,23,42,43,56,73,77,86,91. If line 13 errored, the gate would have listed it too.
+
+And `continuous_det` — exists in Topology/Algebra/Group/Matrix.lean:60 as `protected lemma continuous_det` inside some namespace (maybe `Continuous`?). Line 12 `#check continuous_det` originally passed per gate diagnostic (no error listed).
+
+So why does it fail NOW? The errors at 12-13 now say unknown — meaning the current run is NOT resolving the same imports. Key insight: `lake env lean` ran with a *different effective environment* — perhaps because `lake build` in bash-1 REBUILT the olean cache with a different state, or because of the concurrent audit run? No...
+
+Wait, actually. Look at the first line of my earlier successful run output tail: it showed section 12/13 outputs (`dotProduct`, `Matrix.mulVec`, ... `Continuous.matrix_det`...). That was the successful compile where lines 12-13 resolved fine. That run was `lake env lean ProbeScratch.lean` right after my edits. It exited 0.
+
+Then bash-1 ran `lake build` (8956 jobs — "Build completed successfully") followed by the per-file loop, all OK (PERFILE_FAILS=0).
+
+Then I ran audit.py (which ran `lake env lean Poincare/D12/VolumeIBP/Audit.lean` presumably) — passed.
+
+Then bash-2's loop: ProbeScratch FAILS at lines 12-13.
+
+Something must have changed the environment between bash-1 and bash-2. What could make `continuous_det` and `Matrix.det_pos` unknown?
+
+Hypothesis: The `lake env lean` in the loop passes args, and Lean uses the OLEAN cache. If a file (e.g., Mathlib's Topology.Algebra.Group.Matrix) is compiled with `set_option` differences... no.
+
+Alternative hypothesis: stdin consumption! In bash-2, the loop reads files from stdin-redirected file; `lake env lean` may consume stdin for the "-" file? If lean reads commands from stdin when stdin is not a tty? Actually Lean 4's `lean` REPL: when invoked as `lean` with a file argument, it processes the file. When no args, it runs REPL reading stdin. With `"$f"` arg, stdin is ignored.
+
+Hmm wait — maybe the actual cause: the second loop ran while `lake env lean` needed to REBUILD some import of ProbeScratch because... Let me think about "Unknown identifier `continuous_det`" — for #check to fail, the elaborator couldn't resolve. If the olean for `Mathlib.Topology.Algebra.Group.Matrix` was missing/stale, imports would fail entirely with "failed to import" — not unknown identifier. Unknown identifier means the file was imported but the constant wasn't found in it. That happens when the olean was built from DIFFERENT source — e.g., the cache was rebuilt from a different mathlib checkout!
+
+`lake build` in bash-1: if the .lake cache had any staleness, lake would rebuild mathlib modules from the pinned checkout — same source, so constants same.
+
+UNLESS: the `ProbeScratch.lean` I compiled successfully earlier used the OLD olean cache (from before some checkout change), and `lake build` REBUILT mathlib from the current pinned checkout, which... has different constant names? But grep shows `continuous_det` and `det_pos` DO exist in the current checkout at those paths. So the current source has them.
+
+Wait, let me re-check: `Matrix.det_pos` — the lemma is `det_pos` inside `namespace PosDef`? If it's `PosDef.det_pos`, then `Matrix.det_pos` doesn't exist, and `#check Matrix.det_pos` should ALWAYS fail... but the original gate run didn't flag it. Unless the original gate run's diagnostic truncated the errors! The diagnostic text is long; maybe it only showed some errors. Let me re-read the gate diagnostic: it lists errors at 19, 20, 23, 42, 43, 56, 73, 77, 86, 91. Hmm, and it printed the successful #check outputs interleaved.
+
+Actually — hold on. Let me reconsider. In the ORIGINAL gate diagnostic, the section "2. withDensity..." shows outputs for `Measure.withDensity` and `lintegral_withDensity_eq_lintegral_mul`, errors on 19,20,23. Section 5 shows `HasCompactSupport`, `tsupport`, errors on 42,43... but wait, it printed output for `hasCompactSupport_iff_eventuallyEq` (line 44) which comes after error line 43. Lean continues after errors in #check. So all 10 errors were reported. If lines 12-13 had errors, they'd appear too. They didn't. So at gate time, `continuous_det` and `Matrix.det_pos` resolved.
+
+Hmm — did the gate run with a different mathlib? The gate's cwd is release/, same lake-manifest. Weird.
+
+OR: the diagnostic is the OUTPUT of the failed compile, truncated at the top! The diagnostic starts with `f.{u_2, u_3}...` — that's `Matrix.posDef_diagonal_iff` (line 15 check). So outputs for lines 11-14 are MISSING from the diagnostic — the diagnostic was TRUNCATED at the beginning! The gate log likely kept only the tail of the output. So lines 12-13 errors may have been present in the original run too, just truncated. That makes sense: `Matrix.det_pos` — let me verify whether it exists at this revision.
+
+grep showed `Analysis/Matrix/PosDef.lean:85:lemma det_pos` — need to see the namespace. If inside `namespace PosDef` (with `open Matrix`?), then the name is `Matrix.PosDef.det_pos`. Line 14 checks `Matrix.PosDef.det_pos` — correct name. Line 13 checks `Matrix.det_pos` — wrong name (unknown constant). So line 13 ALWAYS failed, and the gate diagnostic just truncated it.
+
+Similarly `continuous_det`: Topology/Algebra/Group/Matrix.lean:60 `protected lemma continuous_det` — inside which namespace? If inside `namespace Continuous` or `namespace ContinuousMap`... Let me check. If it's e.g. `Continuous.det` or some namespace, then root `continuous_det` fails. Also there's the question of whether `ProbeScratch` originally even imported Mathlib.Topology.Algebra.Group.Matrix — it imports Mathlib (all) so yes.
+
+So the REAL original failure list for ProbeScratch likely included lines 12-13 too (truncated from the gate diagnostic). My earlier "successful" compile of ProbeScratch — why did it exit 0?? That's the puzzle. My direct `lake env lean ProbeScratch.lean` printed tail with section 13 outputs and EXIT=0!
+
+Wait, actually let me recheck: my direct run output ended with section 13 checks (`Continuous.matrix_det`, `Continuous.measurable`, `AEMeasurable`, `Measurable.comp_aemeasurable`) and EXIT=0. For EXIT=0 with errors at 12-13? Lean exits nonzero on errors. Unless... the errors at 12-13 were NOT present in that run.
+
+Hmm, let me just run it again now and look at the FULL output for lines 11-16.
+dsh: reasoning:
+Confirmed:
+- `continuous_det` is `protected lemma continuous_det` inside namespace `Units` presumably (the file section is about GL n R → Rˣ; the namespace... it's after `variable [IsTopologicalRing R]`, the section is probably `namespace Units` or similar). `protected` means the name is `Units.continuous_det`. So root `continuous_det` doesn't exist → line 12 always failed.
+- `det_pos` is `Matrix.PosDef.det_pos` → `Matrix.det_pos` doesn't exist → line 13 always failed.
+
+So the original gate run DID have errors at lines 12–13 that were simply truncated from the top of the diagnostic. And my earlier "successful" direct compile — that's concerning. Why did `lake env lean ProbeScratch.lean` exit 0 when lines 12-13 are bad?
+
+OH WAIT. I see it now. My first direct compile ran BEFORE bash-1's `lake build`. At that time... no, the source of ProbeScratch was already my edited version with the same lines 11-16 unchanged. Lines 11-16 were never edited by me! So the first direct run compiled lines 12-13 successfully — `continuous_det` and `Matrix.det_pos` RESOLVED in that run — and after `lake build`, they no longer resolve?!
+
+That means `lake build` rebuilt some mathlib oleans and the names CHANGED. How? If the lake build used a different lean toolchain or... Hmm. Actually, wait: maybe the first run resolved `continuous_det` and `Matrix.det_pos` through DIFFERENT declarations that were in the stale olean cache — e.g., the cache was built from a NEWER mathlib (or the environment of a different package set), and `lake build` refreshed the cache to the pinned revision, removing those names.
+
+Either way, the CURRENT truth against pinned mathlib source (which I've verified by grepping): 
+- line 12 `continuous_det` → should be `Units.continuous_det`? Hmm, wait, which namespace is the `protected lemma continuous_det` in? Let me check the namespace in Topology/Algebra/Group/Matrix.lean. Also, is there ANY root `continuous_det`? The original diagnostic didn't show; let me grep all of Mathlib for "continuous_det".
+
+- line 13 `Matrix.det_pos` → correct: `Matrix.PosDef.det_pos`.
+
+Let me grep for continuous_det namespace.
+dsh: reasoning:
+- `continuous_det` at line 60 of Topology/Algebra/Group/Matrix.lean is `protected` inside `namespace Matrix.GeneralLinearGroup` → full name `Matrix.GeneralLinearGroup.continuous_det`. Root `continuous_det` doesn't exist. 
+- `ContinuousLinearMap.continuous_det` exists (different statement).
+
+So the correct replacements:
+- line 12: `#check Matrix.GeneralLinearGroup.continuous_det` (determinant continuous on GL) — or use `ContinuousLinearMap.continuous_det`. I'll use `Matrix.GeneralLinearGroup.continuous_det` since the section is about matrix det continuity.
+- line 13: `#check Matrix.PosDef.det_pos` — but wait, line 14 already checks `Matrix.PosDef.det_pos`! Line 13 was `Matrix.det_pos` (duplicate intent). Replace line 13 with `#check Matrix.det_pos` → hmm. Looking at original lines 12-16:
+
+```
+11: #check Continuous.matrix_det
+12: #check continuous_det
+13: #check Matrix.det_pos
+14: #check Matrix.PosDef.det_pos
+15: #check Matrix.posDef_diagonal_iff
+16: #check Matrix.IsHermitian.det_eq_prod_eigenvalues
+```
+
+Line 13 `Matrix.det_pos` duplicates line 14's intent (there's no plain `Matrix.det_pos`). I'll replace line 13 with `#check Matrix.PosDef.eigenvalues_pos` (which exists, line ~83) — keeps the probe informative without duplication.
+
+Now — why did my FIRST direct compile exit 0? This matters for trust: maybe `lake env lean` exit code wasn't captured correctly! In my first run I did:
+
+```
+cd .../release && time lake env lean ProbeScratch.lean 2>&1 | tail -20; echo "EXIT=$?"
+```
+
+`EXIT=$?` captured the exit of `tail`, not of `lake env lean`!! `echo "EXIT=$?"` after a pipeline reports the pipeline's last command (tail) exit code. Classic bug. So the first compile may have FAILED with errors at lines 12-13 (and possibly others) and I saw only the tail-20 lines which showed successful later sections. Ugh.
+
+And bash-1's loop: `if ! lake env lean "$f" > /tmp/d12_one.log 2>&1` — this correctly captures lake's exit. It reported PERFILE_FAILS=0... So in bash-1's loop, ProbeScratch PASSED?! With errors at 12-13, lean exits 1, so it should have failed. Hmm, unless... wait. Let me look again at bash-1's output: it printed "=== per-file gate compile check ===" then "PERFILE_FAILS=0". OK = not printed since I only echo on FAIL. So all 74 passed in bash-1. But bash-2 fails ProbeScratch at 12-13.
+
+Difference between bash-1 and bash-2 environments: bash-1 ran right after `lake build` in the same shell. bash-2 ran later, after audit.py ran. Hmm, and importantly: bash-2's `lake env lean` for ProbeScratch — stdin! bash-2 loop: `while IFS= read -r f; do ... done < ../scratch/gatefix/gate_files.txt`. When the loop body runs `lake env lean ProbeScratch.lean > log 2>&1`, lean's stdin is the redirected file... shouldn't matter.
+
+BUT WAIT: the "unknown identifier" errors at 12-13 in bash-2 — if the mathlib olean cache had been rebuilt between bash-1 and bash-2 by something... audit.py runs `lake env lean Poincare/D12/VolumeIBP/Audit.lean` — it may trigger lake rebuilds? Audit.lean imports Compat which imports Mathlib — all cached.
+
+Hmm, let me think about `continuous_det` resolution again. In bash-1's environment, could `continuous_det` have resolved to `Matrix.GeneralLinearGroup.continuous_det` via `open Matrix.GeneralLinearGroup`? No open. Through `#check continuous_det` — Lean's name resolution: `continuous_det` could be found if there's an `open` somewhere... `open MeasureTheory` only. No.
+
+Alternatively, bash-1's lean resolved against OLDER oleans that still contained root `continuous_det` — i.e., before `lake build` refreshed mathlib to the pinned rev, the cache had a different (newer?) mathlib where `continuous_det` and `Matrix.det_pos` existed at root/Matrix. Then `lake build` (8956 jobs — it said "Build completed successfully (8956 jobs)" — 8956 jobs means it rebuilt EVERYTHING? "8956 jobs" might be the total job count including no-ops. Hmm. If it rebuilt all of mathlib, that suggests the cache was considered stale — because ProbeScratch.lean had changed (its hash changed after my edit), which invalidates only ProbeScratch... no, that's a leaf.
+
+Wait, actually why would `lake build` rebuild everything? Possibly because the D12 task's earlier session ran `lake env lean` files directly with a different Lean version? Or the .lake cache trace got invalidated by the /tmp-full incident? Unclear. But plausible: the olean cache was from an older/newer mathlib (maybe the snapshot's cache was built at a different revision, e.g. master at snapshot time), and `lake build` refreshed it to pinned 7974e751, removing `continuous_det`/`Matrix.det_pos` root names. The original gate run (before my repair) had the OLD cache where only the 10 listed errors occurred, consistent with a mathlib where those 10 names didn't exist but 12-13 did.
+
+Whatever the history: the authoritative source is the pinned mathlib checkout in .lake/packages/mathlib (rev 7974e751), which is what the gate compiles against now. I must make ProbeScratch.lean compile against the CURRENT cache = pinned revision.
+
+Fix lines 12-13:
+- line 12: `#check Matrix.GeneralLinearGroup.continuous_det`
+- line 13: `#check Matrix.PosDef.eigenvalues_pos` (exists) — or `Matrix.posDef_diagonal_iff` is line 15. Keep it simple: eigenvalues_pos.
+
+Then re-run `lake env lean ProbeScratch.lean` capturing the exit code CORRECTLY (no pipe to tail; use a temp file and check `$?` immediately).
+dsh: reasoning:
+Progress: lines 12-13 fixed. Now errors at lines 20, 21, 24: `ContinuousLinearMap.integral_withDensity_eq_integral_smul` unknown. So my guess of the namespace was wrong. Let me check the actual namespace of that file again — maybe the file's `namespace ContinuousLinearMap` is inside `namespace MeasureTheory` opened earlier in the file... I saw the file header: `public section`, `open MeasureTheory RCLike`, `variable ...`, `namespace ContinuousLinearMap`. No `namespace MeasureTheory`. Hmm.
+
+But wait — maybe there are TWO files: MeasureTheory/Integral/Bochner/ContinuousLinearMap.lean AND MeasureTheory/Integral/Bochner/Basic.lean? The theorem is at Bochner/ContinuousLinearMap.lean:250. Header showed `namespace ContinuousLinearMap` at root. So `ContinuousLinearMap.integral_withDensity_eq_integral_smul` should be the name... unless the environment has a different file being resolved (cache mismatch again?).
+
+Let me check what `#check` resolves in the CURRENT environment. Quick probe: create a tiny file that imports the same modules and checks various spellings, to find the true full name. Use #check with autocomplete... can't autocomplete. Use grep to see how other files in the pinned mathlib reference this theorem.
+dsh: reasoning:
+The file has only `namespace ContinuousLinearMap` at line 31, no `namespace MeasureTheory`. Cross-references use bare `integral_withDensity_eq_integral_smul` — e.g., MeasureTheory/Constructions/HaarToSphere.lean:309 — what namespace is that file in? Probably `namespace MeasureTheory`! So inside `namespace MeasureTheory`, `integral_withDensity_eq_integral_smul` resolves to `MeasureTheory.ContinuousLinearMap.integral_withDensity_eq_integral_smul`?? But the file defining it has no `namespace MeasureTheory`...
+
+Hmm wait — maybe I misread. Let me look at the actual full text around line 250 and the top of the file more carefully. Maybe there's `namespace MeasureTheory` opened via `open scoped`? No. Let me look at the END of the file and check for nested namespace wrappers... Actually, `namespace ContinuousLinearMap` at root creates `ContinuousLinearMap.*`. Hmm, but cross-refs use bare name inside `namespace MeasureTheory` — those would resolve to `MeasureTheory.ContinuousLinearMap.integral_withDensity_eq_integral_smul` or fail. Since they compile, the name must be under `MeasureTheory`.
+
+OH WAIT. I bet the file opens `namespace MeasureTheory` via... let me actually check whether line 31's `namespace ContinuousLinearMap` is inside another namespace opened without the `^namespace` anchor grep matching — my grep used `-n "^namespace"` which requires line-start. Maybe there's `namespace MeasureTheory` at line start... it didn't match, so no.
+
+Hmm, alternatively the environment! In the CURRENT olean environment, what's the name? `#check` says `ContinuousLinearMap.integral_withDensity_eq_integral_smul` unknown. Let me probe bare `integral_withDensity_eq_integral_smul` in a scratch file compiled against the current cache. Since HaarToSphere.lean uses it bare inside `namespace MeasureTheory`, the name likely IS `MeasureTheory.ContinuousLinearMap.integral_withDensity_eq_integral_smul` — wait no. If the def is at root namespace `ContinuousLinearMap`, then inside `namespace MeasureTheory`, bare `integral_withDensity_eq_integral_smul` resolution: Lean searches current namespace `MeasureTheory`, then root. Root `ContinuousLinearMap.integral_withDensity_eq_integral_smul` is NOT the same as bare `integral_withDensity_eq_integral_smul`. Resolution would fail...
+
+Let me just check with sed what's really at line 240-255 and search for `namespace MeasureTheory` ANYWHERE in the file (maybe mid-line or nested differently).
+dsh: reasoning:
+Confirmed: HaarToSphere.lean is inside `namespace MeasureTheory` (line 41) and `namespace Measure` (line 46), and uses bare `integral_withDensity_eq_integral_smul` at line 309. So the full name must be `MeasureTheory.ContinuousLinearMap.integral_withDensity_eq_integral_smul`?? But the defining file has no `namespace MeasureTheory`... 
+
+WAIT. Look at the defining file again — maybe the file header `public section`... The namespace situation: Lean 4 files don't have implicit namespaces. Let me grep for `MeasureTheory` ANYWHERE in Bochner/ContinuousLinearMap.lean (not just ^namespace).
+dsh: reasoning:
+So the defining file: `namespace ContinuousLinearMap` at line 31, `end ContinuousLinearMap` at line 110. The theorem at line 250 is AFTER `end ContinuousLinearMap` — so it's at ROOT level (top-level) of the file! So the full name is `_root_.integral_withDensity_eq_integral_smul` — a ROOT declaration, no namespace at all!
+
+That matches the checkpoint note: "integral_withDensity_eq_integral_smul0 (root, ...)". And `#check integral_withDensity_eq_integral_smul` (bare) resolves at root. Inside `namespace MeasureTheory`, bare name resolution falls back to root — works.
+
+So my "fix" to `ContinuousLinearMap.integral_withDensity_eq_integral_smul` was wrong; it should be bare `integral_withDensity_eq_integral_smul`. But careful: inside ProbeScratch, `open MeasureTheory` is active. If a `MeasureTheory.integral_withDensity_eq_integral_smul` existed it would shadow, but it doesn't. Bare name → root decl. OK.
+
+Lines 20-24 fix:
+```
+#check integral_withDensity_eq_integral_smul
+#check integral_withDensity_eq_integral_smul₀
+#check Measure.withDensity
+#check MeasureTheory.lintegral_withDensity_eq_lintegral_mul
+#check setIntegral_withDensity_eq_setIntegral_smul₀
+```
+
+Also, the ORIGINAL errors at 19,20,23 were `MeasureTheory.integral_withDensity_eq_integral_smul` etc. — consistent with root names.
+
+Now — are there any OTHER errors hiding beyond what I've seen? My approach: keep fixing until exit 0, checking full log. Also, I must distrust prior "successful" runs: bash-1's loop said PERFILE_FAILS=0 but that was against the OLD cache (before lake build refreshed?). Wait, no: bash-1 ran AFTER lake build (same shell, sequential). Hmm, bash-1's loop: `lake build` first (which refreshed the cache to pinned rev — where lines 12-13 names don't exist), then per-file check said 0 fails — but ProbeScratch had bad lines 12-13 at that point and should have failed!
+
+Unless `lake build` in bash-1 did NOT rebuild mathlib (8956 jobs with everything cached = no-op jobs?) and the cache refresh happened LATER — in bash-2's timeframe? Between bash-1 and bash-2, only audit.py ran. audit.py — let me look at what it does. It might run `lake env lean` on Audit.lean and something else. Did audit.py trigger a `lake build`? If audit.py ran with a different environment... Hmm.
+
+Wait, actually — reexamine: my FIRST direct compile (before bash-1): I piped through `tail` so exit code was lost; it probably FAILED there too, with the true full error list unknown (I only saw the tail-20 lines which were all from sections 12-13 and passed... wait, the tail showed section 12/13 checks succeeding: `Matrix.dotProduct`→ I saw `dotProduct` output in the tail! Line 86's check printed `dotProduct.{v,u_2}...` — meaning `#check dotProduct` (my edited line) succeeded at that point).
+
+Hmm OK so at first-run time, the OLD cache had: dotProduct ✓ (root), the withDensity names presumably NOT (unknown at MeasureTheory.*, and my ContinuousLinearMap.* spellings would also be unknown → those 3 errors + maybe 12-13 passed). So first run failed with 3 errors (20,21,24 — the MeasureTheory prefix ones), and my EXIT was masked by the pipe. bash-1's loop then ran and reported 0 fails?! That contradicts... unless bash-1's loop ran `lake env lean` which auto-REBUILT something. Hmm, actually, wait — let me reconsider: `lake env lean "$f"` for 74 files sequentially. When it hits files that import the project (Poincare.*), lake... no, lake env lean doesn't build dependencies, it just runs lean with the right LEAN_PATH. Lean reads oleans. If olean missing → import error.
+
+Let me stop theorizing and test empirically. Right now the cache is whatever it is. Fix lines 20-24, run, check exit code properly, iterate until exit 0. Then re-run the full 74-file loop and lake build, and inspect every FAIL carefully.
+
+Actually, hold on — maybe bash-1's loop DID have failures but its `if ! lake env lean` logic broke: `lake env lean "$f" > /tmp/d12_one.log 2>&1` inside `if !` — that's fine. And it printed PERFILE_FAILS=0. With /tmp full at some point? The loop finished before /tmp filled up? The sort failure happened after bash-1 finished (in my orphan-check). Plausible that bash-1 ran fine with the same 3 errors... no wait, bash-1 would have caught the 3 MeasureTheory errors as FAIL.
+
+Unless... OH. I see it. bash-1's loop read `/tmp/d12_gate_files.txt` — and the FIRST loop iteration might have been fine, but did the loop really run `lake env lean` on ProbeScratch? PERFILE_FAILS counts only FAILs, and it printed only "OK $f" per file (74 lines?) — the job output only showed the tail (the output was truncated to the end: "PERFILE_FAILS=0" and we didn't see all OK lines, only the last few lines shown). The job_output displayed: lake build tail + "=== per-file gate compile check ===" + "PERFILE_FAILS=0". So no FAILs were echoed. For ProbeScratch with 3 errors, `lake env lean` exits 1 → FAIL would print. Contradiction remains.
+
+Hmm, one more possibility: bash-1's `lake build` rebuilt mathlib from pinned source (8956 jobs), giving the pinned-revision cache. In pinned rev: bare `integral_withDensity_eq_integral_smul` is ROOT (per source). But my edited line said `ContinuousLinearMap.integral_withDensity_eq_integral_smul` — unknown → error → exit 1 → FAIL. Still contradiction.
+
+...unless `ContinuousLinearMap` DOES resolve in the pinned cache: if the OLD cache (pre-lake-build) had `ContinuousLinearMap.integral_withDensity_eq_integral_smul` (e.g. mathlib master moved it into the namespace), then before lake build, my spelling worked; and bash-1's lake build... rebuilt with pinned source where it's root → my spelling unknown → bash-1 loop FAIL on ProbeScratch. But it printed 0. ARGH.
+
+Wait — did bash-1's `lake build` actually rebuild? "Build completed successfully (8956 jobs)." If it were a no-op rebuild, lake says "Build completed successfully." with job count = number of lean modules (no rebuilds). Hmm.
+
+And in bash-2 (current cache): `ContinuousLinearMap.integral_withDensity_eq_integral_smul` unknown → matches pinned source (root). And lines 12-13 unknown in bash-2 but they PASSED in my first direct run — so the cache CHANGED between my first run and bash-2. What ran in between? bash-1 (lake build + loop) and audit.py. So `lake build` did rebuild mathlib → cache now matches pinned rev → lines 12-13 (root continuous_det, Matrix.det_pos) unknown in pinned rev... 
+
+wait but then bash-1's per-file loop, running AFTER the rebuild, should have flagged ProbeScratch FAIL (both 12-13 and 20-21-24 errors). It didn't. Hmm, unless bash-1's loop really didn't run those files — e.g., `while read f; do lake env lean "$f" ...; done < /tmp/d12_gate_files.txt` — what if /tmp/d12_gate_files.txt was EMPTY at that time? I created it via the python snippet which printed "74 files" — fine. And the loop echoed nothing per file except FAIL (I only echo on FAIL). And PERFILE_FAILS=0 printed. If the file were empty, the loop body never runs, PERFILE_FAILS=0 prints, and NO "OK" lines — consistent with the observed output (no OK lines in the tail, but tail truncation hides them).
+
+AH WAIT. I see it! In bash-1 I wrote `> /tmp/d12_one.log` — and /tmp was FULL (we discovered later: 100% used). When /tmp is full, writes fail... but that affects the log file, not lake's exit. Hmm, but actually if `/tmp` was full at bash-1 time, the `> /tmp/d12_one.log` would fail to create → the redirect fails → bash reports the redirect error and `lake env lean` never runs → `if ! ...` sees failure → echo FAIL. Not what happened.
+
+Honestly, root-causing the bash-1 anomaly is secondary. What matters: make the CURRENT environment pass, deterministically. Current environment = cache rebuilt from pinned rev. The pinned-source names are ground truth. Let me fix lines 20-24 to root spellings and iterate until exit 0, capturing exit codes properly. Then rerun the whole loop with proper logging and COUNT each file (OK/FAIL lines), then lake build again, then audit.
+dsh: reasoning:
+ProbeScratch.lean now compiles with exit 0 against the pinned-revision cache. Now re-run the full 74-file per-file check with proper OK/FAIL logging per file (echo every file status), and confirm. Also re-run lake build afterwards (it should be a no-op now). Let me run the loop in the foreground since it should be fast (each file ~ seconds when cached; ProbeScratch takes ~5-6s; total maybe 3-5 min). Set a generous timeout. Print OK for each file so I can count.
+dsh: reasoning:
+TOTAL=73, not 74 — the gate files list has 74 entries but only 73 lines in gate_files.txt. One file got dropped. Which one? The gate list includes "ReleaseClaims.lean" (I saw it in the original gate.json output: last file). Let me compare: my regenerated list has 74 (python printed 74). But the loop counted 73. Hmm — maybe one filename ends without trailing newline, or the last line was consumed... The loop processed 73 lines. The output above shows 73 OKs, missing `ReleaseClaims.lean`.
+
+Wait: python `'\n'.join(sorted(...))` — 74 files joined by newline = 73 newlines, so 73 "lines" via `read` — the last line has no trailing newline, but `read` still reads it (returns success for the final line without newline). So the loop should process 74... unless the file's last line lacks newline AND the loop's `read` consumed it — no, read handles final unterminated line fine.
+
+Hmm, count the OK lines above: from Audit/CounterexampleAudit to ReleaseCheck.lean. Let me count: lines... Actually let me just recount programmatically. The gate.json file list from earlier display ended with "ReleaseClaims.lean". The loop printed ReleaseAudit, ReleaseCheck but not ReleaseClaims. So ReleaseClaims is missing. Did bash-1's loop check it? It used the same file. In bash-1, PERFILE_FAILS=0 of 74? It didn't print TOTAL.
+
+Let me check: gate_files.txt has how many lines (wc -l counts newlines: 73 = 74 files - 1 trailing). `read` loop: for a file without trailing newline, the last read returns the content with exit 0, then loop body runs, then next read returns nonzero. So 74 iterations expected. But TOTAL=73. That means one line vanished — perhaps gate.json's files list has 74 items, and my python wrote 74 names, but `read` treats... hmm, or maybe two files have the same name? No.
+
+Wait — maybe the gate list has a duplicate and my sorted join kept duplicates (74 entries), and the loop processed 74 but TOTAL incremented only 73? No, TOTAL counts iterations.
+
+Let me just check the file and count.
+dsh: reasoning:
+The txt has 74 lines (splitlines counts 74; wc -l counts 73 because no trailing newline). The loop counted TOTAL=73 — meaning the `read` loop processed only 73 lines: the LAST line without trailing newline was NOT processed? Bash's `read` returns nonzero when it hits EOF after reading a line with data? No — `read` returns 0 if it reads data even without trailing newline... Actually: `while IFS= read -r f` — when the last line has no trailing newline, `read` reads it and returns SUCCESS (it sets the variable), then the loop body runs, and the NEXT read returns 1. Hmm, that's standard behavior — read returns 0 for a final unterminated line.
+
+Wait, actually POSIX: read returns nonzero if EOF is encountered immediately, but if it reads data before EOF it returns 0. A final line without newline: read reads the data, hits EOF, and per POSIX "read shall return zero" if it read anything? Actually there's a subtlety: bash `read` returns 1 when it encounters EOF *without* having read any characters... but for a final unterminated line, it reads characters then EOF: returns 0? Empirically bash returns 1 for final unterminated line! Yes — bash's read returns failure on the final line if there's no trailing newline (because it can't distinguish). Actually no — bash read returns 0 and sets the var... I recall the classic gotcha: the last line without trailing newline IS skipped by `while read`. Yes, that's the well-known bash gotcha: `while read` skips the last line if it has no trailing newline.
+
+So the missing file is the last one in sorted order: "ReleaseClaims.lean" (sorted: ... ReleaseAudit.lean, ReleaseCheck.lean, ReleaseClaims.lean). The loop processed ReleaseCheck then stopped at ReleaseClaims (no trailing newline). Hmm wait, sorted order: "ReleaseAudit.lean" < "ReleaseCheck.lean" < "ReleaseClaims.lean"? 'C' < 'L'? "ReleaseClaims" vs "ReleaseCheck": compare char by char: "ReleaseC" then 'h' vs 'l': 'h'(104) < 'l'(108), so "ReleaseCheck.lean" < "ReleaseClaims.lean". Yes, ReleaseClaims is last. It got skipped.
+
+BUT — bash-1's loop used /tmp/d12_gate_files.txt written by python with '\n'.join → also no trailing newline → bash-1's loop ALSO skipped ReleaseClaims.lean! And the ORIGINAL gate check (dispatcher's) — unknown how it iterated; its files array is JSON so it processed all 74.
+
+Was ReleaseClaims.lean checked in the original gate run? Yes: gate.json lists "ReleaseClaims.lean", exit 0. So it compiled at gate time. Has it changed since? No — I haven't touched it. But did `lake build` rebuild the cache in a way that would break it? The full lake build succeeded (exit 0) in bash-1 — wait, but lake build also succeeded in the original gate run (build_exit 0) with the OLD cache. Now cache is rebuilt from pinned source. `lake build` success in bash-1 covers ALL lake targets including ReleaseClaims (if it's part of the lake library globs — Release* files are in release/ root; the lakefile globs probably include "*.lean" at root? Let me check). To be safe, compile ReleaseClaims.lean directly now.
+dsh: reasoning:
+ReleaseClaims.lean compiles exit 0. So all 74 files now compile individually with exit 0 against the current (pinned-revision) olean cache.
+
+Now:
+1. Re-run `lake build` to make sure the package builds with the fixed ProbeScratch.lean and current cache (it should be mostly no-op).
+2. Re-run audit.py.
+3. Update ProbeScratch.lean's new sha256 in the result card/json + checkpoint (the hash changed again after the second round of edits).
+4. Update the md/json repair narrative to the accurate final story (12 bad lines total, two fix rounds).
+
+Let me run lake build now.
+dsh: reasoning:
+Everything passes:
+- lake build exit 0 (8956 jobs)
+- audit PASS
+- ProbeScratch.lean final hash: cfb65fd54c200fd2e7b38f49ac67f25aa57c0b46fd5abea1ba2fcfa402d5c93a
+
+Wait — I need to double-check one thing: the D6 audit (D6AuditReport.lean, run as part of lake build) reports "wanted_modules 1"? In the earlier gate log tail, "D6AUDIT wanted_modules 1". Whatever that means, the D6 audit verdict was PASS. Not my concern now.
+
+Also, the two "partial_decl" lines — pre-existing (D4Audit.sqTraj._unsafe_rec, SurgeryChain.append._unsafe_rec) from earlier tasks; the gate accepted those before (they're in the gate-build.log of a previous accepted build). Not mine to touch.
+
+Now update the docs with the accurate final narrative:
+
+The gate failure on ProbeScratch.lean had 12 bad `#check` lines (the 10 from the gate diagnostic tail + 2 more that were truncated at the top of the diagnostic: `continuous_det` and `Matrix.det_pos`). I fixed all 12. Final hash cfb65fd5....
+
+Let me rewrite the "Gate repair attempt 1" section in the md card to be accurate, update the json (hash + gate_repair details), and checkpoint.json (update the hash and the description: 12 identifiers, root-namespace discovery, the read-loop gotcha note about ReleaseClaims being verified separately — actually just say all 74 verified).
+
+Also update elapsed: still ~8.0h.
+
+Let me view the current md section to edit precisely.
+dsh: reasoning:
+Now let me do final sanity checks:
+1. The md card ends with TASK_DONE (unchanged — verify).
+2. Verify the md/json are consistent.
+3. Verify ProbeScratch.lean content once more (read final version).
+4. Confirm no forbidden tokens in ProbeScratch.lean (it's #check only — fine, but let me grep for sorry/axiom across release just to be thorough — the audit script already does this for the D12 layer; the D6 audit covers the whole project).
+
+Also, one lingering question: the two "partial_decl" entries in the D6 audit (D4Audit.sqTraj._unsafe_rec and SurgeryChain.append._unsafe_rec). The gate accepted these before (they appear in gate-build.log of the previous PASSing D6 audit — actually the gate-build.log I read is the current gate's log which contains the D6 audit with VERDICT PASS; the gate's ok=false was purely about ProbeScratch). So no action.
+
+Let me quickly view the final ProbeScratch.lean to double check it's clean and grep for forbidden tokens.
+dsh: reasoning:
+Everything is in order. One last thing: the "Reproducibility" section of the md still mentions the earlier sha256? Let me check the md card's mention of hash — I updated the repair section. Also the checkpoint's source_hashes doesn't include ProbeScratch but that's fine (it's in the repair record).
+
+Also let me double-check there's no stale statement in the md about "8889 jobs" — I updated that to "8956 jobs, full package" already.
+
+Let me quickly re-read the final md to confirm coherence, and read the final ProbeScratch.lean file to confirm its final content is what I expect.
+dsh: reasoning:
+The file is clean and final. Everything is verified:
+
+1. `lake build` from release/ → exit 0 (8956 jobs)
+2. All 74 gate-listed files compile individually with exit 0 (via `lake env lean`)
+3. D12 axiom audit → PASS (63 cones in allowed set, negative control flagged)
+4. ProbeScratch.lean forbidden-token scan clean
+5. Result card (md/json) and checkpoint updated with the repair narrative
+6. Card ends with TASK_DONE — appropriate since the milestone claims hold and the gate blocker (orphan probe file) is fixed
+
+The task instruction says "Only your own longrun/results/D12-volume-ibp.md can complete this task" — done.
+
+One more consideration: should the card end with TASK_DONE? The gate failed on infrastructure-ish hygiene (the orphan probe), not on the mathematics. All intended milestone claims were already proved and audited; the repair restored the gate to green. TASK_DONE is the correct end marker (a request for independent acceptance).
+
+Clean up: the scratch/gatefix dir has logs — they're useful evidence; keep them (they're inside the worktree, fine). Actually let me make sure I leave a small evidence file with the per-file results for the relay. The logs directory holds one.log (last file only), ps2.log, claims.log, lakebuild2.log, audit2.log. Let me write a summary evidence file with the per-file OK list. Actually, let me regenerate a full per-file log properly (with trailing newline handling) into a single evidence file so auditors can see 74/74 — the loop output I saw is enough, but persisting it is better. Let me write it quickly.
+dsh: reasoning:
+74/74 OK, evidence persisted at scratch/gatefix/gate_rerun_evidence.txt.
+
+Final state summary — all done. Let me give a concise final report. Quick recap of everything:
+
+**Gate diagnosis**: gate.json `ok: false` caused solely by `release/ProbeScratch.lean` (exit 1) — a leftover API-discovery scratch file whose `#check`s referenced identifiers absent at pinned mathlib 7974e751.
+
+**Fix**: corrected 12 identifier spellings, each verified against pinned mathlib source. No D12 theorem/definition/source changed (all VolumeIBP hashes identical).
+
+**Verification** (from release/):
+- `lake build` → exit 0, 8956 jobs
+- all 74 gate files compile via `lake env lean` → 74/74 exit 0
+- D12 axiom audit → AUDIT PASS (63 cones within {propext, Classical.choice, Quot.sound}, negative control flagged)
+- forbidden-token scan on ProbeScratch clean
+- no orphan .lean files outside the gate list
+
+**Cards**: checkpoint.json updated (repair record, elapsed 8.1h), results md/json updated (repair section, fresh hash, compile evidence), md ends with TASK_DONE.
+
+I should also note: I did not wait for the dispatcher; finished own checks and wrote the result card. Done.
+Gate repair complete. Final summary:
+
+## Diagnosis
+
+The gate's `ok: false` was caused by exactly one file — `release/ProbeScratch.lean` (exit 1), the leftover API-discovery probe from checkpoint 1 (a scratch `#check` file; not a test or negative control, which live outside `release/`). Twelve of its `#check` lines referenced identifiers that don't exist at the pinned mathlib revision `7974e751bece493b6ff508039423ca9fa2452fa8`. The gate diagnostic was truncated at the top, so the full failure set was recovered by recompiling against the pinned-revision olean cache (which `lake build` had refreshed).
+
+## Fix
+
+Corrected all 12 identifier spellings, each verified against the pinned mathlib source:
+- `MeasureTheory.integral_withDensity_eq_integral_smul{₀}` / `...setIntegral...` → bare root names (the lemmas are declared at the **root** namespace, after `end ContinuousLinearMap`, in `MeasureTheory/Integral/Bochner/ContinuousLinearMap.lean`)
+- `continuous_det` → `Matrix.GeneralLinearGroup.continuous_det`; `Matrix.det_pos` → `Matrix.PosDef.eigenvalues_pos`
+- `support` → `Function.support`; `Matrix.det_toLin'` → `LinearMap.det_toLin'`; `Matrix.nonsing_inv` → `Matrix.inv_def`; `Matrix.det_inv` → `Matrix.det_nonsing_inv`; `Matrix.dotProduct` → `dotProduct`; `Measurable.matrix_det` → documented as absent (measurability via `Continuous.matrix_det` + `Continuous.measurable`); `isCompact_tsupport` → documented as absent
+
+**No theorem, definition, or D12 layer source changed** — every `Poincare/D12/VolumeIBP/*.lean` sha256 is identical to the previous checkpoint.
+
+## Verification (all run from `release/`)
+
+| Check | Result |
+|---|---|
+| `lake build` | exit 0 (8956 jobs) |
+| Per-file gate reproduction (`lake env lean` over all 74 gate files) | **74/74 exit 0** (evidence: `scratch/gatefix/gate_rerun_evidence.txt`) |
+| Orphan-file audit | gate list = complete set of `.lean` under `release/` (excl. `.lake`) |
+| `python3 Poincare/D12/VolumeIBP/audit.py` | AUDIT PASS (63 cones ⊆ {propext, Classical.choice, Quot.sound}, negative control flagged) |
+| Forbidden-token scan on edited file | clean |
+
+## Cards written
+
+- `checkpoint.json`: repair attempt 1 record, new `ProbeScratch.lean` hash `cfb65fd54c200fd2e7b38f49ac67f25aa57c0b46fd5abea1ba2fcfa402d5c93a`, elapsed 8.1 h
+- `longrun/results/D12-volume-ibp.md`: gate-repair section with exact identifier fixes and evidence; ends with **TASK_DONE** (the intended milestone claims — chart Riemannian density/measure, compact-support divergence theorem, `chart_ibp`, drift-weighted `chart_weighted_ibp`, pullback CoV naturality, non-vacuity, fail-closed axiom audit — all remain proved and audited; the gate blocker was only the orphan probe file, now fixed)

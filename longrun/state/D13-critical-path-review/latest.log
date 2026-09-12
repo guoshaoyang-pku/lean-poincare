@@ -1,0 +1,860 @@
+dsh: reasoning:
+Let me understand: the gate.json shows that the build_exit=0 but there's an audit-evidence negative control file that fails as expected (exit 1 — that's intended, it's a negative control to prove the audit catches bad axioms). The gate says "mathematical_status": "not_assessed".
+
+Wait — important. The gate.json output was truncated at the beginning. Let me read the head of gate.json properly. Also checkpoint.json appears not to exist at worktree root? The second command's `cat checkpoint.json` output was empty (only stderr shown). Let me check.
+
+Let me look at the directory structure.
+dsh: reasoning:
+The gate: ok=false, build_exit=0. The only nonzero-exit file is `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` which is the negative control (must FAIL). But wait: the gate considers ok=false because of that. Let me check what the gate logic checks. Actually, the negative control failing is probably expected — let me look at the gate script / harness. Let's find the gate script that generated gate.json.
+
+Also, importantly: is the negative control file in `release/`? It says `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` relative to release cwd. Hmm, `release/audit-evidence/negcontrol/...` exists. Let me look.
+
+Let me check the last_run.json, latest.log, prompt.md, heartbeat.json to understand what the dispatcher wants.
+
+Key point from the task: "Compile from the release package, NOT the worktree root." And "Fix authored source or report an infrastructure blocker."
+
+The gate is failing because the negative control file (which MUST fail) is being included in the build target list and its nonzero exit makes ok=false. But maybe gate logic expects that file to fail and it's registered as an expected-failure. Let me find the gate runner.
+
+Let me look at the state dir and the longrun scripts.
+dsh: reasoning:
+Now let me understand the gate: it runs `lake env lean <file>` on every `.lean` file in the release package? And the negative control file at `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` fails with exit 1, which is EXPECTED. But gate ok=false. So the gate likely needs to know that this is an expected failure. Perhaps the previous worker (me, round 1) placed the negative control inside the release package, which caused the gate to see a failing file. The fix: move the negative control evidence outside the release package (e.g., to worktree-root `negcontrol/` or `audit-evidence/` outside release), OR adjust so that the gate's file scan doesn't pick it up.
+
+Wait, but "Do not edit tests or negative controls." Moving the negative control file might count as editing. Hmm. But actually the file `release/audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` — was it created by the previous round's worker? Let me check the top-level worktree: there's `/data3/.../D13-critical-path-review/audit-evidence` and `negcontrol` at worktree root too. Let me check those.
+
+Also let me read the gate.json head for "ok" semantics, and look for the gate runner script in the harness. Let me find where gate.json is generated. Search for "gate.json" in the repo.
+
+Let me also read the prompt.md and the previous run log to understand round 1's accomplishments.
+
+Let me be efficient. Key questions:
+1. Why is gate ok=false and what does "Repair attempt: 1" require? Probably: the gate failed (ok=false) at the end of round 1, so this invocation is a repair attempt. The likely cause: the negative-control root placed inside release/ causes a nonzero exit in the per-file gate scan. The gate runner probably treats any nonzero exit as failure, unless the file is declared as an expected failure. Since the gate.json has `"ok": false`, and only that file failed, the repair is to relocate the negative control out of the release package so that `lake build`-scanned files all pass, while keeping the negative control reproducible (in the worktree, outside release/, or in a sibling directory not scanned).
+
+Actually careful: "Do not edit tests or negative controls." Relocating might be considered editing. Let's check the gate runner code to see how it decides. Search for gate in bin/ and the DSH harness.
+
+Let me grep for "mathematical_status" or "gate.json" across /data3/guoshaoyang/workdir/lean_poincare.
+dsh: reasoning:
+There's an existing `longrun/checkpoint.json` and `longrun/results/D13-critical-path-review.json`. Let me read both, plus the .md if exists.
+
+Also, importantly: check whether `longrun/results/D13-critical-path-review.md` exists — the list was truncated. And check the gate logic in dispatch_loop.py.
+
+Let me read checkpoint.json (7KB) and the results json.
+dsh: reasoning:
+Now let me read the gate script's compile_gate function fully (lines 80-140) to see the file list determination.
+dsh: reasoning:
+Confirmed. The gate runs `lake env lean` on **every** `.lean` file under `release/` (excluding .lake/.git), and requires exit 0 for all of them. The negative control at `release/audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` deliberately fails (exit 1), so gate ok=false.
+
+The fix, without editing the negative control's content: move it out of `release/` to the worktree root (e.g. `audit-evidence/negcontrol/` at worktree root, where a `negcontrol/` dir already exists, or keep under worktree `audit-evidence/`). But the file imports `Poincare.D13.CriticalPathReview.AxiomAudit` — that's fine because it can be run with `lake env lean` only from within release/; if it's outside release/ it isn't part of the package. Actually we can keep an evidence directory at the worktree root and run `lake env lean ../audit-evidence/negcontrol/....lean` from within release/ with cwd=release. Hmm, but `lake env lean <path>` with a path outside the package root — Lean will resolve the module? Provided the file is a standalone root file (not a module in the package), `lake env lean ../foo.lean` should work; it needs search path for imports which lake env provides (LEAN_PATH includes the release build dirs). Yes, that works: absolute path to a file outside the package is fine, since imports resolve via LEAN_PATH.
+
+Also important: there are two negative-control modules inside `Poincare.+` glob: `Poincare/D13/CriticalPathReview/NegControl.lean` (axiom : False) and `Poincare/D12/TriangulationTopology/NegControl/NegControl.lean`. Those are *inside* the library and have axioms, but they only cause a failure if a root file that `#print axioms`-audits them is compiled. Since gate compiles each file individually, `NegControl.lean` itself compiles fine (axiom declaration compiles). The gate only checks exit code, not axioms. But the task's "fail-closed programmatic axiom audit" requirement is about our own audit.
+
+Wait, however: D12's NegControl file — does it have `axiom` inside a module under Poincare.+? From the gate log: `D13CPAUDIT_DECL Poincare.D13.CriticalPathReview.NegControl.negControlBadAxiom axiom ...` appeared in the failing audit which included both AxiomAudit and NegControl imports. So yes, D13's own NegControl.lean declares an axiom. And it's in the Poincare lib glob, meaning it is built as part of `lake build`. That is intentional for a negative control, but the task rules say "Never use sorry, axiom, unsafe, native_decide or proof_wanted" — that's about authored source; negative controls are explicitly permitted (the task says "Do not edit tests or negative controls", implying they exist legitimately).
+
+So the repair: the only thing preventing gate ok=true is that the negative-control *root* file sits inside the release package. The minimal, non-destructive fix that preserves the negative control as a negative control: move that root file out of `release/` (to the worktree root `audit-evidence/negcontrol/`), keeping its content byte-identical, and update the driver script to invoke it from the new location. Also maybe keep a copy... no, duplicating inside release/ would re-break the gate.
+
+Hmm, but wait. Is moving the file "editing a negative control"? The rule says do not edit tests or negative controls. Moving the location of the evidence root while preserving content and re-running it is not editing its semantics. But there's risk the auditor considers relocation a modification. Alternative: keep the file where it is but rename its extension? No, that's editing too and worse.
+
+Better alternative: the gate's `source_hash` walks all `.lean` files in the package, so ANY failing lean file in release/ breaks the gate. The intended design is clearly that the negative control must live outside the package. Since the previous invocation put it inside, and the gate now reports gate_failed, the repair attempt must relocate it.
+
+Actually hold on. Let me check whether the gate for other tasks (e.g., D12 tasks) had similar negative controls. Let's check how other worktrees handle it — e.g., D12-triangulation-* worktree, do they have `audit-evidence/negcontrol/` inside release? Let me check a passing task's gate.json: does any have ok=true?
+
+Let's look for tasks with ok=true in their gate.json and see where their negative controls are.
+
+Also, I should double check: maybe the gate previously was located at the worktree root package (before release/ existed). The gate prefers `worktree/release` if `release/lakefile.toml` exists. In round 1, the worker copied the whole snapshot... hmm, actually the release package contains everything (`Poincare/D7`, `Poincare/D12`, etc.), and `longrun/` at worktree root is only ~32 bytes dirs. So `release/` is the Lean package, and the worker's audit-evidence was placed inside release/. That's the bug.
+
+Let me check other worktrees to see the convention.
+dsh: reasoning:
+Very clear now: D13-critical-path-review is the only task with `ok=False`, and its only failure is the negative-control root file inside the release package. Other tasks place negative controls outside the release package (e.g., D12-triangulation-topology has a `NegControl` module inside Poincare glob but no failing *root* file — the negative control must be invoked differently).
+
+Let's check how D12-triangulation-topology handles a negative control inside the package: `Poincare/D12/TriangulationTopology/NegControl/NegControl.lean`. Let me look at that file to see how they avoid gate failure. And also check D13-vankampen-recognition or D13-integrated-kernel-audit for where their negcontrol evidence resides.
+
+The plan for repair:
+1. Move `release/audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` → worktree-root `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` (content byte-identical), update driver script accordingly, re-run to confirm it still exits 1 naming the bad axiom, and re-run the gate.
+
+But careful: will the gate now include the worktree-root `audit-evidence/...` files? No — the gate scans only `package = worktree/release`.
+
+Also important: must the negative control remain *inside* release to import `Poincare.D13.CriticalPathReview.AxiomAudit`? Running `lake env lean <abs path outside package>` from cwd=release: Lean's `lean` binary takes the file path; imports resolved via LEAN_PATH which lake env sets. It should work. Let me verify empirically.
+
+2. Then verify gate ok=true: I can re-run the gate logic myself without waiting for the dispatcher (the task says "Do not wait for the dispatcher: finish your own checks and write the result card"). But the gate.json is written by the dispatcher process (compile_gate). Since the dispatcher will run its own gate after this invocation (or the harness runs `poincare_next_wave.py`/worker_loop), I should not modify state/gate.json myself (editing global state might be considered out of scope). Actually the instruction says "Read gate.json and gate-build.log. Compile from the release package... Fix authored source or report an infrastructure blocker." The repair is to make the source tree gate-clean. I can reproduce the gate locally (same commands) into my own evidence dir.
+
+Hmm, but should I move the file, or is there another reason the gate is failing that I should fix in authored source? The negative control root is evidence, authored by the previous invocation. "Do not edit tests or negative controls" — relocating it to the worktree root as `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` (it already exists at worktree root as a directory `audit-evidence/`!). Let me check the worktree root `audit-evidence/` contents — there might already be a copy there.
+
+Wait: worktree root has `audit-evidence/` (created Sep 11 18:32) with `negcontrol/` maybe. Let me look. Earlier listing: worktree root `audit-evidence` dated 18:32 and `longrun` 18:33, `input` 18:18. Let's list recursively.
+
+Also: The previous run's `release/audit-evidence/` also contains other non-Lean evidence. Let me check if there are other `.lean` files under release/audit-evidence (only the negcontrol one per gate.json). And check `release/audit-evidence` full contents.
+
+Let me look at the whole picture now.
+dsh: reasoning:
+The worktree root `audit-evidence/` already holds all evidence, and there's a `logs/04-negcontrol-included.log`. So the release copy of the negcontrol root is a stray duplicate created (maybe by copying evidence into release for the gate to run? or by mistake at 18:27).
+
+Let me check `longrun/results/D13-critical-path-review.md` and `.json` to understand round-1 claims and see whether the .md ends with TASK_DONE. Also check `audit-evidence/tools/d13_cp_audit.py` to see which path it references for the negative control.
+
+Then the plan:
+1. Remove/relocate `release/audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` to the worktree root (it may already be identical to what was used from root). Since the file exists only inside release, I'll move it to worktree-root `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` preserving bytes.
+2. Update `audit-evidence/tools/d13_cp_audit.py` to run the negative control from a path outside the package (if it references `audit-evidence/negcontrol/...` relative to release, adapt).
+3. Re-run: (a) `lake build` in release; (b) `lake env lean` on all 454 files? That takes a while but gate does it in parallel with 4 workers. Actually I can reproduce the exact gate faster by running the same `check_file` sweep... 455 files each `lake env lean` — most are fast (already elaborated? no, `lake env lean file` re-elaborates? It uses the .olean cache? Actually `lake env lean X.lean` re-elaborates X but imports from oleans — each file check took maybe 1-10s). The gate-build.log took from 18:27 to 18:37 = 10 min for 455 files with 4 workers. That's acceptable in a 4-hour budget. But I should not modify state/gate.json. I'll write my own local reproduction log into worktree `audit-evidence/`.
+
+Actually better: after the repair, the dispatcher's gate will re-run automatically and overwrite state/gate.json. I can also run the identical sweep into a local log to prove ok=true; and I *could* write the gate.json? No — state dir is outside my workspace? Actually `/data3/guoshaoyang/workdir/lean_poincare/longrun/state/...` is outside the session workspace `/data3/.../worktrees/D13-critical-path-review` → sandbox is workspace-write; writing to state/ would likely be denied. Also instructions: don't edit global queues/settings. So don't touch state/.
+
+Let me first verify that the file currently inside release is byte-identical to the one referenced by logs (log 04). Let me read the driver's relevant part and the log.
+
+Also crucial: this is a *review* task, and the primary deliverable is the review (which appears to already exist). The repair attempt is about the gate failure. The instructions say: "Fix authored source or report an infrastructure blocker." The fix here is clearly authorship/hygiene: the negative-control root must not live inside the compiled package. Since the previous card claims TASK_DONE, after repair I should update the card/checkpoint with the repair evidence and keep TASK_DONE (if all claims still hold) — the mathematical claims are unchanged.
+
+But wait — I should verify the round-1 deliverables actually hold. This is a "repair attempt 1", and my job is primarily to make the gate pass without weakening anything. But I should also re-verify the key claims (fresh source hashes, compile evidence, axiom audit) since I'm the owner and it's cheap-ish. Also worth checking: "Do not edit tests or negative controls" — so I should not modify NegControl.lean content. Moving the *included root* file needs care.
+
+Hmm, actually there's a subtlety: is `release/audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` a "negative control" file? Yes, it is the negative control runner. Moving it = changing its path. Alternatively, I could leave it in place and make the "gate" pass by... no, impossible: gate requires exit 0 for every .lean under release. Unless the file is renamed to not end in `.lean` (e.g., `.lean.txt`) — that's also a move/rename but keeps content in place. Hmm.
+
+Which is less intrusive? The cleanest interpretation: the negative control must be *runnable* and *must fail*, which is incompatible with living inside a package whose gate compiles every `.lean` file. Every other task in the fleet keeps negative-control roots outside the release package (e.g., D12's NegControl module inside the package only `#print axioms` itself, it doesn't fail; and their failing driver lives outside). So the convention is: failing roots go outside `release/`. Relocating preserves semantics exactly.
+
+Let me check what D13-vankampen-recognition / D13-integrated-kernel-audit do — do they have negcontrol inside release? The gate says their ok=True with 456 and 116 files. Let me check if they have a negcontrol dir at the worktree root instead. That confirms convention.
+
+Let me now:
+- read the .md card (19KB) to know what's claimed;
+- read the driver script;
+- check other worktrees' negcontrol conventions.
+
+Let me do these in parallel.
+dsh: reasoning:
+Confirmed convention: `D13-integrated-kernel-audit` has `negcontrol/` at the worktree root (OUTSIDE release) and `audit-evidence/negcontrol/` at root. So the fix is to move `release/audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` out of the package to the worktree root.
+
+Wait — but is that file perhaps a *copy* made by the previous invocation explicitly for the gate to check negative control? Let me check the D13-integrated-kernel-audit layout for comparison, and check the log 04-negcontrol-included.log to see which path was used (relative to release?).
+
+The card says: `cd <worktree>/release` ... `lake env lean audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean  # EXIT 1 (expected)`. That means at the time of the run, the file WAS inside release/audit-evidence/negcontrol/. Hmm, so the worker intentionally placed it there so that the command works from `release/`. And that's what broke the gate.
+
+But wait — D13-integrated-kernel-audit has both `negcontrol/` and `audit-evidence/negcontrol/` at worktree root. So the convention there: run from worktree root? Let me check its tool to see how it invokes. Let's look at integrated-kernel-audit's driver quickly.
+
+Actually the simplest robust fix: move the negative-control root to the worktree root: `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` (root-level audit-evidence), and invoke it as `lake env lean ../audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` from cwd=release (or from worktree root with `lake env lean` — but `lake env` needs a lakefile; running `lake env lean` from worktree root would fail since no lakefile.toml at root... Actually `lake env` requires being in a package dir. So cwd=release and path outside).
+
+Let me verify `lake env lean ../audit-evidence/negcontrol/X.lean` works from release. Need LEAN_PATH to find Poincare oleans — `lake env` sets that. The file is outside the package root; Lean may complain "file not found"? No, relative path is resolved from cwd. It should work.
+
+Alternatively: keep it inside release but give it a name that doesn't end in `.lean`, e.g. `CriticalPathNegControlIncluded.lean.txt`, and instruct `lake env lean` copy to temp. That's hacky.
+
+Another alternative: Since the gate compiles files with `lake env lean <relative>`, and Lean files that fail elaboration exit non-zero... Could I make the negative-control root exit 0 while still demonstrating the audit fails? E.g., wrap it so that it compiles successfully, with the audit failure captured... The audit command `#d13_axiom_audit` in AxiomAudit.lean has a fixed behavior: it checks the current environment and calls `logError` when there's an unapproved axiom. If I could run that command in an environment where the bad axiom is present and catch/verify failure in-process, then the root would exit 0 and the gate passes. But `logError` makes the file's elaboration fail; there's no way to "catch" an error and still succeed.
+
+Actually, wait — maybe there IS a way: make the negative-control root *check* the audit's failure by checking the environment programmatically with the same fail-closed function, and assert that the audit *would* fail (e.g., `#eval`/`example` verifying `(directDependencies ...).contains badAxiom`), while exiting 0. But then it's no longer running the actual audit command → weaker evidence. And the instruction says don't edit negative controls. The convention (move outside package) preserves the control exactly.
+
+Decision: relocate the file to the worktree root `audit-evidence/negcontrol/`, byte-identical, and add a small root-level `negcontrol/README` if needed. Update the driver script `audit-evidence/tools/d13_cp_audit.py` path handling accordingly, plus the card text. Then re-run all verification (build, audit, negcontrol from new path, full per-file gate sweep) and write the updated card, marking the repair.
+
+Also: I should double-check the `.md` card's "How to reproduce" section and any references to the in-package path, and update them to the new path (documentation fix, not a claim change).
+
+One more consideration: the file `release/audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` — if I delete it from release, `source_sha256` changes → gate reruns. Good. If I *move* it to worktree root, gate's source_hash excludes it (outside package). Good.
+
+Also the `.md` says 461 files under release/ excluding .lake. That count includes the .py tools? no — 461 files total (all files, not just .lean) since final-release-hashes.txt says 461 files under release excluding .lake. After removing 1 file → 460. Update counts.
+
+Let me also check whether other files inside `release/audit-evidence/` exist: only that one .lean and the negcontrol dir. After moving, `release/audit-evidence/` becomes empty → remove dirs.
+
+Now: is there something else I need to do for the "repair attempt"? The task tells me: "Compile from the release package, NOT the worktree root. Fix authored source or report an infrastructure blocker." Also "Do not wait for the dispatcher: finish your own checks and write the result card." So: fix, re-verify, update card + checkpoint + results JSON with the repair evidence, and end with TASK_DONE.
+
+I should also verify the round-1 mathematical claims are still valid on a fresh build, since the gate demands the compiled package. Let me plan the verification steps:
+
+1. Move file, update driver/card references.
+2. `cd release && lake build` (incremental; the .lake/build exists from round 1? Let me check release/.lake — yes, `.lake` exists (18:20). The gate ran `lake build` at 18:27 with exit 0 and 9337 jobs, so oleans are fresh. After removing only a non-module file, `lake build` should be a no-op/fast.)
+3. Run the authored audits: StatementAudit, UsageProbe, AxiomAudit, PrintAxiomsAll → expect exit 0 with PASS.
+4. Run negative control from the new outside path → expect exit 1 naming negControlBadAxiom.
+5. Run my own full gate-equivalent sweep of all `.lean` files under release (reproducing gate's check_file) → expect all exit 0 → ok=true.
+6. Axiom audit: fail-closed programmatic check via the driver; plus `#print axioms` on each authored declaration.
+7. Update hashes, evidence logs, results card (md/json), checkpoint.json.
+
+The full sweep with 4 workers over 454 files: gate took ~10 min. Fine (we have 4h, ~3.5h left). But note: the gate-build.log shows it ran build + 455 file checks in ~10 min. Let's replicate with 4 workers. Actually, since `lake build` already built all modules, `lake env lean <file>` will still re-elaborate each file (imports from oleans). Should be seconds each.
+
+Hmm, wait. There's an important question: after I move the file out of release, will the dispatcher re-run the gate and overwrite gate.json? The state/gate.json currently has source_sha256 = fingerprint of the old source set. After my change the fingerprint changes, so the next `compile_gate` run will redo everything. The dispatcher picks up tasks from queue.json; the task status is currently... let me check queue.json for D13-critical-path-review status. If it's "gate_failed", the repair prompt was issued. After my fix, the next dispatcher loop iteration should re-run the gate for tasks in PENDING_GATES / needs gate. Let me read dispatch_loop.py around lines 140-260 to understand the state machine so I can predict what happens next, and confirm the repair attempt is expected to leave the tree gate-clean.
+
+Let me read that section.
+dsh: reasoning:
+Now I understand the full picture. The task is in "running" status with repair_count=1. When this invocation finishes (DONE file created by worker_loop presumably), the dispatcher will re-run the gate. If gate ok → verified.
+
+So my repair job: make `release/` gate-clean. Then update card + checkpoint + JSON. And possibly write a `DONE` file? No — worker_loop handles that (let me check worker_loop.sh briefly). Actually the dispatcher checks `(state / "DONE").exists()`, and worker_loop.sh presumably touches state/DONE when the agent's invocation finishes. That's not my job.
+
+Let me now check the driver script `audit-evidence/tools/d13_cp_audit.py` for the negative control path.
+
+Plan of action (todo list):
+1. Read driver + relevant evidence to determine path references.
+2. Relocate the negcontrol root out of release/ (byte-identical), update driver + any references.
+3. Re-run full verification: lake build, statement audit, usage probe, axiom audit, print axioms, negcontrol from new path, gate-equivalent per-file sweep.
+4. Refresh source hashes; update evidence logs.
+5. Update results md/json + checkpoint.json with repair record.
+6. Final consistency checks (forbidden-token scan of authored files).
+
+Let me set up a todo list and get going.
+
+First, inspect the driver.
+dsh: reasoning:
+The driver runs `lake env lean audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` with cwd=RELEASE. So the file must be inside release for that command. I need to change it to an absolute/relative path outside: `lake env lean ../audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` with cwd=RELEASE.
+
+Let me verify empirically that running a Lean file outside the package root works from within release. Test quickly with the existing file before moving (copy to root audit-evidence/negcontrol/ and run).
+
+Actually the worktree root audit-evidence/negcontrol/ doesn't exist yet (find showed only release/audit-evidence/negcontrol). Let me create the root dir, copy the file there, and test `lake env lean ../audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` from release.
+
+Note: the sandbox is workspace-write so this is fine.
+
+One thing to double check: does the root audit-evidence directory get scanned by the gate? No: gate scans `package = worktree/release`.
+
+Let's do the move carefully:
+- `mkdir -p audit-evidence/negcontrol`
+- `git mv`? Is this a git repo? Let me check. The instruction says do not commit/push. Moving a file with `mv` is fine. Let me check if .git exists in worktree... Worktree listing didn't show .git. Probably not a git repo (or it's a copy). Fine.
+- `cp -p release/audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean audit-evidence/negcontrol/` then verify hashes, then `rm -rf release/audit-evidence`.
+
+Then test.
+
+Also for full reproducibility of the negative control, the file itself should be self-describing; its content is unchanged. Its comment mentions "runs the same fail-closed axiom audit used by the positive root". Fine.
+
+Let me also check the D13-integrated-kernel-audit's approach for running outside-package negative controls to follow fleet convention. Quick peek at its driver's negcontrol step.
+dsh: reasoning:
+Interesting — D13-integrated-kernel-audit has `audit-evidence/negcontrol/NegativeControlIncluded.lean` at the **worktree root** (outside release). Let me see how its driver invokes it and what cwd. Let me look at the log to see the command.
+dsh: reasoning:
+Hmm, the `17-negcontrol-included.log` doesn't show an error at its head - let me search for the fail line. Anyway, the convention is clear: negative control root lives at `audit-evidence/negcontrol/` **at the worktree root**, and the driver invokes it presumably with an absolute path or `../audit-evidence/...` from release cwd. Let me find the invocation in the sibling's driver script.
+dsh: reasoning:
+The sibling task uses exactly `lake env lean ../audit-evidence/negcontrol/NegativeControlIncluded.lean` from cwd=release. That's the fleet convention and confirms the fix. Let me apply the analogous change:
+
+- Create `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` at worktree root (byte-identical copy of the file in release).
+- Remove `release/audit-evidence/` entirely (it contains only that file).
+- Update the driver `d13_cp_audit.py`: change the negcontrol command to `["lake", "env", "lean", "../audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean"]`, cwd=RELEASE. Log name stays `04-negcontrol-included` (maybe rename to `04-negcontrol-included` — keep, to preserve history; but the file content logs the new cmd).
+
+Wait — the sibling's replay script `run 17-...` uses cwd=release presumably. Good.
+
+Let me check first that the current release copy matches what was used in the round-1 log (04-negcontrol-included.log header contains cmd + cwd). Let's check the header of the existing log to confirm the path used.
+
+Then make the change and test.
+
+Additionally: consider whether there are other stale artifacts inside release/ that shouldn't be there: `release/audit-evidence/` only had the negcontrol file. Also check for `release/**/*.lean` that might be a "test" or leftover. The gate compiled all 455 lean files successfully except that one, so we're fine.
+
+Also note `release/audit-evidence/negcontrol/` dir removal changes release file count from 461 → 460.
+
+Let me now execute the move + driver edit.
+dsh: reasoning:
+Now update the driver script. Change line 80-83 to use the outside path. Also update the docstring perhaps.
+
+Then test the new invocation from release.
+dsh: reasoning:
+The negative control still fires from outside the package: exit 1, `D13CPAUDIT_VERDICT FAIL`, naming `negControlBadAxiom`. 
+
+Now, the README/docs may reference the old path. Let me grep in the worktree for `audit-evidence/negcontrol` references (card md/json, driver, etc.) and update where needed (the card's reproduction section).
+
+Next big step: re-run the full verification suite. First `lake build` in release (should be quick), then the driver.
+
+But careful about time: the driver runs `lake build` (fast now) + 6 lean invocations. Then I need the full 454-file gate sweep (~10 min). Let me run the driver first in background? The driver takes maybe 2-4 min. Let's run it in foreground with generous timeout, since next steps depend on it.
+
+Actually, let me parallelize: start the gate-equivalent sweep in background (it's independent of the driver, but both compete for CPU...). Hmm, the sweep is the expensive part (455 files × lean). Running both concurrently could slow things. Better sequential: driver first (fast, ~1-2 min), then gate sweep in background while I write the card.
+
+Actually, one important thing: the gate's `check_file` runs `lake env lean <file>` for each file. I'll write my own sweep script that mimics it exactly (4 workers, per-file timeout 900s), writing results into my own evidence file. This is the strongest evidence that the next dispatcher gate will pass.
+
+Also, per the task: "Provide #print axioms plus a fail-closed programmatic axiom audit for every new declaration" — that's already in AxiomAudit/PrintAxiomsAll. I have made no new declarations in this repair (only a moved file + edited Python driver). But I should record fresh hashes.
+
+Should I add any new Lean material in this invocation? The task's repair prompt says: fix authored source or report infra blocker; finish checks, write result card. The original task is a review task whose deliverable is the review. Since round 1 already produced the full review, and the gate failure was caused by file placement, the correct repair is exactly what I did. I don't need new theorems. But to be thorough and to add value within the remaining time, I could re-verify key claims (statement audit PASS, usage probe PASS, B1 dimension-1 lemmas, axiom cones). That's what the driver does.
+
+Let me run the driver now. Note the driver script path: run from worktree root: `python3 audit-evidence/tools/d13_cp_audit.py`. It uses RELEASE cwd for the lean commands and writes logs.
+
+Note the driver's `run("00-lake-build", ["lake","build"], {0})` with cwd=RELEASE. Good.
+
+Also: the release `.lake` build dir is fresh from round 1 gate (18:27). Removing the negcontrol file doesn't invalidate oleans. `lake build` will be quick.
+
+Let me run it.
+dsh: reasoning:
+Driver all_ok=true in 40s (build was cached).
+
+Now run the gate-equivalent sweep over all 454 .lean files under release/, using the same logic as `compile_gate` (including cwd=release, `lake env lean <relative>`, exit must be 0). Let me write the sweep script into audit-evidence/tools/ (it's an added evidence tool, fine) and run it in background, writing results to `audit-evidence/gate-replay.json`.
+
+Important: `lake build` in the gate is run first; already verified exit 0 by driver. I'll include a re-run of `lake build` in the sweep for exactness.
+
+Let me write the script mirroring dispatch_loop.compile_gate exactly (same file discovery: os.walk excluding .lake/.git, .lean not starting with ._, plus lakefile/lean-toolchain/manifest hashing). Actually I'll reuse the source_hash function semantics and record the sha256 so the dispatcher's gate should match it when it re-runs.
+
+Note: the dispatcher's source_hash is computed over release/ excluding .lake and .git. My script should compute that same digest to predict the gate fingerprint. Let me implement it identically.
+
+Then the per-file check with ThreadPoolExecutor(max_workers=4).
+
+I'll run it in background (expect ~10 min) and meanwhile inspect the authored sources to spot-check compliance and prepare card updates.
+
+Let me write the script with the write tool.
+dsh: reasoning:
+While the sweep runs (~10 min), let me inspect the authored sources and evidence to verify the round-1 claims are intact, and check the card's references to the old negcontrol path.
+
+Let me:
+1. grep for "audit-evidence/negcontrol" in longrun/results/*.md/*.json, checkpoint, driver.
+2. Look at the authored Lean files briefly.
+3. Check the results JSON structure to know what to update.
+
+Let me do the greps and read the JSON keys.
+dsh: reasoning:
+The result JSON is comprehensive. I need to:
+1. Update `longrun/results/D13-critical-path-review.json`: fix negcontrol path references (line 335 and 428), update compile_evidence with the repair run, update `actual_elapsed_time` and add a repair record. Also update the source_hashes to the fresh ones (the negcontrol file moved; authored files unchanged; add gate-replay).
+2. Update `longrun/results/D13-critical-path-review.md`: fix the reproduction command, add a repair note section, update file counts (461 → 460), and keep TASK_DONE.
+3. Update `longrun/checkpoint.json`: invocation 2, status, gate repair record, hashes.
+4. `audit-evidence/tools/assemble_result.py` line 77 references the old command string — update it.
+5. `audit-evidence/final-release-hashes.txt` needs regeneration: it currently lists `./audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` (the release copy). Wait, look: `audit-evidence/final-release-hashes.txt` line 3 shows `ef3f...  ./audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean`. Hmm — that file is at the *worktree root* audit-evidence (since the grep path was ./audit-evidence/...). Wait, but it lists the release-relative path. The final-release-hashes.txt is a manifest of files under release/ — and it included the negcontrol file with a release-relative path. Let me read that file's head.
+
+Actually, hold on. The grep result `./audit-evidence/final-release-hashes.txt:3:ef3f...  ./audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` — the path inside the txt is `./audit-evidence/negcontrol/...`. If that file was generated as `find . -type f | xargs sha256sum` from within release/, then the path is release-relative: `./audit-evidence/negcontrol/...` i.e. `release/audit-evidence/negcontrol/...`. Yes — that's the release copy (which is now moved). So final-release-hashes.txt is stale (461 entries incl. the relocated file) and must be regenerated for the new tree (460 files).
+
+Let me read it and the assemble script to understand what it does.
+
+Also I should double check: are there other task-local audit modules under `release/Poincare/D13/CriticalPathReview/` that reference the negcontrol path? No.
+
+Now, one question: should I keep the evidence file hashes for the "copied snapshot" the same? Yes, those files are untouched.
+
+Let me wait for the gate replay job and meanwhile read assemble_result.py and final-release-hashes.txt head.
+dsh: reasoning:
+Good, I understand the assembly pipeline. The `assemble_result.py` reads `audit-summary.json` (which the driver regenerated) and the hash manifests.
+
+Now let me check the gate replay job status. It might still be running. Meanwhile, let me regenerate the hash manifests:
+
+- `final-release-hashes.txt`: `find . -type f | sort | xargs sha256sum` from within release/ excluding .lake. Let me check exactly how it was generated (461 entries — check if .lake excluded and path prefix `./`). I'll replicate: `cd release && find . -type f -not -path './.lake/*' | sort | xargs sha256sum > ../audit-evidence/final-release-hashes.txt`. Hmm, but wait: the original had entries starting with `./Audit/...`. Let me check whether .lake files were excluded and whether lean-toolchain etc. are included. Let me verify by counting: `find release -type f -not -path '*/.lake/*' | wc -l` should be 460 now (461 minus the moved file). Let me check ordering: entries appear as `./Audit/CounterexampleAudit.lean`, then `./audit-evidence/negcontrol/...` — that's not `sort` order (Audit < audit-evidence in LC_ALL=C sort? 'A'(65) < 'a'(97) yes so ./Audit/... then ./audit-evidence — correct sort). Yes it's sorted. Good.
+
+- `authored-hashes.txt`: 9 entries (8 authored Lean files + driver + now gate replay? It has 9 lines: AxiomAudit, B1DimensionOne, NegControl, PrintAxioms, PrintAxiomsAll, ScalarViability, StatementAudit, UsageProbe, d13_cp_audit.py = 9). I should add the gate replay tool → 10 entries. Let me check the file's format (sorted by path? includes driver).
+
+Let me read both manifests fully (small).
+dsh: reasoning:
+460 files now. The authored-hashes.txt paths are relative to release/ for the Lean files and relative to audit-evidence? No: `tools/d13_cp_audit.py` — that's relative to audit-evidence/. Mixed. So the manifest is `sha256sum` of authored files with paths relative to the release dir for lean files and relative to audit-evidence for tools. Fine — I'll append the gate replay tool as `tools/d13_gate_replay.py` and keep the same convention.
+
+Let me check the gate replay job progress.
+dsh: reasoning:
+Still running. Let me continue preparing. While waiting, let me verify the key authored Lean files for compliance: no sorry/axiom/unsafe/native_decide/proof_wanted in the D13 directory (excluding NegControl which intentionally has an axiom).
+
+Let me grep the authored dir.
+dsh: reasoning:
+Good — the only `axiom` declaration is in NegControl.lean (intentional). All matches in AxiomAudit.lean are comments/strings/Lean meta-level identifiers.
+
+Let me double-check there's no actual `axiom` command or `sorry` tactic in the authored files. The grep matched comments and identifiers like `sorryAxiom`. A stricter scan: `^\s*(axiom|theorem[^\n]*:= by\s*sorry)\b` etc. Let me run a targeted scan on the whole release for `sorry` tactic usage... but the snapshot may contain some (D12's Blocked.lean files?). Not my concern; the gate compiles fine and the tasks' own audits cover it. But for my authored dir, let me do a precise scan.
+
+Also, `#print axioms` coverage: PrintAxiomsAll covers 63 authored declarations. Good.
+
+Now let me check the job again in a bit. In the meantime, let me look at the statement audit module briefly to confirm what it verifies (for the card's repair section), and check the `PrintAxiomsAll.lean` for the list of declarations.
+
+Actually, more valuable: verify the claim "63 authored declarations" and the D13CP_PAIR downstream-use checks are in the freshly regenerated logs. Let me look at the regenerated logs' verdict lines.
+dsh: reasoning:
+Hmm, `01-statement-audit.log` shows REQ_OK/ELIMINATED_OK lines but no `D13CP_VERDICT PASS` in the grep output (head -12 cut it off maybe). The driver checked `contains=["D13CP_VERDICT\tPASS"]` and ok=true, so it's there. Let me confirm with a grep for "D13CP_VERDICT".
+
+Let me check the gate replay status too.
+dsh: reasoning:
+All fresh: 10 D13CP_PAIR checks, all in_proof=true; verdict PASS; 71 audited declarations, 0 unapproved; 63 print-axioms entries.
+
+Now let me check the gate replay job.
+dsh: reasoning:
+Still running. Meanwhile, let me prepare the updated evidence files:
+
+1. Regenerate `final-release-hashes.txt` (460 files, from release/).
+2. Update `authored-hashes.txt` to add gate replay tool + unchanged authored lean files (verify hashes match).
+3. Update `assemble_result.py` line 77 command string for negcontrol and add repair record + gate replay evidence.
+4. Then re-run assemble to regenerate the JSON (after editing the script to include new fields).
+
+Let me first regenerate the release hash manifest and verify the authored hashes are unchanged. Careful: the Lean-authored files should be untouched, so hashes should match the previous manifest. Let me verify.
+
+Note: while the gate replay is running `lake env lean` on files, hashing files is safe (read-only).
+
+Let me do hash regeneration now.
+dsh: reasoning:
+All 8 authored Lean files are unchanged (hash-identical to round 1). Good — the repair touched no Lean source.
+
+Now decide: do I need any *new Lean* content? The repair instructions say "Fix authored source or report an infrastructure blocker." No Lean source needed. But the overall task says "Add authored Lean files under release/Poincare/D13/CriticalPathReview/ and a task-local audit module" — already done in round 1 and preserved.
+
+Hmm, but wait. Let me reconsider whether moving the negcontrol runner is the *only* acceptable fix. An alternative fix that keeps everything inside release: none viable. The convention across the fleet (D13-integrated-kernel-audit) is the outside path. Also, the repair prompt says "Fix authored source" — the file placement was authored by this task, so relocating it is fixing the authored evidence layout. And "Do not edit tests or negative controls" — I did not edit its content, only its location (and I should document this explicitly and honestly in the card: the negative control's bytes are unchanged, sha256 ef3f7ece..., relocated from release/audit-evidence/negcontrol/ to audit-evidence/negcontrol/).
+
+Hmm, one consideration: does relocating count as "editing a negative control"? To be maximally safe, I could ALSO keep its invocation semantics identical (same file, same imports, same expected failure, same driver assertion). Yes, that's exactly what I did, and I documented the sha256 invariance. I'll state this clearly.
+
+Now, while the gate replay runs, let me update `assemble_result.py`:
+- negcontrol command string.
+- add `gate_replay` evidence section reading `audit-evidence/gate-replay.json`.
+- add `repair_record` section.
+- update `release_file_count_excluding_lake` (auto from manifest — now 460).
+- update `actual_elapsed_time`.
+
+Let me read the rest of assemble_result.py to see the JSON assembly and elapsed time field.
+dsh: reasoning:
+Now let me make the edits to `assemble_result.py`:
+
+1. negcontrol command string → `lake env lean ../audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` (cwd release).
+2. Add `gate_replay` to compile_evidence, reading gate-replay.json.
+3. Add `repair_record` top-level with the relocation details, and per-file gate failure.
+4. Update `actual_elapsed_time` (will be filled at the end with the measured elapsed).
+5. Also update `source_hashes` to include the gate replay tool + note.
+
+Let me check the gate replay job first — it may be done.
+dsh: reasoning:
+Still running (it's been ~7 min). Let me continue with edits while it runs.
+
+Edit 1: assemble_result.py negative control command + add gate replay/repair record.
+
+I'll write the edits carefully.
+dsh: reasoning:
+Now update `actual_elapsed_time` and the summary line to mention the repair. Also the source_hashes should include the driver + gate replay tool. Let me look at how authored hashes are read: `authored = [ln.split() for ln in read("audit-evidence/authored-hashes.txt")...]` → `source_hashes["authored_sha256"]`. I'll add `tools/d13_gate_replay.py` to authored-hashes.txt after computing its hash.
+
+Let me wait for the gate replay to finish first (it computes hashes anyway). Meanwhile, update the `actual_elapsed_time` field with a placeholder to be finalized at the end — better to compute now-ish. Let me measure: invocation start roughly 18:44 (queue started_at 18:44:30). It's a 4h cap. I'll fill in at the end with actual numbers.
+
+Let me now also prepare the card (md) update. Let me view the relevant sections: §8 reproduction commands and the header (file count), plus find a place to add the repair note. Let me read the md around lines 230-300 and the header.
+dsh: reasoning:
+Now let me check on the gate replay job. It's been ~10 min. Let me poll.
+dsh: reasoning:
+Still running. Hmm, the dispatcher's gate took ~10 minutes for 455 files. Let me check how far along it is by checking process activity or the log. My script only writes the JSON at the end, so I can't see progress. Let me check `ps` for lean processes and count.
+
+Actually, the dispatcher's gate started at ~18:27 and finished by 18:37 (10 min). My replay started at ~19:1x. Let me check the current time and process count.
+dsh: reasoning:
+Interesting: `pgrep -fc "lake env lean"` returns 8 (probably counting the `timeout lake env lean` wrappers or the shell). The replay is running. Note other workers on the same machine are also running Lean builds (D13-manifold-ibp-volume-form), which can slow things down.
+
+Note also my own worker_loop pid 3442587 (this session).
+
+Let me wait for the job. Meanwhile, let me update the card markdown sections (I can do that now and regenerate at the end if needed).
+
+Actually, the card update should reflect final numbers (gate replay results). I'll draft the edits now for the parts that don't depend on the replay outcome, then finalize.
+
+Edits to the md:
+1. Header: "Generated (local)" line and verdict — add repair invocation info.
+2. §8 reproduction: fix negcontrol command path; update 461 → 460; mention gate replay tool.
+3. Add a new §0.1 or a "Repair attempt 1" subsection documenting the gate fix.
+4. Trust separation table: add a row/entry for the dispatcher gate replay.
+
+Let me first look at the md header lines 1-20 and §5/§6 region 200-235 for context. I already saw head. Let me view lines 190-235.
+dsh: reasoning:
+Excellent! The gate replay passes:
+- ok: true
+- 454 .lean files, all exit 0
+- build_exit 0
+- source_sha256 = 1894a6110f0f912abf125022257debbdd724cf2177235356625a2f08b2d6bb15
+- elapsed 405.8s
+
+Note: the dispatcher's gate counts 455 files earlier (including the negcontrol); now 454 .lean files (the gate's `files` list is .lean files only; the earlier gate.json showed 455 files = 454 + negcontrol). Good.
+
+Now:
+1. Update `authored-hashes.txt` to add gate replay tool.
+2. Run `assemble_result.py` to regenerate the JSON (it will read gate-replay.json).
+3. Update the md card.
+4. Update checkpoint.json.
+5. Also update the `declaration-types.txt`? It was generated in round 1; declarations unchanged, fine.
+
+Also, hmm — the source_sha256 for the dispatcher gate fingerprint: my replay computed it over release/ with the same algorithm. Good. I'll record that.
+
+Wait — one thing to double check: my replay's `source_hash` sorts `files` after collecting, unlike dispatch_loop which sorts directories and names but *doesn't* globally sort `files` (it does `files.sort()` actually — yes line 84 `files.sort()`). And it adds extra files in fixed order. And it uses `str(path.relative_to(package))`. My implementation uses os.path.relpath → same string. Note dispatch uses `Path(directory)/name` and `str(relative_to)`; for `./Audit/x.lean`, relative_to gives `Audit/x.lean`. os.path.relpath gives `Audit/x.lean` too (os.walk('.') root='.' → relpath('./Audit/x.lean','.') = 'Audit/x.lean'). Same. And extra file order identical. So the fingerprint should match what the dispatcher computes. Let me verify by directly importing the dispatch_loop's source_hash... it's in the longrun dir; I could python-import it. Actually `dispatch_loop.py` might execute stuff on import (it has a main guard presumably). Let me just verify by computing with an exact re-implementation using pathlib... My implementation is equivalent; but to be extra safe let me actually import the module and call source_hash. Risk: importing may start the dispatcher loop? Let me check the bottom of the file (lines 260-290).
+
+Let me check.
+dsh: reasoning:
+Safe to import (main is guarded). But importing will evaluate module-level constants (STATE, WORK, ENV, PROMPTS, QUEUE, LOGS, PENDING_GATES...). Should be harmless. Let me call `source_hash(Path(worktree)/'release')` and compare to my replay fingerprint — this cross-validates the exact fingerprint the dispatcher will compute.
+
+Let me do it in one python command.
+dsh: reasoning:
+Fingerprints differ! Why? Let me diff the two implementations.
+
+dispatch_loop.source_hash:
+```python
+digest = hashlib.sha256()
+files = []
+for directory, directories, names in os.walk(package):
+    directories[:] = sorted(name for name in directories if name not in (".lake", ".git"))
+    files.extend(Path(directory) / name for name in sorted(names) if name.endswith(".lean") and not name.startswith("._"))
+files.sort()
+for path in files + [package / name for name in ("lakefile.toml", "lake-manifest.json", "lean-toolchain") if (package / name).exists()]:
+    digest.update(str(path.relative_to(package)).encode())
+    digest.update(path.read_bytes())
+```
+
+Mine:
+```python
+for directory, directories, names in os.walk(package): same
+    files.extend(os.path.join(directory, n) ...)
+files.sort()
+extra = [...]
+for path in files + extra:
+    digest.update(os.path.relpath(path, package).encode())
+```
+
+Differences:
+1. `os.walk(package)` where package is a `Path` (dispatcher) vs `str` (mine). os.walk with a Path yields `directory` as a **str**? Actually os.walk accepts path-like and yields str if input is str; if input is a Path, it yields... In CPython, `os.walk` with a path-like object yields `dirpath` as the same type? Let me recall: `os.walk(top)` — "top may be a path-like object"; implementation uses `os.fspath(top)` internally? In CPython 3.10's os.walk, `top = fspath(top)` is applied at the start: `def walk(top, topdown=True, onerror=None, followlinks=False): top = fspath(top)`. Yes, so directory is a str either way. Hmm.
+
+2. Sorting: dispatcher sorts `files` (list of `Path`) — `Path` comparison is by parts (lexicographic on parts tuple). Mine sorts `str` — string comparison. These can differ! E.g. 'Poincare/D13/...' vs 'Poincare/D13.lean': Path comparison compares parts: ('Poincare','D13','CriticalPathReview',...) vs ('Poincare','D13.lean') → 'D13' < 'D13.lean' as strings too... Hmm, differences arise where a directory name is a prefix: e.g. `Audit/CounterexampleAudit.lean` vs `Audit/CurvatureODEAudit.lean` — same either way. The classic divergence: `foo.lean` vs `foo/bar.lean`: string sort puts 'foo.' (46) before 'foo/' (47)... Path parts: ('foo.lean',) vs ('foo','bar') → 'foo.lean' vs 'foo' → 'foo' < 'foo.lean' since prefix shorter → directory comes first. So ordering differs for such pairs. E.g. `Poincare/D13.lean` does not exist... but `Poincare/D12/ConnectionCurvature.lean` and `Poincare/D12/ConnectionCurvature/...` — both exist! From the file listing: `Poincare/D12/ConnectionCurvature.lean` AND `Poincare/D12/ConnectionCurvature/ChartLeviCivita.lean`. Yes! So the two sort orders differ.
+
+3. Extra files: dispatcher uses `package / name` (Path objects) and `str(path.relative_to(package))` → 'lakefile.toml'. Mine: os.path.relpath → same. But order of extra list: dispatcher puts `files + [lakefile.toml, lake-manifest.json, lean-toolchain]` in that fixed order; mine same.
+
+So the fingerprint differs due to sort order of Path vs str. Also `.relative_to` vs `relpath` produce identical strings for these.
+
+I must make my replay's `source_hash` byte-identical in behavior to the dispatcher's — use pathlib Path objects and Path.sort. Let me fix `d13_gate_replay.py` to use `pathlib` and mirror exactly. Then re-run just the fingerprint computation to confirm equality (no need to re-run the 7-minute sweep; the file set and exits are already verified).
+
+Note: this is an important catch — do NOT report the wrong fingerprint. Let me fix the tool and recompute (fast, no rebuild).
+
+Also the hash of "lakefile.toml" etc. Let me verify equality after the fix.
+dsh: reasoning:
+Also `check_file` uses `os.path.relpath(path, PACKAGE)` where path is now a Path → relpath works with Path. Fine. But to be identical to dispatch's `str(path.relative_to(package))`, let me use `str(path.relative_to(PACKAGE))` with Path. Let me update that too.
+
+Then: rather than re-running the entire sweep (7 min), I can:
+(a) add a `--fingerprint-only` mode to verify equality quickly; or
+(b) just run the full replay again — 7 minutes is affordable and gives a clean, consistent artifact (with the correct fingerprint recorded). But the sweep is already done and would produce identical exits; re-running is wasteful but safe and gives a single consistent JSON. Actually the existing gate-replay.json has `files` with results and a wrong fingerprint. I could patch the fingerprint field... but better to make the tool correct and re-run it. 7 minutes is acceptable; but the CPU is shared with other workers. Let me instead do a quick verification first (fingerprint equality), then decide.
+
+Actually — cleanest: fix the tool, verify fingerprint equality via a tiny python snippet that imports the tool and calls source_hash, then re-run the full replay in the background (7 min) while I write the card. If the fingerprint matches dispatch's, the recorded JSON is authoritative and reproducible. I'll re-run.
+
+Let me update check_file first.
+dsh: reasoning:
+Fingerprints now match exactly: `13c945de1a1bf3e2cdf1adc1ddfbc8af2ee36509d3f7bec2c88682f936b94ef1`, and the ordered file list matches element-for-element.
+
+Now re-run the full replay to produce a consistent artifact (with correct fingerprint + per-file results). ~7 min in background. Meanwhile I'll write the card updates.
+
+Let me start it.
+dsh: reasoning:
+While that runs, let me update the card markdown and checkpoint. I'll wait for the final replay numbers before writing exact values, but I can write the structural edits now with the known expected values (ok=true, 454 files, build_exit 0, fingerprint 13c945...). The fingerprint and file count are already verified; per-file exits were all 0 in the first run and nothing changed since (except no source changes). Safe.
+
+Let me now edit the md:
+
+1. Header: update "Generated (local)" line and add repair info.
+2. Add a new subsection §0.1 "Repair attempt 1 (this invocation)".
+3. §7 trust table: add gate replay row.
+4. §8 reproduction: fix command and counts, add gate replay.
+5. Keep TASK_DONE.
+
+Let me view the header exactly (lines 1-14) again to edit precisely.
+dsh: reasoning:
+Now update §7 trust table (compilation row) and §8 reproduction. Let me edit.
+
+For §7, add a gate row. The existing table:
+
+| **kernel trust** | ... |
+| **compilation** | `cd release && rm -rf .lake/build && lake build` → exit 0, 9329 jobs, 1m28.6s; per-file exits recorded | `audit-evidence/build-first.log`, `audit-evidence/transcript.txt` |
+| **statement correctness** | ... |
+| **closure of a named blocker** | ... |
+
+I'll add a **dispatcher gate** row after compilation.
+
+Also note: the fresh build in invocation 1 was `rm -rf .lake/build && lake build` (exit 0, 9329 jobs). In invocation 2 the driver ran `lake build` (incremental, exit 0). The gate replay also ran `lake build` (exit 0). I'll record precisely.
+
+Let me edit the trust table.
+dsh: reasoning:
+Now update `authored-hashes.txt` to include the gate replay tool (and confirm the driver's new hash since I edited d13_cp_audit.py).
+
+Let me regenerate authored-hashes.txt properly:
+- 8 lean files: sha256sum release/Poincare/D13/CriticalPathReview/*.lean with path relative to release.
+- tools/d13_cp_audit.py and tools/d13_gate_replay.py with path relative to audit-evidence.
+- Also `tools/assemble_result.py`? It's an evidence script, not authored proof. Round-1 manifest had 9 lines (8 lean + 1 driver). I'll add both the gate replay and assemble_result? Keep it to the audit drivers: d13_cp_audit.py, d13_gate_replay.py. Hmm, assemble_result.py is also part of the evidence pipeline. I'll include all three tools for completeness → 11 lines. But assemble_result.py reads `len()` for nothing; `source_hashes["authored_sha256"]` is a dict of path→hash, so extra entries are harmless. I'll include the three tools.
+
+Wait, careful: `authored-hashes.txt` is parsed as `[ln.split() for ln in ...]` → `{p: h for h, p in authored}`; fine with 11 lines.
+
+Let me write it deterministically. But note the round-1 manifest sorted by path (AxiomAudit ... UsageProbe, tools/d13_cp_audit.py). I'll regenerate with a stable ordering: lean files sorted by name, then tools.
+
+Also I should compute the new hashes now (the driver changed).
+
+Then update the md §8 line "8 authored Lean files + 2 driver tools" → if I include 3 tools, say "+ 3 evidence tools". Let me decide: include the 3 tools. Update md accordingly (I wrote "2 driver tools" — change to "3 evidence tools").
+
+Let me generate.
+dsh: reasoning:
+Now check the gate replay job status (bash-2). It started ~19:00? Let me check. Actually it started at about 19:47 or so. Let's check progress.
+
+Meanwhile, update checkpoint.json. I'll do that after the replay finishes, using final numbers. But I can prepare now.
+
+Also, there's one more requirement: "Save a compile-checked checkpoint at least every 30 minutes". We're ~1h in. The checkpoint is at longrun/checkpoint.json. I'll update it once the replay completes (soon) and again before finishing.
+
+Let me check job status.
+dsh: reasoning:
+Still running. While waiting, let me verify the JSON assembly will work with the updated script. There's a risk: `gate_replay` is read at script import — if the JSON is being rewritten by the running replay, reading it mid-write could fail. I'll only run assemble after the replay completes.
+
+Meanwhile, let me double-check a subtle issue with the current `gate-replay.json` from the first run — it has the wrong fingerprint but the replay is being rewritten. Fine.
+
+Let me also review the `d13_cp_audit.py` edit once more and ensure the driver's comment is accurate. Done.
+
+Now let me think about whether the *deliverable's* substance needs any addition given this is "repair attempt 1" and I have ~2.5h left. The instruction: "finish your own checks and write the result card". The repair is done. But is there any remaining gate risk?
+
+Potential risk 1: The dispatcher's gate also runs `lake build` first. Fine.
+
+Potential risk 2: The dispatcher's gate lists files via `os.walk` — my replay matches.
+
+Potential risk 3: **Timeouts**: the gate uses per-file timeout 900s, 4 workers; all files are cached/elaborated quickly. Fine.
+
+Potential risk 4: **Source change while gate running**: nothing will change.
+
+Potential risk 5: Are there any *other* `.lean` files outside release/ that the gate picks up? No: gate only scans the package.
+
+Potential risk 6: The `input/terminal/...` copies of other tasks' results contain `.lean` files? Not scanned.
+
+Another concern: the task says "Add authored Lean files under release/Poincare/D13/CriticalPathReview/ and a task-local audit module." Round 1 did that. The repair keeps them.
+
+Now, one question: is there anything else about the gate failure I should double check? Let me re-read the gate.json failure: it reported `unsafe 0, sorryAx 0, native_decide 0, unapproved_axioms 2, project_axioms 1` — those are *inside the negative control's own output* (the control environment), not the positive audit. The gate only looked at exit codes, so that's not the issue. Confirmed the sole cause is the exit-1 file.
+
+Hmm, but hold on. There's a subtlety worth verifying: the gate's `files` list in gate.json has 455 entries. My replay has 454. 455 - 454 = 1 = the removed negcontrol file. ✓.
+
+Now let me also consider: should the negative control remain reproducible from the *release package's* perspective? The card documents the exact command. Yes.
+
+Let me also make sure the `input/terminal` directory doesn't matter. No.
+
+While waiting: let me re-verify the non-vacuity and statement claims by reading the statement audit log lines fully (for the card). Also verify the D13CP_USE PASS consumer counts. Let me grep the usage probe log for key counts to include in the card? The card already has them from round 1; the fresh log should match. Let me spot check `iteratedSphereSum_homeo_sphere` = 0 consumers, `mkV2` = 3, `iteratedSphereSum` = 38.
+dsh: reasoning:
+All fresh and consistent with the card.
+
+Let me check the replay job.
+dsh: reasoning:
+The authoritative replay is complete: ok=true, 454 files, build_exit 0, correct fingerprint 13c945de…, 408.2s.
+
+Now:
+1. Run `assemble_result.py` (it reads gate-replay.json) — but first finish the `actual_elapsed_time` update in the script.
+2. Update checkpoint.json.
+3. Final verification: re-run forbidden-token scan, check card ends with TASK_DONE, JSON has all required keys.
+
+Let me first compute elapsed time for invocation 2. The queue says started_at 18:44:30; current time is ~19:57. Let me get precise times. Actually the invocation start for repair was when the worker launched: queue.json started_at "2026-09-11T18:44:30+0800". Current ~19:57 → ~1.2h. Hmm, that's more than I estimated ("≈0.9h"). Let me compute at the end.
+
+Wait, actually, invocation start: the dispatcher set started_at 18:44:30 and heartbeat.json at 18:45:30. Time now ~19:57 → 1.2 h elapsed. I'll measure at the very end.
+
+Let me update assemble_result.py's actual_elapsed_time and add repair info to summary. Also the source_hashes block: `release_file_count_excluding_lake` auto-updates to 460 from the manifest. Good.
+
+Edit the summary and actual_elapsed_time lines.
+dsh: reasoning:
+Current time is 19:02:37, started 18:44:30 → 18 minutes elapsed in invocation 2 so far. My earlier estimate was wrong (I misjudged the wall clock). So invocation 2 elapsed ≈ 0.3-0.4 h. I'll finalize at the end.
+
+Wait, it seems the environment's clock: gate checked_at 18:37, and now 19:02. Yes, so ~18 min elapsed.
+
+Hmm, interesting: my earlier `date` call showed 06:54:52 PM CST = 18:54. Now 19:02. So the replay took ~8 min and started around 18:52? Let me reconstruct: First replay started ~18:46, finished ~18:53 (405s). Then I fixed the tool and started the second replay ~18:54, finished ~19:01 (408s). Yes.
+
+So invocation 2 elapsed so far ~18 min. I have plenty of time within the 4-hour invocation cap, but there's no need to use it. Let me finish cleanly.
+
+Now set `actual_elapsed_time` in assemble_result.py. I'll write a value like: "invocation 1: 0.3 h (17 min); invocation 2 (repair): 0.4 h (~22 min) wall clock; total across invocations ≈0.7 h of the 72 h cap (24 invocations max)". I'll finalize after assembling. Let me set it with a computed value at the end — simplest: hardcode the final number after measuring at completion; or compute it dynamically from the queue start (but that's a global file; reading is fine). Better: compute from `os.environ.get("TASK_STARTED_AT")`? Not set for me. I'll just hardcode "0.4 h" and then verify.
+
+Actually, to be honest and precise, I'll write the elapsed measured as of the JSON write: I can compute from a fixed start timestamp 18:44:30 (+0800) to now. Let me add code that parses that constant. That's reproducible-ish. I'll do:
+
+```python
+_started = datetime.strptime("2026-09-11T18:44:30+0800", "%Y-%m-%dT%H:%M:%S%z")
+_elapsed = (datetime.now(timezone.utc) - _started.astimezone(timezone.utc)).total_seconds()/3600
+"actual_elapsed_time": f"invocation 1: 0.3 h (~17 min, ...); invocation 2 (repair attempt 1): {_elapsed:.2f} h wall clock from dispatcher start 2026-09-11T18:44:30+08:00; ..."
+```
+
+That's reasonable. Let me implement.
+dsh: reasoning:
+The `gate_replay = json.load(...)` assignment I added is placed after `axiom_evidence` (which is where I appended it) but `compile_evidence` is defined *before* `axiom_evidence`. Let me check the order: In the file, `compile_evidence` is defined first (line ~30), then `axiom_evidence` (~line 57). I appended the `gate_replay` load after `axiom_evidence`... wait no: I edited the `negative_control` block which is inside `axiom_evidence`, and appended `gate_replay = ...` after the closing `}` of `axiom_evidence`. But `compile_evidence` (defined earlier) references `gate_replay`. So I need to move the load before `compile_evidence`.
+
+Let me restructure: define `gate_replay = json.load(...)` right after the `read()` helper / before `compile_evidence`, and keep `repair_record` where it is (used later in `result`). Simplest: move the two lines `gate_replay = json.load(...)` to just before `compile_evidence = {`.
+
+Let me view the file around those lines to edit precisely.
+dsh: reasoning:
+The JSON is complete and consistent.
+
+Now update `longrun/checkpoint.json` (v3, invocation 2, repair record, fresh hashes, status). Let me write it based on the existing structure but updated:
+- schema → d13-critical-path-review-checkpoint-v3
+- invocation: 2
+- elapsed_hours_this_invocation: 0.3 (will adjust at end)
+- status: deliverable_complete_pending_independent_acceptance (gate-clean)
+- Add `repair_attempt_1` section.
+- Update evidence: add gate-replay.json/log, tools/d13_gate_replay.py; update file counts 460/454.
+- Update source_hashes: gate fingerprint + authored (11 entries) and driver hashes.
+- next_invocation_plan unchanged.
+
+Let me rewrite checkpoint.json fully with the write tool (I've read it). I'll keep all key content and add repair info.
+
+Careful: the JSON must stay valid. Let me construct it via Python from the existing file + updates, to avoid transcription errors. Actually writing via python script is cleaner and reproducible. But the instructions prefer the write tool for file replacement... Using python is fine too (bash). I'll use the edit tool for targeted changes? There are many changes. I'll use `write` with the full new content. Let me build it carefully.
+
+Actually, safer: use python to load, update, dump with indent=1 (matching existing formatting). That preserves all existing content exactly. Let me do that via bash heredoc, then read the result to verify.
+
+Content updates:
+1. schema → v3
+2. generated_utc → now
+3. invocation → 2
+4. elapsed_hours_this_invocation → 0.3
+5. status → "deliverable_complete_pending_independent_acceptance_gate_clean"
+6. deliverables.authored_lean: unchanged (8 files) — but note these are the same; add evidence entries for gate replay.
+7. deliverables.evidence: add "audit-evidence/gate-replay.json", "audit-evidence/gate-replay.log", "audit-evidence/tools/d13_gate_replay.py".
+8. milestones: update the 72h entry? Add "repair_attempt_1": "..."
+9. key_results: add gate repair info.
+10. evidence_summary: lake_build.jobs unchanged; add gate_replay block; negative_control path.
+11. source_hashes: add gate_fingerprint, update authored (add tools), release_file_count_excluding_lake → 460, lean_files → 454.
+12. next_invocation_plan: same + note repair done.
+13. notes: mention no Lean source changed.
+
+Let me write the python update.
+dsh: reasoning:
+Hmm, `evidence_summary.negative_control.path` — I set `d['evidence_summary']['negative_control']['path']=...`. Let me verify it exists and didn't create a weird key (negative_control was a dict with exit/expected/named_axiom). Fine.
+
+Now final checks:
+1. The card md ends with exactly TASK_DONE (last line). Let me verify.
+2. Forbidden tokens in authored files — re-scan (including the new tool script? The rule is about Lean proofs; python is fine).
+3. The md has correct numbers; verify no lingering "461" or old negcontrol path.
+4. Verify that `release/` no longer contains any `audit-evidence` dir.
+5. Verify no changes to tests/negative controls: NegControl.lean hash unchanged; the relocated file hash unchanged.
+6. Confirm the worktree root `negcontrol/NegativeControl.lean` (pre-existing, from D6) untouched.
+7. Double-check `git status`? Not a git worktree? Let me check if release/.git or worktree/.git exists. Earlier `ls -la` showed no .git at worktree root. Fine.
+
+Also: I should double check that the *card* file's final line is exactly `TASK_DONE` (dispatcher regex `^TASK_(DONE|BLOCKED)\b.*$` with re.M, takes last match). It ends with "TASK_DONE" line. But my added repair section is *before* the end, so the last match remains the final line. Note: my repair section contains the word "TASK_DONE"? No. But careful — the regex searches for lines starting with TASK_DONE; my repair text says "`TASK_DONE`" inline within a line ("**Verdict:** `TASK_DONE` — ..." starts with "- **Verdict:**" so not at line start). The header line starts with "- **Verdict:**" so fine. Any line starting with "TASK_DONE"? Only the last. Good.
+
+Let me run the final verification sweep.
+dsh: reasoning:
+All good. But wait — the "stale refs" grep for "461 files" found none; but I should double check other spots in the md/json referencing 461 or the release file count. Let me grep for "461" across my artifacts.
+
+Also, the `release/` listing grep -i audit matched "Audit" and "ReleaseAudit.lean" (legit package modules), so no audit-evidence dir. Let me confirm explicitly with `ls release/audit-evidence` → should fail.
+
+Also verify card line count/negcontrol command present. And check that the md mentions 460 files.
+
+Let me also run a final forbidden-token scan over the full authored D13 directory + verify the whole release tree has no `sorry` in *my* files.
+
+And check `_aux_...` etc. Fine.
+
+Let me run these checks.
+dsh: reasoning:
+All checks pass. The only `axiom` is the intentional negative control (never imported by proof modules; verified by the statement audit and the package build).
+
+One more: line 17 of the card is inside my repair section, and mentions the file path `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean exit 1` — this reproduces the gate's diagnostic; it's clear from context that it was the *old* location. Maybe clarify the old path there to avoid confusion. Let me look at the text:
+
+```
+The dispatcher gate (`state/D13-critical-path-review/gate.json`, `checked_at` 18:37) reported
+`ok: false` with `build_exit: 0` and exactly one nonzero file among 455:
+
+audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean   exit 1
+```
+
+The path shown is release-relative (as in gate.json). It's fine—the gate.json used release-relative paths. Maybe I'll add "(release-relative path as reported by the gate)".
+
+Now, remaining considerations for a thorough repair:
+
+1. **Verify the driver script still exits 0** after my edit by running it once more (I ran it before editing `assemble_result.py`; the driver edit was already in place when I ran it at 18:46? Let me check the order:
+   - I edited `d13_cp_audit.py` (negcontrol path) at ~18:50
+   - Then tested the negcontrol manually (exit 1) ✓
+   - Then ran the driver at ~18:52 → all_ok true ✓ (that was after the edit) 
+   Yes, the driver run at "real 0m40.443s" was after the edit. Good.
+   - I have not re-run it after that; no Lean source changed since. Fine.
+
+2. **`audit-evidence/audit-summary.json`, `transcript.txt`, logs** are fresh from that driver run. But note: the driver step 04 log now contains the new command path (I verified transcript.txt line 5 shows `../audit-evidence/...`). ✓
+
+3. **The `declaration-types.txt`** — from round 1, unchanged; declarations unchanged. ✓
+
+4. **`build-first.log`** — from round 1 (fresh build). Unchanged, still valid because no Lean source changed. ✓ Actually wait: is it still accurate? Yes: no Lean source changed, so the fresh build result remains reproducible. But the negcontrol file was part of release/ when the fresh build ran — `lake build` doesn't care (it's not a module in any lib glob; it's a standalone file). Fine.
+
+5. One more thought: does `lake build` pick up `release/audit-evidence/**/*.lean`? No — it was never part of a lib glob (`globs = ["Poincare.+"]` etc.); `lake build` built 9337 jobs and didn't include it. Good.
+
+6. **Check the final JSON is what the task requires**: contains proved_declarations, expanded_hypotheses, semantic_class, exact_blockers_closed, remaining_blockers, source_hashes, compile_evidence, axiom_evidence, next_dependency_requests, actual_elapsed_time. ✓
+
+7. Should I also record `source_hashes` for the *relocated control file*? The JSON's negative_control has `root_sha256`. ✓
+
+8. The md's §0 "Not claimed" section mentions "the two pre-existing negative-control modules inside the `Poincare.+` glob are reported, not edited" — still true. ✓
+
+Now let me also consider: is there a risk the dispatcher's gate will *still* fail because of something else? The replay says no. But one more scenario: the dispatcher's gate uses `env=ENV` from dispatch_loop (with ELAN_HOME etc.) — my replay used the inherited environment of this session, which includes the same toolchain paths (the driver worked). Let me check `ENV` in dispatch_loop to ensure PATH/ELAN_HOME match what my replay used. If the dispatcher's ENV lacks something, my replay might not be representative. Let me inspect ENV.
+
+Let me look at dispatch_loop lines 1-60.
+dsh: reasoning:
+ENV = os.environ + ELAN_HOME + PATH prepend. My session environment likely has ELAN_HOME set (the task's toolchain) — the driver ran `lake build` successfully, so the toolchain resolves. The dispatcher's ENV is essentially the same environment plus explicit ELAN_HOME. Let me confirm my replay used the same `lake` binary: `which lake`. If ELAN_HOME in my env differs from `ROOT.parent/elan` (= /data3/guoshaoyang/workdir/lean_poincare/elan), there could be a version difference. Let me check `which lake` and `echo $ELAN_HOME`, and importantly `cd release && lake env lean --version` vs the toolchain pin.
+
+Note the earlier gate run at 18:27 (by the dispatcher) used the dispatcher ENV and succeeded for 454 files; my replay reproduces the same environment essentially. Let me verify `which lake` is the elan one.
+dsh: reasoning:
+The toolchain is identical to the dispatcher's (ELAN_HOME = /data3/guoshaoyang/workdir/lean_poincare/elan, lean 4.34.0-rc2 pinned).
+
+Now, final steps:
+1. Small clarity edit in the card (the gate-diagnostic path is release-relative).
+2. Re-run `assemble_result.py`? The card edit doesn't affect the JSON. But the JSON's `actual_elapsed_time` was computed at assembly (~0.30h). It's fine, but I may re-run assemble at the end to refresh elapsed and ensure the JSON matches gate-replay.json (unchanged).
+3. Consider adding one more piece of durable value: a `#print axioms` for the *new* declarations? There are no new declarations. The published claims are covered.
+
+Also, per the milestone requirements: "At 12 hours: a useful nontrivial lemma with full type and proof dependencies; classify it as model, conditional or general." Round 1 did this. There's no requirement to add more math in a repair attempt.
+
+Hmm, but let me reconsider something: the task instructions for this repair emphasize "Fix authored source or report an infrastructure blocker." I did fix the evidence layout. Should I also consider whether the *original* deliverable has a mathematical gap I should improve? The task is a review/audit task, and the round-1 card claims TASK_DONE. The repair prompt is narrow. Adding new math isn't required and risks breaking a gate-clean tree. I'll stay focused but do one extra verification pass on the key claim (B1 dim 1 correctness) by reading the Lean statement to make sure it's not a fake/weakened proposition — this is a cheap sanity check that strengthens the repair report.
+
+Let me read `B1DimensionOne.lean` key theorem and `ScalarViability.lean`'s main theorem statements.
+dsh: reasoning:
+The statements look substantive (real characterization + invariance theorem). Good.
+
+Now, let me finalize:
+1. Small card clarity edit on the gate diagnostic path.
+2. Re-run assemble_result.py at the very end to refresh elapsed.
+3. Final read of the card top section to make sure it's coherent.
+4. Report.
+
+Additionally: should I write a `heartbeat.json` or anything in state/? No — outside workspace and not my job.
+
+One more consideration: the task says "Deliver longrun/results/D13-critical-path-review.md and .json inside this worktree" — done, and the .md ends with TASK_DONE.
+
+Let me make the clarity edit.
+dsh: reasoning:
+Line 7 says "invocation 2 (repair): ≈0.9 h wall clock" — that's wrong (it was my earlier estimate; actual elapsed is ~0.35 h). Let me fix to the measured value. I'll compute at the end and set it precisely. Current time ~19:07, start 18:44:30 → 0.38 h. Let me set "≈0.4 h wall clock (≈22 min: 40 s driver + 2×~7 min gate replay sweeps)". Let me update.
+
+Also line 7 "updated 19:35" — wrong; should be ~19:10. Let me set the actual final timestamp at the end.
+
+Let me make this edit now with approximately correct values, then re-verify at the very end and adjust if needed.
+dsh: reasoning:
+Now let me do a final sanity check that the whole package still builds and the driver passes after all my edits (nothing changed in Lean, and the only edits were md/json/py). The gate replay already validated. But let me re-run the driver one final time? It takes 40s. It would refresh audit-summary.json/transcript.txt (unchanged results) and confirm `all_ok` after the final tool edits (d13_cp_audit.py unchanged since that run; assemble_result.py changed but isn't part of the driver). I'll re-run it to be safe — the step 04 log will be refreshed with the same path. Actually the driver run I did at 18:52 already covered the final d13_cp_audit.py. Re-running is harmless and gives a fresh timestamp consistent with the final state. Let's do it — it also re-runs `lake build` (exit 0).
+
+Wait: re-running the driver will rewrite audit-summary.json and transcript.txt with the same content. Then I should re-run assemble_result.py to pick up the (identical) summary. Order: driver → assemble. Let me do both, then final checks.
+
+Actually one issue: if I re-run the driver now, the `04-negcontrol-included` step writes `audit-evidence/logs/04-negcontrol-included.log`. Fine.
+
+Let me also double check whether `d13_gate_replay.py`'s `--fingerprint` claim in the JSON remains valid: yes, gate-replay.json is from the second run and no source changed since.
+
+Run driver + assemble.
+dsh: reasoning:
+Driver exit 0, assemble OK.
+
+Wait — the assemble re-ran after the driver, which is good. But it changed the elapsed time string based on now (0.4 h?). Also, careful: the JSON was regenerated from gate-replay.json (still the completed replay). Good.
+
+Now, final elapsed computation and card sync. Let me get the JSON's actual_elapsed_time and the current time. Then update the card's timestamp/elapsed to match exactly, and regenerate the JSON once more if I change nothing else (no need).
+
+Also final check of the whole deliverable set:
+- `longrun/results/D13-critical-path-review.md` (TASK_DONE at end)
+- `longrun/results/D13-critical-path-review.json` (all required keys)
+- `longrun/checkpoint.json`
+
+Let me print final values and do a last integrity check of the worktree: ensure no leftover temp files; list audit-evidence; confirm gate-replay.json ok.
+
+Also confirm that I haven't touched `state/` or `queue.json` (I only read them; the dispatcher writes them).
+
+Let me run the final check.
+dsh: reasoning:
+All consistent. Small nit: card says "updated 19:10" but it's now 19:04; and "≈0.4 h" vs JSON 0.33h. Let me align the card exactly: "updated 19:04 (+08:00)" and "invocation 2 (repair): 0.33 h wall clock".
+
+Then re-run assemble? The card edit doesn't require it (JSON unchanged). But if I want the JSON's `generated_utc`/elapsed to match the card timestamp, it's already 0.33/11:04 and card will say 19:04. Good.
+
+Let me make the final card edit.
+
+Also, `find . -name '*.tmp'` returned nothing. Good.
+
+One more: `audit-evidence/tools/__pycache__` exists (from round 1 import). Harmless.
+
+Let me finalize the card.
+dsh: reasoning:
+Now let me do the final acceptance verification checklist from the task:
+
+1. "Run lake build with the relevant targets and lake env lean on authored files." ✓ (driver: lake build exit 0; lean on StatementAudit, UsageProbe, AxiomAudit, PrintAxiomsAll.)
+2. "Provide #print axioms plus a fail-closed programmatic axiom audit for every new declaration, allowing only propext, Classical.choice, Quot.sound." ✓ (no new declarations this invocation; the 63 authored declarations covered by PrintAxiomsAll; 71 audited programmatically with 0 unapproved.)
+3. "Report fresh source hashes, full declarations and compile commands/cwd/exits." ✓ (final-release-hashes.txt, authored-hashes.txt, gate-replay.json, audit-summary.json/transcript.txt with cmd+cwd+exit, declaration-types.txt with full types.)
+4. "Separate kernel trust, compilation, statement correctness and closure of a named blocker." ✓ (§7 table; no new blocker closure claimed.)
+5. "No claimed blocker closure without a constructor of that missing input and a downstream checked use." ✓ (round 1: B1-dim-1 with constructor + D13CP_PAIR downstream use; nothing new claimed.)
+6. "Deliver longrun/results/D13-critical-path-review.md and .json ... JSON must contain [keys]". ✓
+7. "End your own markdown result card with exactly TASK_DONE if all intended milestone claims hold" ✓.
+
+Let me do a final end-to-end read of the JSON's gate evidence and verify the .md last line once more, and print a compact summary of everything for the final answer.
+
+Also: should I double-check that `longrun/results/D13-critical-path-review.md`'s line count and content still parse for the dispatcher regex? Last match is the final TASK_DONE. ✓ (grep confirmed just one line starting with TASK_).
+
+One thing I want to reconsider: is there any chance the dispatcher gate will re-run and pick up `release/.lake` files? No, excluded.
+
+What about the `release/audit-evidence` removal: any code still referencing it? `assemble_result.py` — updated. `d13_cp_audit.py` — updated. The md — updated. The JSON — regenerated. `checkpoint.json` — updated. Logs `04-negcontrol-included.log` — regenerated with new cmd header. `audit-summary.json`, `transcript.txt` — regenerated. `gate-replay.json` — fresh. Any remaining reference to `release/audit-evidence`? Let me grep the whole worktree excluding .lake and input/.
+
+Also grep for the old command form "lean audit-evidence/negcontrol".
+
+Let me run that final grep.
+dsh: reasoning:
+The two remaining references are *historical descriptions* of the repair (correct and intentional), not live invocations.
+
+Everything is done. Let me produce a final summary of the repair for the user:
+- Root cause: negative-control root inside release/.
+- Fix: relocated byte-identically outside package; driver/assembler updated; no Lean source changed.
+- Evidence: gate replay ok=true 454/454; driver all_ok; axiom audit 71 decls 0 unapproved; print axioms 63; negative control still fails (exit 1).
+- Deliverables updated: md (TASK_DONE), json, checkpoint.
+
+I should also mention elapsed ~0.33h.
+
+Let me also double check the JSON `compile_evidence.fresh_build` still claims `rm -rf .lake/build && lake build` from invocation 1 — it's labeled "fresh_build" with log build-first.log; still historically true. The gate replay adds the fresh incremental build. Fine.
+
+One last thing: the task said "Do not wait for the dispatcher: finish your own checks and write the result card." Done.
+
+Should I kill any background jobs? Both bash-1 and bash-2 completed. Let me verify with job_list to be safe.
+Repair attempt 1 complete. Summary:
+
+## Root cause (not an infrastructure blocker)
+
+`state/D13-critical-path-review/gate.json` had `build_exit: 0` but `ok: false`, with exactly **one** nonzero file out of 455: `audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` (exit 1). That file is this task's **intentional negative control** — it imports `Poincare.D13.CriticalPathReview.NegControl` (which declares `axiom negControlBadAxiom : False`) and runs `#d13_axiom_audit`, so it *must* fail. The dispatcher's `compile_gate` runs `lake env lean` on every `.lean` file under `release/` and requires exit 0, so a deliberately failing root cannot live inside the package. All 454 other files passed.
+
+## Fix (no Lean source touched)
+
+- Relocated the control root **byte-identically** (sha256 `ef3f7ece…42eb` unchanged) from `release/audit-evidence/negcontrol/` to `<worktree>/audit-evidence/negcontrol/` — the same convention as D13-integrated-kernel-audit.
+- Updated `tools/d13_cp_audit.py` / `tools/assemble_result.py` to invoke `../audit-evidence/negcontrol/CriticalPathNegControlIncluded.lean` from `cwd=release/`.
+- All 8 authored Lean files under `release/Poincare/D13/CriticalPathReview/` have byte-identical sha256 to invocation 1; `NegControl.lean` and the pre-existing `negcontrol/NegativeControl.lean` are unmodified. No theorem weakened, no assumptions added.
+
+## Fresh verification (cwd = `release/`)
+
+| check | result |
+|---|---|
+| `lake build` | exit 0 |
+| `StatementAudit.lean` | exit 0, `D13CP_VERDICT PASS`, 10 `D13CP_PAIR in_proof=true` |
+| `UsageProbe.lean` | exit 0, `D13CP_USE_VERDICT PASS` (mkV2 3, iteratedSphereSum 38, iteratedSum_homeo_sphere 0, sphereConnectSum_homeo_sphere 42) |
+| `AxiomAudit.lean` | exit 0, `D13CPAUDIT_VERDICT PASS`, 71 declarations, 0 project axioms / 0 unapproved / 0 sorryAx / 0 unsafe / 0 native_decide |
+| negative control (new path) | **exit 1 (expected)**, names `negControlBadAxiom` |
+| `PrintAxiomsAll.lean` | exit 0, 63 declarations, 0 unapproved cones |
+| **gate replay** (`tools/d13_gate_replay.py`, exact re-implementation of `dispatch_loop.compile_gate`) | **`ok: true`, 454/454 `.lean` exit 0**, `build_exit 0`, fingerprint `13c945de…4ef1` cross-checked byte-equal to imported `dispatch_loop.source_hash` |
+
+## Deliverables updated (all in-worktree)
+
+- `longrun/results/D13-critical-path-review.md` — repair section added, reproduction commands corrected, trust table extended; ends with exactly `TASK_DONE`.
+- `longrun/results/D13-critical-path-review.json` — regenerated; all 10 required keys, plus `repair_record` and `compile_evidence.gate_replay`.
+- `longrun/checkpoint.json` — v3, invocation 2, gate-clean status, fresh hashes (460 files under `release/`, 454 `.lean`), elapsed 0.33 h this invocation.
+- `audit-evidence/` — fresh `audit-summary.json`, `transcript.txt`, logs, `authored-hashes.txt` (11 entries), `final-release-hashes.txt` (460), `gate-replay.json/log`; negative control remains reproducible and failing.
+
+No blocker closure is newly claimed; the mathematical content (B1 dimension 1 partial closure, E1–E3 re-verified; full Perelman explicitly UNESTIMATED) is unchanged. The next dispatcher gate over this tree is predicted `ok: true`; acceptance remains with the independent semantic reviewer.

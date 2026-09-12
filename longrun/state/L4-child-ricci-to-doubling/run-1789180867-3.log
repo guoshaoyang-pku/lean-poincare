@@ -1,0 +1,804 @@
+dsh: reasoning:
+The checkpoint says status "complete". Let me read the checkpoint fully and the results file. It seems the task was already done in a previous invocation. Let me verify. But the task says "Model: use configured host model only; do not invoke until quota recovery is recorded." and "Continue from existing files and checkpoint.json in this worktree; do not restart completed work."
+
+Let me check the results file longrun/results/L4-child-ricci-to-doubling.md and whether there's any indication the task needs additional work.
+
+Wait — the results file path mentioned: "Only your own longrun/results/L4-child-ricci-to-doubling.md can complete this task." Let me check if it exists and what it says. The checkpoint says status complete but maybe the results file is missing or the acceptance requires more.
+
+Let me read the full checkpoint and check the results file.
+dsh: reasoning:
+The checkpoint says status complete and result_card exists. This is a continuation invocation. The task says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work."
+
+But the task also says model invocation should happen only after quota recovery is recorded: "Model: use configured host model only; do not invoke until quota recovery is recorded." Hmm—this might be a stale instruction from a queue. Let me check the queue and see if there's a gate. Actually this invocation is happening now, so quota presumably recovered. Let me check for any signal.
+
+Given the previous round marked complete, my job now is likely to independently verify the completion evidence and ensure it genuinely holds (perhaps the acceptance was updated, e.g., "adversarial semantic review" requirement, "compile exits", hashes). The prompt says "this is independent acceptance, never a Poincare proof." and "Only your own longrun/results/L4-child-ricci-to-doubling.md can complete this task."
+
+So I should:
+1. Verify the files exist, compile, hashes match.
+2. Run the verification driver.
+3. Re-check against acceptance criteria, possibly strengthen anything missing.
+4. Confirm the result card.
+
+Important: the previous round already produced everything. But I need to check whether the acceptance criteria are fully met — e.g., the adversarial semantic review confirming no conclusion-equivalent hypothesis and no manifold overclaim. Checkpoint says reviews complete.
+
+Let me look at the results markdown, the evidence, and the new Lean files. Then re-run the verification (build) to confirm compile exits, hashes, axiom audit.
+
+Also, let me check whether there's a quota recovery record since the task says "do not invoke until quota recovery is recorded". Let me look at logs and bin for quota state.
+
+Let me do initial recon in parallel.
+dsh: reasoning:
+The prior round is complete with full evidence. This continuation invocation must independently verify. Let me:
+
+1. Verify file hashes match the checkpoint.
+2. Re-run the verification driver to confirm compile + axiom audit + gates pass on the current bytes.
+3. Inspect the Lean files for the acceptance content and check for any issues (e.g., conclusion-equivalent hypotheses, manifold overclaim).
+4. Confirm the result card and finish with TASK_DONE.
+
+Note: the task instruction says "Model: use configured host model only; do not invoke until quota recovery is recorded." I'm the host model invocation itself; quota recovery presumably recorded since this invocation is happening. Let me check if there's some gate file. Actually that instruction is presumably meta about the dispatcher. I'll proceed with verification work (no subagent model invocation needed unless required — "use configured host model only; do not invoke until quota recovery is recorded" likely refers to not spawning other models).
+
+Let me start with hashes and the verify driver in the background since lake build may take a while. First check environment (ELAN_HOME, lake).
+
+Let me set up a plan with todos, then run verification.
+
+Actually, let me first check the current sha256 of the artifacts vs checkpoint.
+dsh: reasoning:
+All hashes match. Now let me run the verification driver. It builds with lake. Let me check environment setup and run it in the background. It may take a while (lake build 3454 jobs).
+
+Let me first check the verify script briefly to see what it does and what env it needs.
+dsh: reasoning:
+Now run the verify driver in the background. It may take a while due to lake build. Let me start it as a background job.
+
+Meanwhile I'll inspect the Lean sources in detail for acceptance content.
+dsh: reasoning:
+The verify driver runs in background. Let me now inspect the Lean files in detail. Key things to check for acceptance:
+
+1. Explicit model instantiation and closed-form ratio.
+2. Doubling with non-vacuous witness.
+3. Ball measure interface.
+4. Hypothesis labels, no forbidden constructs.
+
+Also verify the potential concern: `euclid_volume_ratio_le_of_ricci_nonneg` — does it use bishopGromov_volume_le? Let me read the file sections.
+
+Let me read RicciToDoubling.lean around key theorems.
+dsh: reasoning:
+The verify driver finished quickly (probably cached build). Let me read its output.
+dsh: reasoning:
+All 6 gates PASS on the current bytes. Let me verify the evidence JSON got regenerated (timestamp) and examine details, especially:
+- axiom audit per-declaration
+- build exit
+- classification labels
+
+Then I should do my own independent semantic review — the acceptance requires "an adversarial semantic review confirming no conclusion-equivalent hypothesis and no manifold overclaim". The prior round had two reviews. As an independent acceptance invocation, I should perform my own adversarial review (not merely trust the previous one). Since I'm the host model and I can't invoke other models (quota?), I can do a careful manual + scripted semantic check.
+
+Key adversarial checks I should perform:
+1. Does `euclid_volume_ratio_le_of_ricci_nonneg` assume the conclusion anywhere? I.e., is there a hypothesis that is equivalent to `radialVolume A R ≤ (R/r)^(d+1) * radialVolume A r`? Looking at hypotheses: hk, hineq, hm, hmcont, hnorm, hA, hAcont, hApos, hA0, hmA, hr, hR, hrR. No conclusion-equivalent hypothesis. But wait — need to check `hnorm : EuclideanNormalizedOn m d C t₀`. That's the standard normalization. Fine.
+
+2. Does `bishopGromov_volume_le` in D12 have a hypothesis that is conclusion-equivalent? Let me read VolumeRatio.lean to check the signature. That's a consumed file from D12; the acceptance says "Do not assume Bishop-Gromov as a hypothesis" — we instantiate D12's theorem which proves it from Riccati. Need to verify D12's theorem doesn't secretly assume the volume ratio bound. Let me read it.
+
+3. Also check `coveringNumber_le_measure_ratio_of_radialBallMeasure` — does it assume something conclusion-equivalent? And `IsRadialBallMeasure` is a def, not a theorem.
+
+4. Check no manifold overclaim: grep for "manifold" claims. The result card explicitly says not claimed.
+
+5. Non-vacuity witnesses: `euclidModel_hypotheses_witness`, `isRadialBallMeasure_real_witness`. Note the snowflake witness is not kernel-checked (informal). Hmm, acceptance says "with a non-vacuous witness". For requirement (2) the Euclidean witness `euclidModel_hypotheses_witness` is kernel-checked. Let me verify it instantiates ALL hypotheses of euclid_volume_doubling_of_ricci_nonneg. Also `radialVolume_euclidModel_one_doubling_witness` etc.
+
+For requirement (3), the interface is a `def`, and the discharge theorems are conditional. The witness `isRadialBallMeasure_real_witness` — is it kernel-checked? It's a theorem, presumably proving `IsRadialBallMeasure` for some concrete μ? Wait, it's in the Euclidean file and the docstring says "(the snowflake metric)". Let me read that section. If it's a genuine theorem proving `IsRadialBallMeasure μ A` for concrete `X = ℝ` with some distance and measure... Actually the earlier review said the concrete joint realization was on the snowflake metric, recorded as "explicitly informal witness (not kernel-checked)". But there is a theorem `isRadialBallMeasure_real_witness` at line 360. Let me read lines 180-594 to see.
+
+Let me read the rest of the file.
+dsh: reasoning:
+Good. Continue reading the rest (400-594).
+dsh: reasoning:
+Now, an important adversarial check: the snowflake construction claims μ (closedBall x s) = ofReal(2 s²) for s ≥ 0 and radialVolume A s = 2s|s|. Let me verify: A(t) = 4|t|. radialVolume A s = ∫₀ˢ A = ∫₀ˢ 4|t| dt = 2 s |s|. For s ≥ 0: 2s². Ball in snowflake: d(x,y) = √|x-y| ≤ s ⟺ |x-y| ≤ s². So Lebesgue measure = 2s². ✓. For s < 0, empty; radialVolume A s = 2s|s| = -2s² < 0, so ofReal = 0. ✓. So interface holds. Scalar hypotheses: d = 1, k = 0, C = 0, m(t) = 1/t, dm = -1/t², A = 4|t|, dA = 4 (on (0,T), A(t) = 4t so dA/A = 4/(4t) = 1/t ✓). hineq: -1/t² + (1/t)² + 0 = 0 ≤ 0 ✓. hnorm: |1/t - 1/t| = 0 ≤ 0 ✓ on (0,t₀) as long as t₀ ≤ T. hApos: A(t) = 4t > 0 ✓. hAcont: continuous on [0,T] ✓. hA0: A(0) = 0 ✓. So joint satisfiability holds. Wait, there's one subtlety: the composite theorem's conclusion uses `4*r ≤ T`, r>0, so there exist r (e.g., r = T/8). Also `coveringNumber` in snowflake metric... fine. Good, non-vacuous.
+
+But hold on: IsRadialBallMeasure says `∀ (x : X) (s : ℝ), μ (closedBall x s) = ENNReal.ofReal (radialVolume A s)`. In the snowflake, for s ≥ 0 μ (closedBall x s) = ofReal(2s²) since Lebesgue measure of [x-s², x+s²] = 2s² (s² ≥ 0). Real.volume_closedBall says volume (closedBall x r) = ofReal (2*r) for the usual metric; here we need snowflake. But this is informal anyway. Fine.
+
+Now the key adversarial question for the acceptance: "no conclusion-equivalent hypothesis". Let me check each hypothesis of the headline theorems:
+
+1. `euclid_volume_ratio_le_of_ricci_nonneg` uses `bishopGromov_volume_le`. Need to inspect D12's theorem to make sure it doesn't assume the volume ratio conclusion. Let me read VolumeRatio.lean.
+
+2. Also check that `hineq`, `hnorm` etc. are not conclusion-equivalent. Conclusion is `radialVolume A R ≤ (R/r)^(d+1) * radialVolume A r`. Hypotheses are ODE-local conditions. Not equivalent.
+
+3. `coveringNumber_le_measure_ratio_of_radialBallMeasure` — hμ is the measure realization, hpos is positivity. Conclusion is a covering number bound. Is hμ conclusion-equivalent? No — hμ is about ball measures; the conclusion is about covering numbers. Though hμ + hpos do imply the bound (that's the point), that's a proof, not a hypothesis restatement. Good.
+
+Now, let me check D12 VolumeRatio.lean to confirm `bishopGromov_volume_le` is proved from the Riccati inequality, not assumed. Let me read.
+
+Also check `MeasureGrowthCovers.lean` signatures for coveringNumber_le_measure_ratio etc.
+
+Then the hyperbolic file. Let me read that too.
+
+Let me also check for forbidden constructs grep, and check the evidence JSON details.
+
+Parallel: read VolumeRatio.lean, read hyperbolic decls list.
+dsh: reasoning:
+Good. `bishopGromov_volume_le` is a theorem with no hypothesis stating the volume ratio — it's derived. Note: hnorm : EuclideanNormalizedOn m d C t₀ appears for m too. That's the D12 signature.
+
+Now an important adversarial consideration: is `bishopGromov_volume_le` conclusion "conclusion-equivalent" to any hypothesis? No — it derives from Riccati + normalization.
+
+Now, one subtle adversarial concern: the acceptance says "prove the volume-ratio bound in closed form radialVolume A R <= (R/r)^(d+1) * radialVolume A r". We have that. ✓
+
+"derive the single-scale doubling consequence radialVolume A (2r) <= 2^(d+1) * radialVolume A r with a non-vacuous witness" ✓
+
+"(3) state PRECISELY, as a documented interface (not an assumed theorem), which additional hypothesis would realize radialVolume A as a genuine ball measure mu (mu (closedBall x s) = radialVolume A s) and hence discharge the hupper/hlower hypotheses of Poincare.L4.Compactness.coveringNumber_le_measure_ratio and coveringNumber_le_of_measure_doubling; do NOT claim that a manifold measure exists" ✓ — IsRadialBallMeasure def + discharge theorems.
+
+Hmm wait: the acceptance mentions "hupper/hlower hypotheses". The prior review found that `hupper` doesn't occur in the consumed files. Let me verify by grepping MeasureGrowthCovers.lean for hupper/hlower.
+
+"(4) every declaration must list its analytic hypotheses explicitly and be labelled model (scalar ODE) versus manifold." ✓ 36/36 labels.
+
+Acceptance evidence: "compiling modules with full signatures, source hashes, compile exits, fail-closed axiom audit with cones subset {propext, Classical.choice, Quot.sound}, non-vacuous witnesses, and an adversarial semantic review confirming no conclusion-equivalent hypothesis and no manifold overclaim."
+
+So the outstanding item for this invocation: perform an independent adversarial semantic review (I can do it myself, carefully, possibly with a fresh subagent — but "Model: use configured host model only; do not invoke until quota recovery is recorded" might restrict invoking other models. The safest interpretation: I am the configured host model; I should do the semantic review myself rather than spawn subagents to other models. But the previous round used subagents. Since quota instruction says not to invoke until quota recovery recorded—there's no explicit quota recovery record visible. Let me check logs for quota recovery. Actually, this invocation IS the model invocation, so quota has recovered enough. But to be conservative and avoid wasting quota on subagents, I can perform the adversarial review directly. Yet the acceptance requires "an adversarial semantic review" — two exist in evidence, but they're from the prior round and signed off. An independent acceptance invocation ideally performs its own review on the frozen bytes.
+
+Let me:
+1. Check hupper/hlower in MeasureGrowthCovers.lean.
+2. Read the hyperbolic file key parts.
+3. Perform my own systematic adversarial checks (conclusion-equivalence, vacuity, manifold overclaim, hidden axioms, forbidden constructs, hash/provenance).
+4. Write an independent verification/review note into evidence and update the result card / checkpoint with this round's re-verification.
+
+Let me check MeasureGrowthCovers signatures.
+dsh: reasoning:
+Everything matches. Let me now check the evidence JSON from the just-run verification, and compare timestamps — did the driver rewrite evidence/ricci-to-doubling-verify.json? Let me check the JSON.
+
+Then I'll do a rigorous adversarial semantic review pass myself with a scripted checklist plus manual reasoning. Key checks:
+
+A. No conclusion-equivalent hypothesis: for each headline declaration, list hypotheses and check none is the conclusion (or trivially equivalent).
+
+B. No manifold overclaim: search for words claiming manifold theorem; check `IsRadialBallMeasure` is a `def` not an axiom; search for `axiom`, `sorry`.
+
+C. Non-vacuity: `euclidModel_hypotheses_witness` typechecks with all hypotheses instantiated (it does — compiled). Sharpness: `euclidModel_volume_doubling_closedForm` equality. Hyperbolic: `hypModel_doubling_witness`, `hypModelA_one_one_doubling`.
+
+D. The `IsRadialBallMeasure` def with `A ≡ 2` witness — kernel-checked. Joint witness is informal only, but acceptance says "with a non-vacuous witness" specifically for requirement (2) doubling; requirement (3) says state the interface precisely — it doesn't strictly require a kernel-checked joint witness, though the evidence includes one for the interface alone plus an informal joint one. That's honest.
+
+Hmm, but one thing to consider: is the prior work genuinely complete, or is there a gap that the acceptance would demand? Let me re-read the acceptance:
+
+"Acceptance: Close the measure-growth half of U9 at the scalar/model level. Consume the round-3 files ... together with D12's ... Required content: (1) instantiate bishopGromov_volume_le with an EXPLICIT comparison model (Euclidean euclidModelA d / euclidModelM d for k >= 0; the constant-curvature hyperbolic model for k <= K <= 0 if available) and prove the volume-ratio bound in closed form radialVolume A R <= (R/r)^(d+1) * radialVolume A r (respectively the hyperbolic closed form); (2) derive the single-scale doubling consequence radialVolume A (2r) <= 2^(d+1) * radialVolume A r with a non-vacuous witness; (3) state PRECISELY, as a documented interface (not an assumed theorem), which additional hypothesis would realize radialVolume A as a genuine ball measure mu (mu (closedBall x s) = radialVolume A s) and hence discharge the hupper/hlower hypotheses of ... ; do NOT claim that a manifold measure exists; (4) every declaration must list its analytic hypotheses explicitly and be labelled model (scalar ODE) versus manifold. Acceptance evidence: compiling modules with full signatures, source hashes, compile exits, fail-closed axiom audit with cones subset {propext, Classical.choice, Quot.sound}, non-vacuous witnesses, and an adversarial semantic review confirming no conclusion-equivalent hypothesis and no manifold overclaim. Do not assume Bishop-Gromov as a hypothesis and do not duplicate the existing conjugate_point_bound/Rauch results."
+
+All done. The one interesting nuance: "(2) ... radialVolume A (2r) <= 2^(d+1) * radialVolume A r" — the hyperbolic variant necessarily has scale-dependent constant, and the Euclidean exact form is given. ✓
+
+Now, as the independent acceptance invocation, I need to produce the final verdict. The prior checkpoint says complete. My independent re-verification passed all gates. But let me be adversarial: I should check a couple of deeper things that a rubber-stamp would miss:
+
+1. Does the build actually compile the two new modules as part of lake build, or could the driver skip? Check the JSON's build command/targets and build log tail.
+
+2. Do the axiom audit logs include all declarations with the right signatures, and does the audit actually fail-closed (i.e., would it detect a non-classical axiom)? The negative control checks that. Let me inspect the audit Lean files and the evidence JSON.
+
+3. Check the forbidden-token scan covers all four new files and uses the canonical scanner.
+
+4. Verify no `set_option` weakening like `maxHeartbeats`? That's not forbidden. But check for `set_option` in new files. Also check for `@[implemented_by]`, `unsafe`, `native_decide`. The scan covers.
+
+5. Potential semantic concern: `IsRadialBallMeasure` for all real s including negative — as documented. Not a problem.
+
+6. Check that `hypModelA_one_one_volume` correctly handles negative s: radialVolume A s for s<0 = ∫₀ˢ sinh = -(cosh s - 1) = 1 - cosh s, but the theorem states radialVolume = cosh s - 1 for ALL s. Hmm! Let's check: `hypModelA_one_one_volume (s : ℝ) : radialVolume (hypModelA 1 1) s = Real.cosh s - 1`. For s < 0, ∫₀ˢ sinh τ dτ = cosh s - cosh 0 = cosh s - 1. Yes! Because ∫₀ˢ sinh = [cosh]₀ˢ = cosh s - 1 regardless of sign. cosh is even, so cosh s - 1 ≥ 0 always. Correct.
+
+And `hypModelA_one_one_doubling`: V(2s) = cosh(2s)-1 = 2cosh²s - 2 = 2(cosh s+1)(cosh s-1). ✓ For all s.
+
+For hyp_volume_doubling_d1_k1, hVpos: 0 < radialVolume (hypModelA 1 1) s for s > 0: cosh s - 1 > 0 via Real.one_lt_cosh. ✓.
+
+7. Check `hypModelA d κ t = (sinh(κt)/κ)^d` for t > 0, κ > 0 is positive ✓; has derivative; Riccati equality for m = d κ coth(κ t). Let me sanity check: for A = (sinh(κt)/κ)^d, log deriv m = d * (κ cosh(κt))/sinh(κt) = dκ coth(κt). m' = -dκ² / sinh²(κt). Riccati: m' + m²/d + kbar = -dκ²/sinh² + d κ² coth² - dκ² = dκ²(coth² - 1/sinh² - 1) = dκ²((cosh²-1)/sinh² - 1) = dκ²(1 - 1) = 0 ✓.
+
+8. Check the Euclidean model: A = t^d, m = d/t. m' = -d/t², m²/d = d/t², kbar = 0 → sum 0 ✓.
+
+Now let me look at the evidence JSON and audit files.
+
+Also, one point: the acceptance says "with cones subset {propext, Classical.choice, Quot.sound}". "subset" — so cones may be smaller. The result card says "every cone exactly {propext, Classical.choice, Quot.sound}". Fine.
+
+Let me inspect evidence JSON, audit file, and check the fresh run rewrote it.
+dsh: reasoning:
+The evidence JSON was regenerated at 2026-09-12T02:35:41Z (note: this is likely UTC vs local; the file mtime says 10:32 earlier. Whatever — generated fresh by my run).
+
+Let me look at the gates details: build, axiom_audit, negative_control, forbidden_scan, classification_labels. And check the AXIOM-JSON lines in the fresh logs.
+
+Then do the adversarial review. Let me extract the fresh gate summaries.
+dsh: reasoning:
+All good. Now let me do the adversarial semantic review, item by item, with concrete verification:
+
+**Review A: conclusion-equivalence / no smuggled conclusion.**
+For each headline theorem, I'll extract the hypotheses (via `#check` output in the audit log) and check:
+- `euclid_volume_ratio_le_of_ricci_nonneg`: hypotheses are hk (k≥0), hineq (Riccati ≤0), hm/dm (derivative), hmcont, hnorm (EuclideanNormalizedOn), hA/dA, hAcont, hApos, hA0, hmA, hr/hR/hrR. Conclusion is the volume comparison. None is equivalent. In particular, `hnorm` only controls m near 0 and doesn't encode volume comparison. `radialVolume` is an integral of A; A's properties are local ODE properties.
+- `bishopGromov_volume_le` itself: no hypothesis states the conclusion. Let me actually read the proof body briefly to confirm it's a genuine derivation (via Sturm comparison/Riccati). It's D12's file, proven with no sorry (need to check the build has no sorry warnings; the audit covers axioms of the new files which depend on it — cones classical trio means no sorryAx in D12 either, transitively! That's a strong check: `collectAxioms` traverses the dependency cone, so if `bishopGromov_volume_le` used `sorry`, the cone would include `sorryAx`. It doesn't. Excellent — that's a rigorous fail-closed argument that the consumed theorem is genuinely proved.)
+- Hyperbolic similarly.
+
+**Review B: non-vacuity.**
+- The Euclidean witness theorem is kernel-checked and instantiates all hypotheses with concrete values, concluding the doubling inequality. Also equality attained (closedForm). ✓
+- Hyperbolic witness kernel-checked. For d=1,κ=1: V(2s)=2(cosh s+1)V(s) checked.
+- Interface witness kernel-checked for A≡2 volume on ℝ.
+- Joint interface+scalar: informal snowflake. The result card is honest about it (informal). The acceptance requirement (3) doesn't demand joint kernel witness; and (2)'s witness is kernel-checked.
+
+Wait — could I strengthen this by formalizing the snowflake witness? That would be a genuine addition: proving joint satisfiability kernel-checked. But is it in scope? Acceptance says "non-vacuous witnesses" as evidence. The composite theorem `coveringNumber_le_of_ricci_nonneg_radialBallMeasure` currently is conditional on `IsRadialBallMeasure`; the informal witness demonstrates joint satisfiability. Making it kernel-checked would strengthen evidence. However, formalizing the snowflake measure on ℝ would require: define the snowflake pseudo-metric instance on ℝ (or work with the existing `PseudoMetricSpace` structure), prove `closedBall x s` in snowflake = interval, prove Lebesgue measure of closedBall, prove A(t)=4|t| satisfies scalar hypotheses with m=1/t, etc. That's a nontrivial amount of Lean work and might take significant time. The task is limited to 4 hours and the checkpoint says complete. The prior round's acceptance already included the informal witness and it passed two adversarial reviews.
+
+Given "Continue from existing files and checkpoint.json in this worktree; do not restart completed work" and time budget, the right move is: verify, and if everything holds, finalize. But I should consider whether the evaluators would view the informal joint witness as insufficient. The acceptance evidence list: "non-vacuous witnesses" — plural, no explicit "kernel-checked joint witness" requirement. The Euclidean doubling witness is kernel-checked and non-vacuous for req (2). For req (3), the interface def + discharge theorems + kernel-checked interface-alone witness + informal joint witness is honest.
+
+Hmm, but there's a deeper question: is `IsRadialBallMeasure` actually satisfiable jointly with the scalar hypotheses? The informal argument says yes via snowflake. Let me verify the informal argument more carefully, because if it were wrong, the composite would be vacuous and a reviewer might call it a MAJOR. Let me check:
+
+Snowflake metric d(x,y)=√|x-y| on ℝ. This is a metric (it's the standard snowflake). Induces the usual topology? Balls B(x,r) = {y : √|x−y| < r} = (x - r², x + r²) — open intervals, so yes, usual topology, Borel σ-algebra = usual Borel.
+
+μ = Lebesgue. closedBall x s = {y : √|x-y| ≤ s}. For s ≥ 0: |x−y| ≤ s², so [x−s², x+s²], Lebesgue measure 2s². For s < 0: closedBall is empty? For s<0, no y has √|x-y| ≤ s < 0, so empty, measure 0. ENNReal.ofReal (radialVolume A s) with A(t)=4|t|: radialVolume A s = ∫₀ˢ 4|t| dt. For s < 0: ∫₀ˢ 4|t| dt = -∫_s^0 4(-t)dt... let's compute: ∫₀ˢ 4|t| dt for s<0 = -∫_s^0 4|t| dt = -[2t²]_s^0 = -(−2s²) = 2s²? Wait: ∫ 4|t| dt with t<0 is ∫ -4t dt = -2t². Evaluate from s to 0: (-2·0) - (-2s²) = 2s². Then ∫₀ˢ = -(∫_s^0) = -2s². Hmm, so radialVolume A s = 2s|s| = -2s² for s<0. So ofReal(-2s²) = 0 = μ(∅). ✓. For s ≥ 0: ∫₀ˢ 4t dt = 2s². μ(closedBall) = 2s² ✓.
+
+Scalar hypotheses with d=1, k=0, C=0, t₀=T, m(t)=1/t, dm(t)=-1/t², A(t)=4|t|, dA(t)=4 (on (0,T) A(t) = 4t):
+- hk: 0 ≤ 0 ✓
+- hineq: -1/t² + (1/t)²/1 + 0 = 0 ≤ 0 ✓
+- hm: HasDerivAtR m (-1/t²) t for t ∈ (0,T) ✓
+- hmcont: ContinuousOn m (0,T] ✓
+- hnorm: |m t − 1/t| = 0 ≤ 0 ✓ on (0,t₀) — EuclideanNormalizedOn with d=1, C=0: need to check the exact def. Let me check D12 Definitions: `EuclideanNormalizedOn m d C t₀ := ∀ t ∈ Ioo 0 t₀, |m t - d/t| ≤ C` presumably. 0 ≤ 0 ✓.
+- hA: HasDerivAtR A 4 t on (0,T): A(t)=4|t|=4t ✓
+- hAcont: ContinuousOn A [0,T]: 4|t| continuous ✓
+- hApos: 0 < 4t ✓
+- hA0: 4·0=0 ✓
+- hmA: m t = dA/A = 4/(4t) = 1/t ✓
+So joint satisfiability holds. The composite also needs `BorelSpace X` and a measure; Lebesgue with Borel σ-algebra. And `hr0 : 0 < r`, `hrT : 4r ≤ T`. Pick T=8, r=1? Wait `coveringNumber` in the snowflake metric... it's fine, the theorem holds.
+
+So the composite is genuinely non-vacuous. Good — and the informal status is honestly labeled.
+
+**Review C: manifold overclaim.**
+Search the new files for words like "manifold" — they always say "not a manifold theorem", "no manifold measure is constructed". The only declarations are model/interface. ✓ Let me grep to be thorough and check for phrases asserting existence.
+
+**Review D: no forbidden constructs / no hidden axioms.**
+- Axiom cones are exact trio for all 34.
+- No `sorry`, `axiom`, `unsafe`, `native_decide`, `admit`, `proof_wanted`.
+- Also check no `set_option autoImplicit true` or `maxHeartbeats 0`? Not forbidden but let me scan for set_option to be safe.
+- Also check no `@[implemented_by]`, `opaque`, `constant`, `postulate`. Let me scan for `constant `, `opaque `.
+
+**Review E: full signatures match the docstrings.** The audit log has #check outputs. Let me diff a few against docstrings:
+- euclid_volume_doubling_of_ricci_nonneg: docstring says hypotheses include `0 < s` with `s ≤ T` and `2 s ≤ T`; signature has `hs : 0 < s`, `hsT : s ≤ T`, `h2s : 2 * s ≤ T`. ✓
+- hyp_volume_doubling_d1_k1: docstring says `1 ≤ C` (hC1) and hk `-1 ≤ k t`. Signature ✓. Note hC1 : 1 ≤ C, and hC : 0 ≤ C is implied but both are taken — harmless redundancy (review H2 noted redundancies).
+
+Hmm wait: in `hyp_volume_doubling_d1_k1`, hC1 : 1 ≤ C and hC : 0 ≤ C are both hypotheses; hC1 implies hC. Not a weakening. Fine.
+
+**Review F: "Do not assume Bishop-Gromov as a hypothesis".** The instantiation passes `hineq` (Riccati) and model equality, deriving the ratio. The consumed `bishopGromov_volume_le` is itself proven (axiom cone clean, no sorry). ✓
+
+**Review G: "do not duplicate the existing conjugate_point_bound/Rauch results".** Let me grep new files for `conjugate_point_bound` / `Rauch` usage. Result card says checked. Let me verify.
+
+**Review H: provenance** — hashes match origins, including ultimate D12 origin for GeometricCompactness files. ✓ (Note: hmm, GeometricCompactness/Basic.lean ultimate origin is in the leaders worktree. Fine.)
+
+**Review I: classification labels** — 36/36. Let me verify counts: Euclidean file has 13 declarations; hyperbolic has 23 lines listed (defs + theorems) but two are private (sinh_mul_cosh_sub_sinh_nonneg, sinh_mul_cosh_sub_sinh_le) → 21 public. 13+23 = 36 labelled. Audited = 13 + 21 = 34. ✓
+
+Let me now run the remaining scans and extract the axiom JSON lines to independently confirm cones. Note: the verify driver already parsed them, but let me independently confirm from the raw logs.
+
+Also, I want to independently confirm that the freshly rebuilt modules produce zero warnings and compile exit 0 — the build log. And check whether "Build completed successfully" means it was cached (no rebuild). To be truly fail-closed, I should force a rebuild? Lake will recompile if hashes changed; since files unchanged and .lake cache exists, it may report "Build completed successfully" without recompiling. That's still a compile check but cached. For independent acceptance, I might force recompilation of the two new modules + audits by touching them, or use `lake build --no-build`? Actually best: delete the .olean for the new modules and rebuild to ensure the source genuinely compiles. Let me find build dir.
+
+Let me check where .lake is and whether the oleans for the new modules exist. I can touch the source files (updating mtime) to force recompilation. That changes no bytes. Then rebuild and capture output. That gives a genuine fresh compile exit evidence.
+
+Let me do that as an independent check. Also run the axiom audit fresh under the same forced rebuild.
+
+Plan:
+1. `touch` the two new Lean sources and the two audit files, then `lake build` the targets; capture exit + warnings.
+2. Re-run the two audit drivers and capture AXIOM-JSON lines; independently parse all cones and check ⊆ trio.
+3. Grep for forbidden constructs beyond the scanner (constant, opaque, implemented_by, set_option).
+4. Grep for manifold claims.
+5. Grep for conjugate_point_bound/Rauch duplication.
+6. Write my own independent review note `evidence/ricci-to-doubling-independent-acceptance.md` and a fresh JSON with hashes and findings.
+7. Update result card mention of independent acceptance round + checkpoint (preserve provenance; add an addendum rather than rewriting).
+
+Let me first check lake build cache location.
+dsh: reasoning:
+"constant" matches are only in prose/docstrings (the word "constant"), not the `constant` declaration keyword. Good. No `opaque`, `@[implemented_by]`, `set_option` etc.
+
+Now force a fresh rebuild. The .lake/build/lib/lean has oleans. I'll touch the two new sources and run `lake build` on the targets. Actually touching the two new files forces recompilation of them and their dependents (audits are not part of the library targets?). The audit files are in release/Audit/ — are they part of the lake library? Let me check lakefile.toml. Presumably lean_lib Poincare with globs. Audit may be outside. The verify driver runs `lake env lean release/Audit/...` directly.
+
+Let me force-rebuild the two new modules and the consumed modules from source? That could take a while (3454 jobs includes mathlib deps; but they're cached). Touching only the new files will recompile 2 modules + dependents. That's a genuine fresh compile of the acceptance content.
+
+Actually to be maximally fail-closed, I could delete the .olean/.ilean/.trace for the new modules and rebuild. Touch is enough (lake compares hashes of source? Lake uses trace files with content hashes; touching may not force if hash unchanged). Lake uses `trace` files that key on content hash, so touching without content change might not rebuild. To force, I can delete the olean/ilean/trace for the new modules.
+
+Let me find them.
+dsh: reasoning:
+The Audit lib globs ["Audit.+"] — so Audit/RicciToDoublingAudit.lean is `PoincareRelease.Audit.RicciToDoublingAudit`? Let me check module naming: file at release/Audit/RicciToDoublingAudit.lean, lib name Audit with globs ["Audit.+"]. Module name would be `Audit.RicciToDoublingAudit`. But the verify driver runs `lake env lean release/Audit/RicciToDoublingAudit.lean` directly, which type-checks the file with its imports.
+
+Now force recompile: delete the 4 new-module artifacts (2 modules × olean/ilean/hash/trace) and rebuild via lake, capturing output. Time: compiling these two modules could take a few minutes each (they're big proofs). Let me run in background with generous timeout and log.
+
+Also re-run the audits after rebuild (the audit files import the modules; running lean directly will typecheck).
+
+Let me do this. I'll delete artifacts and run lake build for the two modules, then both audits, logging everything to logs/independent-acceptance-*.log.
+
+Actually wait: deleting oleans might break the `Audit` library builds if they're cached dependents — but that's fine, lake rebuilds.
+
+Let me run this as a background job with a timeout of ~60 min.
+dsh: reasoning:
+While that runs, let me continue the adversarial semantic review. Let me:
+
+1. Read the hyperbolic file's model definitions and proofs (lines 1-340).
+2. Read D12 VolumeRatio.lean proof body of bishopGromov_volume_le to confirm genuine derivation (Sturm comparison).
+3. Check `EuclideanNormalizedOn` definition.
+4. Look at the evidence review files 1 and 2 to see what was already covered.
+
+Let me read the hyperbolic header + defs.
+dsh: reasoning:
+Wait, the job finished very fast? Hmm, maybe `rm` path wrong? The path: I deleted from release/.lake/... but the ls I did was `cd release && ls .lake/build/...`, so paths correct. And `lake build` ran... It finished quickly, so perhaps the build was fast (2 modules, maybe ~1-2 min? No, it said finished already — maybe it took a couple of minutes of wall time while I was reading). Let me check the output.
+dsh: reasoning:
+The `lake build` failed with "no default toolchain configured" — because the `lean-toolchain` says `leanprover/lean4:v4.34.0-rc2` and ELAN_HOME set. But `lake` binary resolution: PATH had elan bin first; `elan` shim for lake should use the toolchain from lean-toolchain. Error "no default toolchain configured. run elan default stable" suggests it didn't pick up the toolchain file... Maybe because the `cd` to worktree root happened after the env export, and lake was invoked from repo root which has no lean-toolchain (the lean-toolchain is in release/). But the verify driver must run lake with cwd=release. Let me check how the verify driver runs lake. It ran `lake build ...` successfully. Let me check: in the driver, `run(cmd, cwd, ...)` with cwd probably release.
+
+Also note the shim: ELAN_HOME and PATH. The earlier verify run worked. The issue: I ran `lake build` from the worktree root (no lean-toolchain there), so elan had no toolchain override and no default configured. Let me redo with cwd=release.
+
+I deleted the oleans. Need to rebuild. Let me rerun properly from release/.
+
+Also note: the verify driver's build log — it must have used cached oleans earlier (before my deletion). Now they're gone, so I need to rebuild to restore state (important: don't leave the worktree broken).
+
+Let me run lake build from release/ with proper env. Also check if elan default is configured: `elan toolchain list`. The verify driver succeeded before, so building from release/ should work.
+dsh: reasoning:
+While this compiles (may take several minutes), let me examine D12's VolumeRatio proof and `EuclideanNormalizedOn` def, and read the review evidence files.
+
+Let me read the D12 VolumeRatio.lean body of bishopGromov_volume_le.
+dsh: reasoning:
+The D12 chain is genuine: `riccati_le_of_singular_normalization` → `areaRatio_antitone_of_logDeriv_le` → `volumeRatio_antitone` → `bishopGromov_volume_le`. No conclusion-equivalent hypothesis; the normalization is just `|m t - d/t| ≤ C` near 0.
+
+One important adversarial point: `hnorm` for the arbitrary `m` requires `|m t - d/t| ≤ C` on (0,t₀). Could this be a strong hypothesis that encodes the conclusion? No — it's a standard tangent-space normalization (m ~ d/t at 0), used for the singular Riccati comparison to get m ≤ m̄. It's not the volume ratio.
+
+Now let me check `radialVolume` definition to ensure `radialVolume A R ≤ ...` means ∫₀^R A. Let me look.
+
+Also, requirement: "instantiate bishopGromov_volume_le with an EXPLICIT comparison model (Euclidean euclidModelA d / euclidModelM d for k >= 0; the constant-curvature hyperbolic model for k <= K <= 0 if available)". Done both.
+
+Now, what about "and prove the volume-ratio bound in closed form radialVolume A R <= (R/r)^(d+1) * radialVolume A r (respectively the hyperbolic closed form)". The hyperbolic "closed form" is the explicit model ratio V̄R/V̄r, evaluated for d=1,κ=1 to 2(cosh s+1). Good.
+
+Let me read `radialVolume` def and `radialVolume_pos_of_pos`:
+dsh: reasoning:
+All the needed API exists. Now let me check the background rebuild status.
+
+Meanwhile, let me also independently verify the axiom cones by parsing the raw audit logs (from the fresh run — the audit logs from the driver, though those were cached oleans; my new run will regenerate). Let me check job status.
+dsh: reasoning:
+The build + audits completed. The tail only shows the hyperbolic audit's end. Let me get the full log to see the build exit and Euclidean audit, plus check for warnings (the build output should show no warnings).
+dsh: reasoning:
+Excellent:
+- Build exit 0, "Build completed successfully (3454 jobs)", zero warnings/errors in the log (grep found none).
+- Euler... Euclidean audit: 13 declarations PASS, exit 0.
+- Hyperbolic audit: 21 declarations PASS, exit 0.
+- 34 AXIOM-JSON lines total.
+
+Let me independently parse all 34 cones and verify subset of trio, and check "Build completed" line 4 means actual recompilation happened (it rebuilt the 2 modules — let me confirm the log has no "nothing to be done" and that job count 3454 is the full plan; if it recompiled, there'd be no explicit output for lean modules unless warnings). Since I deleted oleans, lake must have recompiled them.
+
+Let me verify the oleans were regenerated with fresh timestamps.
+
+Also let me check the build log didn't just print "Build completed successfully" without recompiling (e.g., because the trace files remained). I deleted .trace and .olean and .olean.hash. Did I delete the trace? yes. So rebuild was forced.
+
+Let me confirm olean mtimes are now fresh.
+
+Then, parse cones independently.
+dsh: reasoning:
+The oleans were regenerated at 10:37 (fresh). All 34 cones are exactly the classical trio; 0 violations. (The 22 vs 21 count is because 'hyp' also matches one euclid name? e.g., `euclidModel_hypotheses_witness` contains "hyp"! Yes. So 21 hyperbolic + 1 euclid witness = 22. Fine.)
+
+Now, the audits rebuild genuinely. Note the "13 declarations" for the Euclid audit includes 13, and 21 hyperbolic = 34 total.
+
+Next: complete the adversarial semantic review with a systematic written analysis. Let me look at the two existing review files to see what's already documented and whether I can add an independent acceptance review. Let me read them.
+dsh: reasoning:
+The review is thorough. Let me read review 2 as well.
+dsh: reasoning:
+Both reviews are thorough. Now, my independent acceptance needs to verify the final bytes satisfy everything. I already:
+
+- Verified hashes match.
+- Forced rebuild: exit 0, no warnings, 3454 jobs.
+- Fresh audits: 34/34 cones = classical trio; exits 0.
+- Negative control passed (from driver; let me re-run independently maybe).
+- Forbidden scan passed.
+- Labels 36/36.
+
+Remaining independent adversarial checks I should do myself:
+1. Verify no conclusion-equivalent hypothesis mechanically: list all hypotheses of the three headline theorems and grep for `radialVolume` in hypothesis types. The #check outputs give full signatures — I can inspect them for occurrences of `radialVolume` in hypothesis positions. Let me extract from the audit log and analyze.
+
+2. Verify no manifold overclaim mechanically: grep for `Manifold`, `Riemannian`, `volume` measure claims in the new files; check `#check` declarations' types for `Manifold`/`IsManifold`/`Riemannian`. The interface uses `Measure X` on a pseudo-metric space, which is not a manifold claim. Also check that no declaration type mentions `volume` (the Riemannian volume) — `isRadialBallMeasure_real_witness` uses `(volume : Measure ℝ)` which is Lebesgue on ℝ, not a manifold.
+
+3. Check the negative control myself (independent run).
+
+4. Check duplicate-name scan: `conjugate_point_bound`/Rauch not imported/used.
+
+5. Confirm the "Class" labels cover all declarations in the two new files including private ones — count 36 in files vs labelled.
+
+6. Check the `hypModelA_one_one_volume` correctness for negative s (already reasoned correct).
+
+Let me do a scripted adversarial audit producing an independent evidence file. I'll write a Python script that:
+- extracts `#check` type strings from the fresh audit log for all 34 decls;
+- flags any hypothesis whose type contains `radialVolume` or `coveringNumber` or `IsRadialBallMeasure` (for the model theorems) as potential conclusion-equivalence;
+- flags any declaration type containing `Manifold`, `Riemannian`, `ChartedSpace`, `VectorBundle` (manifold overclaim);
+- cross-checks hashes of new files and consumed files against checkpoint;
+- re-runs negative control;
+- checks no `axiom`/`sorry` tokens (comment-aware scanner already).
+
+Actually, the verify driver already does most of this; my independent contribution should be a distinct check with a fresh implementation (fail-closed), plus a written independent acceptance review. That's what "independent acceptance" means. Let me write `tools/independent_acceptance_check.py` that implements these checks independently and writes `evidence/independent-acceptance.json`.
+
+Hmm, but I should be careful not to bloat. The task says "Preserve queue, checkpoints and provenance." Adding a tool and evidence is fine.
+
+Let me first extract #check signature output to see how hypotheses appear. Let me look at a portion of the fresh audit log.
+dsh: reasoning:
+The forced rebuild indeed recompiled both new modules (✔ Built ... 2.6s, 2.5s). Signatures look right.
+
+Now let me write my own independent acceptance checker with fresh logic. Key independent checks (distinct implementation from the verify driver):
+
+1. **Hash freeze**: recompute sha256 of the 4 new files + 10 consumed files; compare against checkpoint.json; also compare consumed against their origins.
+2. **Signature semantics**: parse the fresh `#check` output; for the two model headline theorems, verify that no hypothesis type mentions `radialVolume` (conclusion symbol) except in derivative/definitional equalities of the form `m t = dA t / A t` (which mentions dA/A but not radialVolume). Actually the hA hypotheses mention `HasDerivAtR A (dA t) t` — no radialVolume. hnorm `EuclideanNormalizedOn m (↑d) C t₀` — no radialVolume. So a mechanical scan: for the headline theorems, split at the final `→` conclusion; verify no hypothesis line contains `radialVolume`.
+3. **Manifold overclaim**: check all 34 declaration type strings for tokens `Manifold`, `ChartedSpace`, `Riemannian`, `TangentBundle`, `IsManifold`, `volume` — flag any.
+4. **Model vs interface classification**: ensure every declaration in the 2 files has a `**Class:**` label and labels are one of the approved strings; ensure no declaration is labelled manifold.
+5. **Negative control**: run `lake env lean ../negcontrol/NegativeControl.lean` fresh and check it detects sorryAx and native_decide.
+6. **Axiom cones**: parse fresh audit logs, check subset.
+7. **Joint satisfiability arithmetic (informal witness)**: mechanically re-verify the snowflake computations symbolically? I can do that with sympy or by hand-coded numeric checks: for random s, compute radialVolume A s for A=4|t| by numerical integration and compare to model prediction 2s|s|; check ball measure of snowflake = 2s² for s≥0. Numerical sanity check. Also check scalar hypotheses pointwise for random t: -1/t² + (1/t)²/1 + 0 = 0; m=1/t = dA/A=4/(4t); EuclideanNormalizedOn: |1/t-1/t|=0 ≤ 0.
+8. **No duplication**: grep for `conjugate_point_bound`, `Rauch` in the new files.
+9. **Forbidden constructs**: run the canonical scanner myself (already done) plus a raw grep for `sorry`, `axiom`, `admit`, `native_decide`, `unsafe`, `proof_wanted` with a comment-aware note. The canonical scanner output count 0.
+
+Let me write the independent checker as a tool, run it, and save evidence. Then write the independent acceptance review markdown. Then update checkpoint.json and result card with an independent-acceptance addendum.
+
+Actually — one more thing to consider: the task says "Save a compile-checked checkpoint at least every hour." Given the work was already complete and my verification takes <1 hour, I should record a checkpoint after verification. The existing checkpoint is status complete; I'll add an `independent_acceptance` block and update `updated_at`, preserving provenance.
+
+Also, should I attempt to *strengthen* anything while I have time? The invocation is limited to four hours but the work is done. Options:
+(a) Formalize the snowflake joint witness (kernel-checked non-vacuity of the composite). This would genuinely strengthen acceptance evidence: currently the joint non-vacuity is informal. Is it feasible in the remaining time? Let me think about the Lean work:
+
+- Need a `PseudoMetricSpace ℝ` instance with `dist x y = √|x-y|`. Mathlib may have this? There is `NNReal.sqrt`... There might not be a ready-made snowflake metric instance. Constructing a PseudoMetricSpace instance requires proving the triangle inequality for √|x−y|: √|x−z| ≤ √|x−y| + √|y−z|. With a = √|x−y|, b = √|y−z|: |x−z| ≤ |x−y|+|y−z| = a²+b² ≤ (a+b)². Then sqrt monotone gives √|x−z| ≤ a+b. That's provable with `Real.sqrt_le_sqrt` and `Real.sqrt_sq` etc.
+- Then identify closedBall x s = Icc (x - s²) (x + s²) for s ≥ 0.
+- Then measure: `MeasureTheory.volume (Icc ...) = ENNReal.ofReal (2*s^2)`. There are lemmas `Real.volume_Icc`.
+- Then prove `IsRadialBallMeasure volume (fun t => 4*|t|)`: radialVolume def = ∫₀ˢ 4|t|; for s≥0 integral = 2s²; for s<0 need ∫₀ˢ 4|t| = -2s²? Wait earlier I computed radialVolume A s = 2s|s| = -2s² for s<0, so the ball is empty (measure 0) and ofReal(negative)=0. Need to prove the integral formula for all s: ∫₀ˢ 4|t| = 2 s |s|. Could use intervalIntegral with `integral_abs`? Mathlib: `intervalIntegral.integral_abs`? There is `integral_abs_eq_abs`? Hmm.
+- Then prove the scalar hypotheses with A(t)=4|t|, m=1/t, etc. and apply the composite to get a concrete covering number bound.
+- Also need `BorelSpace` for the snowflake PseudoMetricSpace — since the topology is the usual one, BorelSpace instance should be inferable if the PseudoMetricSpace is definitionally `dist = ...` and `TopologicalSpace` instance from PseudoMetricSpace... The Borel σ-algebra on ℝ is registered for the standard topology; if the snowflake metric induces the same topology but as a *different* instance, `BorelSpace ℝ` may not automatically hold for the new pseudo-metric-space instance. Could be painful.
+
+This is a substantial formalization, probably several hours with debugging, and risks breaking the "don't restart completed work / don't weaken" balance. The acceptance evidence explicitly lists "non-vacuous witnesses" (which exist, kernel-checked for the doubling and interface-alone) and the composite's non-vacuity is documented informally + verified by review. Given the prior round already passed with that, and my mandate is independent acceptance within 4 hours, I judge the risk/benefit unfavorable: modifying completed, reviewed files could invalidate prior reviews and hashes. The instruction "do not restart completed work" supports not rewriting.
+
+However, I could add a *new* optional module (not modifying existing files) formalizing the snowflake witness if time permits, strengthening evidence without touching reviewed artifacts. But that adds a new artifact requiring its own audit/review cycle. Time budget: 4 hours. Maybe feasible? Let me estimate: this is a nontrivial measure-theory construction. I'd rather not risk it; the acceptance doesn't demand a kernel-checked joint witness.
+
+Instead, I can strengthen the *independent verification* by mechanizing the informal snowflake arithmetic checks (numeric/symbolic, not kernel), documented as independent verification of the informal witness. That's honest and useful.
+
+Let me now write the independent checker.
+
+Actually, let me reconsider one potential genuine gap: requirement (1) says "instantiate bishopGromov_volume_le with an EXPLICIT comparison model ... and prove the volume-ratio bound in closed form radialVolume A R <= (R/r)^(d+1) * radialVolume A r". This is for k >= 0 via euclidModelA/M. ✓. "(respectively the hyperbolic closed form)" — provided.
+
+Requirement (2) "derive the single-scale doubling consequence radialVolume A (2r) <= 2^(d+1) * radialVolume A r with a non-vacuous witness" ✓ kernel-checked.
+
+Requirement (3) ✓.
+
+Requirement (4) "every declaration must list its analytic hypotheses explicitly and be labelled model (scalar ODE) versus manifold" — every declaration has a Class label; definitions have "Analytic hypotheses: none". ✓. Note: "labelled model (scalar ODE) versus manifold" — no declaration is manifold-labelled; that's correct since no manifold results.
+
+Acceptance evidence: "compiling modules with full signatures ✓, source hashes ✓, compile exits ✓, fail-closed axiom audit with cones subset ✓, non-vacuous witnesses ✓, adversarial semantic review confirming no conclusion-equivalent hypothesis and no manifold overclaim ✓ (two reviews + my independent pass)."
+
+So: TASK_DONE stands at the model level. My independent acceptance should confirm it.
+
+Let me write the checker now. I'll make it self-contained and fail-closed.
+dsh: reasoning:
+Let me run it. Note potential issues:
+- `datetime.datetime.utcnow()` deprecation warning (fine).
+- The classification label regex logic may be fragile: it splits on declaration starts and looks for a docstring ending right before. Let me run and see.
+- The forbidden scanner invocation: need to check its CLI. The verify driver used it somehow. Let me check usage in the driver first, then run.
+dsh: reasoning:
+Two issues in my checker:
+
+1. `coveringNumber_le_measure_ratio_of_radialBallMeasure`: hypothesis `hpos : 0 < radialVolume A (r/2)` mentions `radialVolume`. Is this conclusion-equivalent? No — it's just positivity of the reference profile value (non-collapsing). The conclusion is a covering-number bound. My scan flagged it because `radialVolume` occurs in the conclusion too. This is a false positive of the naive check. I should refine: for interface theorems, the meaningful check is whether any hypothesis *implies the covering-number bound* or is the conclusion itself. `hpos` is a positivity side condition, not conclusion-equivalent. I'll refine the check to flag only hypotheses that contain the full conclusion symbol *pattern* — better: check that no hypothesis mentions `coveringNumber` (the actual conclusion predicate) for the covering theorems, and for the model theorems no hypothesis mentions `radialVolume` in an inequality of the conclusion's shape. Simplest robust criterion: no hypothesis may contain the conclusion's *head symbol* (`coveringNumber` for the interface theorems; for the model theorems, `radialVolume` appears in hyps only via hpos-type positivity — but in the model theorems none mention radialVolume at all). Let me define per-theorem which symbol is forbidden in hypotheses:
+   - model theorems: `radialVolume` forbidden.
+   - interface theorems: `coveringNumber` forbidden (conclusion head), and additionally the hypothesis `IsRadialBallMeasure μ A` is the interface (intended input, not a restatement).
+   Additionally I can check that no hypothesis is literally the conclusion string.
+
+2. Classification label scan found 0 labelled — my block-splitting regex is wrong. Let me fix: for each declaration match, look backwards from the match start to find the nearest preceding docstring that ends with `-/` immediately before (allowing whitespace) and contains a `**Class:**` line. Simpler: use a regex that captures docstring + declaration pairs:
+
+```
+r"/--(.*?)-/\s*((?:private )?(?:noncomputable )?(?:theorem|lemma|def)\s+[\w']+)"
+```
+with DOTALL. That should pair each declaration with its immediately preceding docstring. Some decls may have attributes (`@[simp]`) between docstring and decl? Let me check. In these files, likely none. Let me implement that pairing and count.
+
+Note: the `def` keyword in the pair could accidentally match `def` inside the docstring text (e.g., "definition"). Use `\b(?:theorem|lemma|def)\s` and anchor to line start with `^`. Also `noncomputable def`. And avoid matching e.g. "private theorem" as start.
+
+Let me rewrite those two parts of the checker and re-run.
+
+Also note the earlier output was truncated (tail -60) so I didn't see gates A/B/D/G/H results. The script printed the full JSON. Let me fix and re-run, then inspect the final JSON.
+
+Let me edit the tool.
+dsh: reasoning:
+Oops — I introduced a typo: `> # (declaration, ...)` at the start. That's a syntax error. Let me fix that line.
+dsh: reasoning:
+13/13 paired for the first file. The failure must be in the hyperbolic file: 23 declarations vs paired docs count or an unapproved label. The output was cut. Let me inspect the JSON for details.
+dsh: reasoning:
+The only "failure" is my own regex truncating the label: the composite's label spans two lines:
+
+`**Class:** metric–measure interface (non-manifold), conditional on the scalar model
+hypotheses.`
+
+My regex `([^\n]*)` only captured the first line. The label is a two-line doc string. So this is a checker artifact, not a real defect. Fix: allow the class line to continue to the next line (capture until `\n\n` or the end of docstring), or normalize by joining continuation lines. Simplest: capture `([^\n]*(?:\n(?!\n)[^\n]*)?)` and join whitespace. Let me fix.
+
+Note also: the source at line 463-464 says:
+```
+/-- **Class:** metric–measure interface (non-manifold), conditional on the scalar model
+hypotheses.
+```
+So joining with a space gives "metric–measure interface (non-manifold), conditional on the scalar model hypotheses" which matches my approved set. Good.
+
+Let me update the regex to capture the class content across continuation lines until a blank line.
+dsh: reasoning:
+All 8 independent gates PASS. Wait — the hash_freeze gate: my checker compares the 4 new files against checkpoint. It passed. But note: I created a new tool file `tools/independent_acceptance_check.py` — that doesn't affect the new artifacts' hashes.
+
+Let me now double-check the json details of my checker to look for the interface theorem's allowed hypothesis mentions, and re-examine the conclusion-equivalence report:
+- `coveringNumber_le_measure_ratio_of_radialBallMeasure` hypotheses mention `radialVolume` (hpos) but not `coveringNumber`. Good.
+
+Let me look at the full JSON to review each gate's detail. Then:
+
+1. Update the result card with an independent acceptance addendum (round 2).
+2. Update checkpoint.json: add `independent_acceptance` block, update `updated_at`, status stays complete, round description.
+3. Maybe write `evidence/independent-acceptance-review.md` — a written adversarial semantic review by me (the independent acceptance pass), covering: conclusion-equivalence, manifold overclaim, non-vacuity, scope, with the checks I ran. This satisfies the "adversarial semantic review confirming no conclusion-equivalent hypothesis and no manifold overclaim" as an artifact of *this* invocation.
+
+Also, I should double check one thing in my semantic review: the acceptance says "(3) ... discharge the hupper/hlower hypotheses of Poincare.L4.Compactness.coveringNumber_le_measure_ratio and coveringNumber_le_of_measure_doubling". The consumed file's actual hypotheses are `hlower`, `hcomp`, `hdouble` (no `hupper`). The prior round documented this discrepancy. That's the honest reading: the "upper" side is the measure term in the conclusion plus `hcomp`. Good. I should note this in my review.
+
+Another check: does `coveringNumber_le_of_measure_doubling`'s `hcomp` get discharged with K=1? Yes in `coveringNumber_le_of_radialBallMeasure_doubling` (hcomp is taken as hypothesis with general K; composite discharges with K=1). Wait: in `coveringNumber_le_of_radialBallMeasure_doubling`, `hcomp : radialVolume A (r/2) ≤ K * radialVolume A (r/2)` is a hypothesis — this is nearly trivial for K ≥ 1, and it's monotone in K. In the composite, hcomp : μ(closedBall x (r/2)) ≤ 1 * mm is discharged directly from hμ and hcoe. ✓
+
+Also `hdbl` in `coveringNumber_le_of_radialBallMeasure_doubling` is the halving-form doubling *as a hypothesis* — but the docstring honestly says the all-scales statement isn't derived, only the three dyadic scales in the composite. In the composite the three scales are derived from Riccati. ✓ No conclusion-equivalent hypothesis.
+
+One more possible adversarial angle: does the composite `coveringNumber_le_of_ricci_nonneg_radialBallMeasure` hide the doubling bound as a hypothesis? No: it takes the scalar Riccati hypotheses and hμ, and derives hV4/hV2/hV1. ✓ (verified by signature scan; hypotheses mention neither coveringNumber — the report shows `hypotheses_mentioning_conclusion_head: []` for this theorem.)
+
+Let me view the full detail of the conclusion-equivalence report and manifold report to make sure no missing signature (all 9 headline found). Then write the review.
+
+Also, I could run one more genuine semantic test: use Lean to `#print axioms` independently via `lake env lean` on a scratch file that checks a few key declarations — but that's duplicated by the audit. The forced rebuild + audit is sufficient.
+
+Actually, one more valuable independent check: verify the *statements* are not weakened versus the acceptance requirement, by checking the exact conclusion forms in the #check output against the required closed forms:
+- `radialVolume A R ≤ (R / r) ^ (d + 1) * radialVolume A r` — present.
+- `radialVolume A (2 * s) ≤ 2 ^ (d + 1) * radialVolume A s` — present.
+- Hyperbolic: `radialVolume A (2*s) ≤ (V̄(2s)/V̄ s) * radialVolume A s` and d1k1 `≤ 2*(cosh s + 1)*radialVolume A s` — present.
+- Interface: `μ (closedBall x s) = ENNReal.ofReal (radialVolume A s)` — check def text.
+
+My checker can assert these exact substrings. Let me add a "statement fidelity" gate (I) that checks the required conclusion substrings appear in the signature text. That directly ties to the acceptance wording.
+
+Let me add that gate and re-run.
+dsh: reasoning:
+The fidelity check fails because the #check output uses the qualified name `D12.ComparisonGeodesics.radialVolume` and the unicode ↑d for coercion, plus line breaks. My normalization joins whitespace but the qualified names differ. Let me normalize by removing the `D12.ComparisonGeodesics.` prefix and replacing `↑d` with `d`. Also the signature may render `2 ^ (d + 1)` fine. Let me handle:
+- replace "D12.ComparisonGeodesics." with ""
+- replace "↑d" with "d"
+- also "(r : ℝ)" might appear as "↑r"? In the interface signature, the `#check` output showed `↑r` for ℝ≥0 coercion in some places. E.g. `Set.Ioc 0 T` etc. Let me inspect the actual signature strings for the failing ones and adapt.
+
+Let me print the normalized signatures for the headline theorems to craft correct needles.
+dsh: reasoning:
+I see: the pretty-printer omits parentheses around the division in the hyperbolic ratio (multiplication rendered without parens), and uses `↑r` for the ℝ≥0 coercion, `Metric.closedBall`, and ↑(coveringNumber ...). The `top_level_hypotheses` split gives the conclusion; for fidelity I should compare against a normalized version of the conclusion only, with:
+- prefix removal "D12.ComparisonGeodesics."
+- "↑r" → "(r:ℝ)"? Simpler: normalize both sides by removing all spaces, removing "D12.ComparisonGeodesics.", replacing "↑" with "", and removing parentheses. Then require the required pattern (also stripped of spaces/parens).
+
+Let me implement a coarse normalization:
+```
+def canon(s):
+    s = s.replace("D12.ComparisonGeodesics.","")
+    s = s.replace("Metric.","")
+    s = s.replace("↑","")
+    s = s.replace(" ","")
+    return s
+```
+Required patterns:
+- "radialVolumeAR≤(R/r)^(d+1)*radialVolumeAr" — canon of my needle gives "radialVolumeAR≤(R/r)^(d+1)*radialVolumeAr" (parens kept). Actual canon: "radialVolumeAR≤(R/r)^(d+1)*radialVolumeAr" ✓.
+- Euclidean doubling: "radialVolumeA(2*s)≤2^(d+1)*radialVolumeAs" vs actual "radialVolumeA(2*s)≤2^(d+1)*radialVolumeAs" ✓.
+- Hyp ratio actual: "radialVolumeAR≤radialVolume(hypModelAdκ)R/radialVolume(hypModelAdκ)r*radialVolumeAr". My needle canon: "radialVolumeAR≤(radialVolume(hypModelAdκ)R/radialVolume(hypModelAdκ)r)*radialVolumeAr" — parens differ. Use a needle without parens: "radialVolumeAR≤radialVolume(hypModelAdκ)R/radialVolume(hypModelAdκ)r*radialVolumeAr" ✓.
+- Hyp doubling similarly.
+- d1k1: actual? Let me check. Probably "radialVolumeA(2*s)≤2*(Real.coshs+1)*radialVolumeAs". Needle canon "radialVolumeA(2*s)≤2*(Real.coshs+1)*radialVolumeAs" ✓.
+- Interface: actual "↑(coveringNumberr(closedBallx(2*↑r)))≤ENNReal.ofReal(radialVolumeA(4*↑r))/ENNReal.ofReal(radialVolumeA(↑r/2))" → canon removes ↑: "(coveringNumberr(closedBallx(2*r)))≤ENNReal.ofReal(radialVolumeA(4*r))/ENNReal.ofReal(radialVolumeA(r/2))". My needle canon currently "coveringNumberr(closedBallx(2*(r:ℝ))):ℝ≥0∞)≤..." — messy. Let me use the top-level conclusion for the interface theorem and a simplified needle: "coveringNumberr(closedBallx(2*r))≤ENNReal.ofReal(radialVolumeA(4*r))/ENNReal.ofReal(radialVolumeA(r/2))" — with actual canon: "(coveringNumberr..." has a leading "(" and trailing ")"? Actual canon: "↑(Metric.coveringNumberr(Metric.closedBallx(2*↑r)))≤..." after replacing ↑→"" gives "(coveringNumberr(closedBallx(2*r)))≤..." with outer parens. Needle without outer parens is a substring ✓.
+- IsRadialBallMeasure check: compare canon of the def type; the needle "μ(closedBallxs)=ENNReal.ofReal(radialVolumeAs)".
+
+Simplify: use canon on both actual and needle, and check substring. Let me rewrite gate I accordingly with needles in canonical (space-free) form.
+
+Also note: for `hyp_volume_ratio_le_of_ricci_ge`, the actual conclusion lost the parentheses around the ratio because `a / b * c` is left-assoc and pretty printer omitted them; my canonical needle without parens matches.
+
+Let me update.
+dsh: reasoning:
+Two needles fail. The IsRadialBallMeasure #check output: let me print it. And the interface conclusion. Likely:
+- IsRadialBallMeasure prints as `@IsRadialBallMeasure : ∀ {X : Type u_1} [PseudoMetricSpace X] [MeasurableSpace X], Measure X → (ℝ → ℝ) → Prop` — because a `def` returns a Prop/function, so `#check` shows only the type, not the body! Indeed, for a def, #check shows the type, not the definition body. So the body needle can't be found. I should instead check the definitional unfolding via a different method: `#print IsRadialBallMeasure` output, which is not in the log. The audit only has #check. Hmm. But the verify driver's classification gate etc. doesn't check the body either. I can verify the body textually from the source (read the def) — the source line 344-346 clearly states it. My gate can check the source text for the definitional body (comment/string-stripped).
+
+- The covering conclusion mismatch: actual canon: "(coveringNumberr(closedBallx(2*r)))≤ENNReal.ofReal(radialVolumeA(4*r))/ENNReal.ofReal(radialVolumeA(r/2))" — hmm, my needle has "coveringNumberr(closedBallx(2*r))≤..." but actual contains "(coveringNumberr(closedBallx(2*r)))≤". The extra parens around coveringNumber! Because `↑(Metric.coveringNumber r ...)` — the ↑ coercion applies to the whole `coveringNumber r (...)`, then the conclusion is `(↑(...) : ℝ≥0∞) ≤ ...`. After removing ↑ and Metric., we get "(coveringNumberr(closedBallx(2*r)))≤...". The needle substring "coveringNumberr(closedBallx(2*r))≤" doesn't match because of the closing paren before ≤. I'll relax: strip all parentheses from both. Let me canon remove "(" and ")" too. Then needles: "coveringNumberrclosedBallx2*r≤ENNReal.ofRealradialVolumeA4*r/ENNReal.ofRealradialVolumeAr/2" — note "r/2" vs "(r/2)" both become "r/2". Good. And the other needles work with parens stripped too.
+
+For the IsRadialBallMeasure body: check the source text (stripped of comments/strings) contains the def body. Better: use `#print` in the audit? Can't modify the audit (would change hashes). I can add to my own checker a source-level check: after stripping comments/strings, find `def IsRadialBallMeasure` and assert the body contains `μ (closedBall x s) = ENNReal.ofReal (radialVolume A s)`. That's a textual check, acceptable as supporting evidence; the semantic fact is guaranteed by the compiled def and all theorems using `hμ y` unfolding it.
+
+Alternatively, run a scratch Lean file that `#print IsRadialBallMeasure` and check output. That's stronger (kernel-accurate). But it requires invoking lean; I can do it once and record output. Actually simpler: my checker can call `lake env lean` on a tiny scratch file, but that's heavier. Given that the def is used by the discharge theorems which compiled and passed, and the docstring says the same, the textual check suffices.
+
+Let me update: canon strips parens; IsRadialBallMeasure check reads source (comment/string-stripped) instead of signature.
+
+Actually wait — there's a subtlety: for `IsRadialBallMeasure` the `#check` type is `∀ {X} [PseudoMetricSpace X] [MeasurableSpace X], Measure X → (ℝ → ℝ) → Prop`, which doesn't reveal the body. I could also check that the def has the right *type* (2 args) and separately that source body matches. Fine.
+
+Let me patch.
+dsh: reasoning:
+All 9 independent gates pass. Now let me:
+
+1. Run the full verify driver once more (post-rebuild) to confirm OVERALL PASS still holds with regenerated evidence (the earlier driver run was before the forced rebuild; the rebuild didn't change sources, but re-running confirms the end state and regenerates evidence/ricci-to-doubling-verify.json consistent with current oleans). Actually I already ran it at the start; sources unchanged. But since I deleted and rebuilt oleans, re-running is harmless and re-confirms. It also re-runs the negative control itself. Let me run it in background while I write the review.
+
+2. Write the independent adversarial semantic review markdown.
+
+3. Update result card addendum + checkpoint.
+
+4. Update the todo list.
+
+Let me start the verify driver again in the background, and write the review.
+
+For the review file, I'll write `evidence/independent-acceptance-review.md` containing:
+- Scope and frozen revision (hashes).
+- Method: forced rebuild from deleted oleans, fresh audits, independent checker.
+- Adversarial findings per category:
+  A. conclusion-equivalence: verified mechanically per headline theorem; list the hypothesis sets; note the one hypothesis `hpos` that mentions radialVolume (positivity, not conclusion); note hcomp in the doubling interface is a genuine upper-comparability input, discharged with K=1 in the composite; the composite derives the three dyadic inequalities.
+  B. Non-vacuity: kernel-checked witness for req (2); interface-alone witness; joint informal witness arithmetic re-verified numerically; honest labeling.
+  C. Manifold overclaim: no manifold tokens in declaration types or stripped source; interface is on an abstract PseudoMetricSpace + Measure; gap section explicitly open.
+  D. Bishop–Gromov not assumed: D12 chain riccati_le_of_singular_normalization → areaRatio_antitone_of_logDeriv_le → volumeRatio_antitone; all cones clean (no sorryAx), including consumed files transitively.
+  E. Duplication: none.
+  F. Hypothesis/labels: 36/36.
+  G. Residual risks/limitations: hyperbolic closed form evaluated only d=1,κ=1; joint witness informal (not kernel-checked); IsRadialBallMeasure stronger than needed; "hupper" token absent in consumed files; U9 manifold half open. No blockers.
+- Verdict.
+
+Let me also record exact hash of the independent checker tool in the evidence JSON? The checker JSON should ideally include the tool hash. Let me add a `tool_sha256` field. Quick edit: compute sha256 of own file at runtime. Let me add that.
+
+Also I want to include in the JSON the forced-rebuild log hash so the evidence is self-contained. Let me add `rebuild_log_sha256`.
+
+Let me patch the checker to add these fields and re-run.
+dsh: reasoning:
+Now, write the independent adversarial semantic review. Let me first gather a couple of specifics for accuracy:
+
+- The D12 chain names: `riccati_le_of_singular_normalization`, `areaRatio_antitone_of_logDeriv_le`, `volumeRatio_antitone`.
+- The composite derives hV4/hV2/hV1 from `euclid_volume_doubling_of_ricci_nonneg`.
+- Hypotheses counts from my report: euclid ratio 25? Wait the report said n_top_level_hypotheses: 25 for euclid_volume_ratio... Hmm, that's because my `top_level_hypotheses` splits on `→` after the binder prefix — it treats each arrow-separated chunk as a hypothesis, including binders. 25 chunks. Fine, not important.
+
+Let me get the exact conclusion-equivalence report from the JSON for accuracy in the review.
+dsh: reasoning:
+Now let me write the independent acceptance review markdown. I'll be precise and honest, including residual limitations.
+
+Let me also verify one specific claim: "no conclusion-equivalent hypothesis" for `coveringNumber_le_of_radialBallMeasure_doubling`: the `hdbl` hypothesis is exactly the volume doubling (radialVolume A s ≤ C · radialVolume A (s/2)) — that IS the volume-doubling conclusion at the interface level, assumed as input, but the theorem is explicitly an interface lemma whose *purpose* is to discharge `coveringNumber_le_of_measure_doubling`'s hypotheses; its conclusion is the covering-number bound, so it's not conclusion-equivalent (the conclusion is different). And the composite derives the needed three scales from Riccati rather than assuming hdbl. This is honest and documented. Good to note in the review as an explicitly documented interface input, not circularity.
+
+Also note: `coveringNumber_le_of_measure_doubling` has `hdouble` as a hypothesis (from the round-3 file). The composite route uses `coveringNumber_le_of_dyadic_doubling` with three derived inequalities. Good.
+
+Let me write the review.
+
+Then check the driver result (bash-4) and update checkpoint + result card.
+
+Let me write the review file now.
+dsh: reasoning:
+The authoring driver re-run also passes post-rebuild. Now:
+
+1. Verify the result card hash references and evidence bundle timestamps.
+2. Update `checkpoint.json` with an independent acceptance block, keeping provenance; update `updated_at` and round description.
+3. Add an addendum section to `longrun/results/L4-child-ricci-to-doubling.md` and `.json` recording the independent round-2 verification.
+
+Important: the task says "Only your own longrun/results/L4-child-ricci-to-doubling.md can complete this task." So updating the result card is important.
+
+Also "Preserve queue, checkpoints and provenance" — I should not delete fields; append.
+
+Let me check the result JSON structure first.
+
+Also: I should verify that after everything, the source hashes are unchanged (they are; I only added tools/evidence files and will edit checkpoint + result card — none of which are the audited Lean artifacts). The result card currently claims evidence hashes; my addendum will note the new evidence.
+
+Let me read the result JSON.
+dsh: reasoning:
+Let me update the checkpoint.json first with Python (careful, preserve all fields). Then update the result JSON and markdown with an addendum.
+
+Checkpoint updates:
+- `updated_at`
+- `round`: append round-2 independent acceptance note
+- `independent_acceptance`: new block with:
+  - method: forced rebuild (oleans deleted), fresh audits, separate checker 9/9
+  - log sha256
+  - checker sha256
+  - evidence file + review file
+  - verdict
+- `evidence_files`: append the two new files
+- keep `status`: complete, `verdict` unchanged.
+
+Result JSON:
+- `updated_at`
+- `verification.independent_acceptance` block (need to see the `verification` structure first).
+- `artifacts`: append tools/independent_acceptance_check.py, evidence/independent-acceptance.json, evidence/independent-acceptance-review.md.
+
+Result markdown:
+- add a new section §8 "Round-2 independent acceptance re-verification" with details and verdict; update the header maybe.
+
+Let me see the `verification` field of the result JSON to append properly.
+dsh: reasoning:
+Now let me update:
+
+1. checkpoint.json — add `independent_acceptance` block, append evidence_files, update round/updated_at.
+2. result JSON — update verification with `independent_acceptance` sub-block, adversarial_reviews review_3, artifacts additions, updated_at.
+3. result markdown — add section 8.
+4. Check the queue file to see if there's a queue entry that should reflect status (preserve queue). Let me look at longrun/queue.updated.json — probably the leader's queue, not mine to modify. The task says "Preserve queue, checkpoints and provenance" — meaning don't clobber. I won't modify the queue.
+
+Let me do the checkpoint + JSON edits with a Python script (atomic, preserving key order where possible). Actually using `write` after reading is required by policy; I read checkpoint.json already via cat/read. The policy says read the existing file first — I did read it (via bash cat, hmm, the rule says use read tool). Let me use the read tool on checkpoint.json to be safe, then write. Actually I already fully read checkpoint.json via bash `cat`. The fs-observation-policy might require the read tool. Let me use `read` on checkpoint.json and the result JSON before writing. The result JSON I haven't fully read. Let me read it fully (it's 5.5KB).
+
+Actually simpler and safer: use Python to load/modify/dump (this is a script-based edit, not the write tool). But the instruction says use edit/write tools for file modification. Hmm, "Use the write tool to create files or completely replace file contents... Use the edit tool for targeted changes". For JSON, a Python script is more robust; but policy-wise, I'll use `read` then `edit` for targeted insertion. The JSON is formatted with 1-space indent; targeted edits are feasible.
+
+Let me read the checkpoint.json via read tool first.
+dsh: reasoning:
+Now edit checkpoint.json:
+- line 10: round → append round-2 note.
+- line 12: updated_at → current UTC. What's the actual current time? The system's date: earlier logs showed 2026-09-12T02:37Z (UTC) while local was 10:37 +0800. So UTC now ~02:5x. Let me get date -u.
+- line 82: hyperbolic artifact status says "adversarial review #2 in flight" — that's stale relative to the rest (checkpoint already has review_2_outcome). Since provenance preservation matters but stale status is misleading, update to "review #2 complete". This is an edit of own documentation, fine.
+- line 96: "(31 cones)" is wrong: 34 declarations. Actually the checkpoint says "both axiom audits (31 cones)" — hmm, 13+21=34. Wait: maybe 31 was earlier count? The evidence says 34. Let me fix to 34 to avoid an inconsistency. Actually careful: "31 cones" might refer to something else... no: Euclidean 13 + hyperbolic 21 = 34. The claim in the checkpoint line 96 is inaccurate/stale. My independent checker found 34. I'll correct it.
+- Add `independent_acceptance` block after `review_2_outcome`.
+- Append evidence files.
+- `updated_at`.
+
+Let me get the current UTC time first, then apply edits.
+dsh: reasoning:
+Wait — the evidence hashes I recorded for independent-acceptance.json and the review were computed before... the checker JSON was regenerated by the last checker run (with tool_sha256/rebuild_log fields) — that's the c81b... hash I computed after that run. But did I re-run the checker after that hash computation? Yes: I ran it once after adding hashes (`python3 tools/independent_acceptance_check.py` then printed tool/log hashes) — that wrote c81b...? Let me verify: the sha256sum I computed at 02:39 gave c81b0092... for independent-acceptance.json. The last checker run was before that sha256sum. So the recorded hash is current. But wait: after that, I created the review markdown — doesn't affect the JSON. And I haven't re-run the checker since. However, the checker JSON's `generated_at` is from the last run; fine.
+
+But careful: my sha256sum of independent-acceptance.json gave c81b... — good.
+
+Now validate checkpoint JSON parses, then update the result card JSON and Markdown.
+
+Also note the result JSON's artifacts list should include the new files. Let me read the full result JSON via read tool, then edit.
+dsh: reasoning:
+Now update the result JSON:
+- updated_at → current UTC (2026-09-12T02:41:00Z or so)
+- artifacts: append the 3 new files with hashes.
+- verification: add `independent_acceptance` sub-block.
+- adversarial_reviews: add review_3 (independent round-2 review) with target hashes and outcome.
+
+Let me apply edits. Note JSON format uses 1-space indent.
+
+I'll add artifacts entries after the semantic-review-1 entry, plus markdown result. Let me edit.
+dsh: reasoning:
+Now update the result markdown with an addendum section. The file was read earlier in full (I read it via bash cat — I should use the read tool first per policy since I'll edit it). Let me read the tail via read tool (or the whole file, it's 15KB / ~330 lines). I read it via bash cat already. To satisfy policy, use read tool with limit on the last lines to anchor the edit.
+
+I'll append a section before "## 7. Verdict" or after it. Simplest: append a new section at the end (after §7 Verdict), e.g. "## 8. Round-2 independent acceptance re-verification (addendum)". Also update the header line "Independent verification: all gates PASS; adversarial semantic review #1 ... review #2 ..." to mention round 2? Better keep original text and add addendum.
+
+Let me read the tail of the markdown with the read tool.
+dsh: reasoning:
+Also update the header line of the result card to mention round-2? The header says "Independent verification: all gates PASS; adversarial semantic review #1 ... review #2 ...". I could add "and a round-2 independent acceptance re-verification (§8)". Let me do a small targeted edit at the top. Let me read the top lines with the read tool.
+dsh: reasoning:
+Now, final checks:
+1. Re-verify the four new-file hashes unchanged (I only edited checkpoint/results/evidence/tools).
+2. Re-run the independent checker one final time to reflect the current evidence JSON (the checker writes its own JSON with hashes of itself — but I haven't modified the checker since the last run except... wait, I did modify the checker after computing the sha256? Let me trace:
+   - Added hashes fields → ran checker (writes JSON with tool_sha256=7e1be0cb...). 
+   - Then sha256sum gave checker 7e1be0cb... and JSON c81b0092....
+   - After that I did NOT modify the checker. Good.
+   But I did add `evidence/independent-acceptance-review.md` after the JSON run — doesn't change the JSON.
+   However, the review markdown claims "9/9 gates PASS" referencing the JSON — consistent.
+   
+   Wait, the JSON's recorded `tool_sha256` was computed at runtime before I made... no, the `tool_sha256` field was added in the same edit as the hashes; the run after that produced 7e1be0cb. sha256sum confirmed 7e1be0cb for the tool file. Consistent.
+
+3. Verify the result markdown/JSON and checkpoint are valid.
+4. Verify no stale claims: the result JSON `verification.independent_acceptance.evidence_file` etc. fine.
+5. Confirm the ledger/queue preservation: I didn't touch queue files. Let me double-check git status? Is this a git worktree? Let me check `git status --short` to see modifications (if git available). It will list my changes. This helps confirm I haven't disturbed queue files.
+6. Final re-run of my checker to confirm still PASS (safe).
+7. Update todos and give final report with TASK_DONE.
+
+Also, one consideration: the acceptance says "Acceptance evidence: compiling modules with full signatures, source hashes, compile exits, fail-closed axiom audit..., non-vacuous witnesses, and an adversarial semantic review". All present.
+
+Let me also double check the `evidence/ricci-to-doubling-verify.json` was regenerated by the post-rebuild run (bash-4) — yes, it ran and passed. Good.
+
+One more integrity check: hashes of the four Lean artifacts still match checkpoint (the forced rebuild recompiled but didn't modify sources). Let me re-verify, and also verify the audited source hashes didn't change due to `lake` touching anything. `lake build` doesn't modify sources.
+
+Let me run final checks in parallel.
+dsh: reasoning:
+The final checker run regenerated `evidence/independent-acceptance.json`, which changes its hash (generated_at + tool_sha256 unchanged but content bytes may differ due to timestamp and possibly the `generated_at`). The hash I recorded in checkpoint/result JSON (`c81b0092...`) may now be stale! Let me recompute the JSON hash and update the checkpoint/result JSON references if changed. Since `generated_at` uses `datetime.utcnow()`, the content changed. Let me check.
+
+Also: my checker writes the JSON every run; the recorded hash will be stale. I need to either (a) fix the recorded hashes to the new hash and not re-run, or (b) make the checker deterministic. Best: compute the new hash, update checkpoint + result JSON, and don't re-run the checker again.
+
+Let me compute the new hash and the review/log/tool hashes (unchanged) and update.
+dsh: reasoning:
+Hmm wait: checkpoint.json had the hash twice (in new_artifacts entry and in independent_acceptance.evidence block) — both updated, good. The result JSON had it once (in the independent_acceptance.evidence_file... actually I put the hash only in the `independent_acceptance` block? Let me check: I put `"file": "evidence/independent-acceptance.json", "sha256": "c81b..."` in artifacts, and in verification.independent_acceptance I only referenced `evidence_file` without hash. So 1 occurrence → updated. Good.
+
+Now, one residual: the JSON's `generated_at` is 02:40:19Z, and the hash is now 61ab... Good.
+
+Let me do a final consistency verification script that cross-checks all documented hashes against actual files (self-audit), then finalize todos and report.
+
+Checks:
+- checkpoint new_artifacts hashes == actual
+- checkpoint independent_acceptance hashes == actual (log, checker, evidence, review)
+- result JSON artifact hashes == actual
+- result JSON indep block hash == actual
+- the 4 frozen Lean hashes unchanged
+- verify driver OVERALL PASS (last run)
+
+Let me write a quick one-off check.
+dsh: reasoning:
+Everything is consistent. Let me update the todos to completed and give a final summary.
+
+One last thought: should I double-check that the result markdown claims the correct evidence hash? The markdown mentions the checker sha256 `7e1be0cb…` and log `a9a40498…`, not the JSON hash — fine, and those are unchanged.
+
+Also, the markdown §8 says "9/9 PASS (`evidence/independent-acceptance.json`, `INDEPENDENT-ACCEPTANCE: PASS`)" — correct.
+
+Let me finalize todos and report TASK_DONE.
+
+Also worth double-checking: the task says "Save a compile-checked checkpoint at least every hour." My checkpoint is saved with round-2 verification; the compile was verified. Good.
+
+Report structure:
+- What I found: prior round complete; independent re-verification.
+- Evidence: hashes, forced rebuild exits, axiom cones, checker gates, review.
+- Classification and non-claims.
+- Verdict: TASK_DONE.
+
+Keep it concise.
+## Final report — `TASK_DONE`
+
+**Situation.** The worktree already contained a complete round-1 deliverable (checkpoint status `complete`). Per instructions I did not restart it; I performed an independent acceptance re-verification on the frozen bytes and refreshed the checkpoint/result card. No queue, provenance, or completed-work files were disturbed (`longrun/queue.updated.json`, `DELIVERY.md` untouched).
+
+### Independent verification performed (round 2)
+| check | result |
+|---|---|
+| hash freeze | 4/4 new files and 10/10 consumed sources match `checkpoint.json`/origins exactly (`RicciToDoubling.lean 9b17c673…`, `…Hyperbolic.lean be50ae25…`, audits `3e8510bc…`/`dc9b2638…`) |
+| forced recompile | deleted the oleans of both new modules, rebuilt from source: both rebuilt (2.6s/2.5s), `Build completed successfully (3454 jobs)`, **exit 0, zero warnings** (`logs/independent-acceptance-rebuild.log`) |
+| fail-closed axiom audit | fresh: 34/34 declarations, every cone **exactly** `{propext, Classical.choice, Quot.sound}`, 0 violations, both drivers exit 0 |
+| separate 9-gate checker (`tools/independent_acceptance_check.py`) | **PASS**: hash freeze, cones, conclusion-equivalence, manifold-overclaim, 36/36 labels, snowflake-witness arithmetic, no Rauch duplication, forbidden scan, statement fidelity (`evidence/independent-acceptance.json`) |
+| authoring driver re-run | `OVERALL: PASS` (6/6 gates) |
+
+### Adversarial semantic review (`evidence/independent-acceptance-review.md`)
+- **No conclusion-equivalent hypothesis**: arrow-depth-aware scan of all 9 headline declarations — model theorems mention `radialVolume` in *no* hypothesis; interface theorems mention `coveringNumber` in *no* hypothesis. The composite *derives* the three dyadic inequalities from Riccati data rather than assuming doubling.
+- **Bishop–Gromov derived, not assumed**: D12 chain `riccati_le_of_singular_normalization → areaRatio_antitone_of_logDeriv_le → volumeRatio_antitone`, and the clean axiom cones (no `sorryAx`) certify it transitively.
+- **No manifold overclaim**: zero manifold tokens in all 34 compiled declaration types and stripped sources; `IsRadialBallMeasure` is a `def` on an abstract pseudo-metric space, all uses conditional; U9's manifold half explicitly open.
+- **Non-vacuity**: kernel-checked witnesses for the Euclidean/hyperbolic doubling and the interface alone; the joint snowflake witness is correctly labelled informal and its arithmetic independently re-verified. Residual limitations (general-`d` hyperbolic ratio not elementarily evaluated; interface stronger than needed) reported honestly.
+- Verdict: **no BLOCKER, no MAJOR**.
+
+### Artifacts updated
+`checkpoint.json` (round 2, `independent_acceptance` block, corrected 34-cone count and review-2 status), `longrun/results/L4-child-ricci-to-doubling.{md,json}` (§8 addendum, review_3), plus `tools/independent_acceptance_check.py`, `evidence/independent-acceptance.json`, `evidence/independent-acceptance-review.md`, `logs/independent-acceptance-rebuild.log`. A self-audit confirms every documented hash matches the bytes on disk.
+
+**Verdict: `TASK_DONE`** at the scalar/model (scalar ODE) + documented conditional metric–measure interface level. This is independent acceptance, **not** a Poincaré proof, and **U9 is not closed** — no manifold measure is claimed.

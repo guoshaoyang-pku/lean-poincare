@@ -1,0 +1,1087 @@
+dsh: reasoning:
+Interesting. The checkpoint says "status": "complete" and the result card says TASK_DONE. But the task instruction today says: "Continue from existing files and checkpoint.json in this worktree; do not restart completed work. This invocation is limited to four hours. Save a compile-checked checkpoint at least every hour."
+
+Also: "Model: use configured host model only; do not invoke until quota recovery is recorded."
+
+Hmm. So there's a nuance: the prior invocation completed the work, but this invocation appears to be a re-run/continuation. Possibly the work was not accepted, or the checkpoint is from a prior "round" but the acceptance wants independent verification. Let me check the current state carefully — hashes may have changed, files may be missing, or new instructions may require re-verification.
+
+Let me check the files on disk, hashes, and whether the compile still passes. Also check for any new input/notes about quota recovery.
+
+Actually the phrase "do not invoke until quota recovery is recorded" — the model instruction. Perhaps there's a record somewhere indicating quota status. Let's inspect the worktree structure, particularly `input/`, `logs/`, `manifest/`.
+
+Let me do a broad recon.
+dsh: reasoning:
+All artifacts match. The prior invocation completed. But this invocation says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work." and "This invocation is limited to four hours. Save a compile-checked checkpoint at least every hour."
+
+The question is: what remains? The checkpoint says status complete, next: none. The task id and objective are identical. This looks like a re-invocation of the same task — perhaps the controller wants independent verification or the previous run's self-report is being re-checked.
+
+Given "Model: use configured host model only; do not invoke until quota recovery is recorded." — hmm, that could mean the model quota was exhausted and this is a re-run after recovery. Possibly the previous work is complete and I need to re-verify and confirm, not redo.
+
+My responsibility: independent acceptance is done by the controller, but I should make sure the deliverable is genuinely there and re-verified. Since this is a continuation invocation with prior completion, the best action is:
+1. Re-verify everything freshly (compile, axiom audit, verify script) — compile-checked checkpoint at least every hour.
+2. Re-run independent adversarial verification of the actual mathematical content (maybe with fresh eyes on the key proof, since the result card claims it's done).
+3. Update checkpoint.json with the new invocation's verification evidence and timestamps.
+4. End with TASK_DONE.
+
+But wait — the task says "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task." The file exists with TASK_DONE. So possibly the harness re-ran because the controller did not accept, or because the task is repeated.
+
+Let me be careful and thorough: I should not just trust the previous self-report. Let me:
+- Read the key Lean source (ConjugatePointEndpoint.lean) and check the theorem is genuine, especially the endpoint argument.
+- Check the audit file.
+- Verify the build environment exists (toolchain, mathlib).
+- Run compile and verify script fresh.
+
+Also check whether there are any notes about "quota recovery is recorded" — search the worktree for quota. And check the other worktrees/leader for messages? The worktree is isolated; but maybe there's a queue file with instructions.
+
+Let me look at the checkpoint's note on quota. Search for "quota" in the worktree.
+dsh: reasoning:
+The Lean file looks solid. Let me review the key parts:
+
+1. `basePoint_lt_firstZero` — fine.
+2. `conjugate_point_bound_strict` — the limiting argument. Let me scrutinize:
+   - `hcompare` proves `u t ≤ jacobiSol K t` for `t ∈ Ioo 0 (π/√K)` using `jacobi_le_constCurvModel` with `T''`.
+   - Continuity: `h.continuousOn_u _ hxmem` — need to check the definition of `JacobiSolutionOn.continuousOn_u`. It says `ContinuousOn u (Icc 0 T)`. Then `.mono_of_mem_nhdsWithin hmem` where `hmem : Icc 0 T ∈ 𝓝[Iio x] x`. Hmm, `ContinuousWithinAt.mono_of_mem_nhdsWithin` requires `s ∈ 𝓝[t] t'`? Let me think. In Mathlib, `ContinuousWithinAt.mono_of_mem_nhdsWithin (h : s ∈ 𝓝[t] x) : ContinuousWithinAt f t x → ContinuousWithinAt f s x`. Wait, actually the signature is `ContinuousWithinAt.mono_of_mem_nhdsWithin (h : t ∈ 𝓝[s] x) (hcont : ContinuousWithinAt f s x) : ContinuousWithinAt f t x`. Here `𝓝[<] x = 𝓝[Iio x] x`. So `hmem : Icc 0 T ∈ 𝓝[Iio x] x` and `h.continuousOn_u _ hxmem : ContinuousWithinAt u (Icc 0 T) x`, giving `ContinuousWithinAt u (Iio x) x`, then `.tendsto`. Good. But is `hmem` correct? `mem_nhdsWithin_iff_eventually`: `s ∈ 𝓝[t] x ↔ ∀ᶠ y in 𝓝 x, y ∈ t → y ∈ s`. Here they `rw [mem_nhdsWithin_iff_eventually]` then `filter_upwards [isOpen_Ioi.mem_nhds hxpos] with t ht htx` giving `⟨le_of_lt ht, le_trans htx.le hxT⟩`. So need `0 < t` and `t < x` implies `t ∈ Icc 0 T`. Yes.
+   - Then `le_of_tendsto_of_tendsto`.
+   - `jacobiSol_of_pos hK`, `jacobiSolSphere_firstZero hK` — these are D10 lemmas.
+   
+   This is a correct argument. The theorem statement matches acceptance.
+
+3. Witnesses: instantiate. Note `jacobiSol 2 2` positivity: `√2·2 = 2√2 < 3 < π`. `jacobiSol_pos_of_nonneg` takes `0 ≤ K` and `√K t < π` presumably. Fine.
+
+Now, one concern in `conjugate_point_bound_strict`: it uses hypothesis `hpos : ∀ t ∈ Ioc 0 T, 0 < u t` and gets contradiction at `x = π/√K ∈ (0,T]`. Correct.
+
+Another subtle point: in `hcompare`, `jacobi_le_constCurvModel` is applied with `(Or.inr hT''pi)` — need to check the exact signature of `jacobi_le_constCurvModel`, particularly the `hzero : K = 0 ∨ √K * T < π` hypothesis and the `0 ≤ K` hypothesis. Also whether it requires `u > 0` on `(0,T'']` etc. Since the file compiles (presumably), fine, but I should independently rebuild.
+
+Also, the audit module and the verify script. Let me read them.
+
+Then my plan for this continuation invocation:
+1. Fresh compile from current state (maybe full clean build to be rigorous, but that takes time — the prior log says 2771 jobs. Let's check if build cache exists).
+2. Run verify script.
+3. Independent adversarial verification: I can use a subagent to independently review (fresh eyes) the statement/proof. Actually the prior run claims an independent review already; but this invocation is a fresh session. Since acceptance says "this is independent acceptance, never a Poincare proof", the controller does the acceptance. My job is the deliverable.
+
+Given the prior work seems complete and verified, but the invocation was re-issued, maybe there's something the controller wants: perhaps the previous run's checkpoint is fine and I just need to confirm and re-checkpoint. But it would be wasteful to do nothing. Let me consider: could there be a gap? Let me carefully consider the acceptance criteria:
+
+"Prove the quantitative conjugate-point bound for the scalar Jacobi equation: if k >= K > 0 on (0,T), u 0 = 0, u' 0 = 1, u > 0 on (0,T] and the analytic normalization hypotheses of this round's rauch_upper_of_jacobi_constCurv hold, then T <= pi/sqrt(K)."
+
+The deliverable theorem `conjugate_point_bound` includes additional hypotheses: `0 < T`, `0 ≤ B`, `0 < t₀`, `t₀ ≤ T`, `B*t₀ ≤ 1/2`, `JacobiSolutionOn`, `ContinuousOn ddu`, `|ddu t| ≤ B`, `hBmodel`. These are "the analytic normalization hypotheses of rauch_upper_of_jacobi_constCurv". Let me verify by reading ConstantCurvatureRauch.lean for the exact signature of `jacobi_le_constCurvModel` and `rauch_upper_of_jacobi_constCurv`. If the added hypotheses are exactly those, then it's faithful.
+
+Also the task says "if k >= K > 0 on (0,T)" — note `hk : ∀ t ∈ Ioo 0 T, K ≤ k t` = on the open interval. And `u > 0 on (0,T]`. Good.
+
+"Deliverable: a compiling theorem plus a non-vacuous witness (k = 2, K = 1 giving T <= pi/sqrt 1 = pi, sharpened by pi/sqrt 2 for the k=2 solution), source hash, compile exit, and a fail-closed axiom audit with cone subset {propext, Classical.choice, Quot.sound}."
+
+All present. Let me verify the evidence logs and the JSON result card.
+
+Let me read the audit file, verify script quickly, and the result JSON. Then run the builds.
+
+One thing to check: the task says "Route: extend jacobi_le_constCurvModel (release/Poincare/L4/GeodesicComparison/ConstantCurvatureRauch.lean in worktrees/leaders/L4-geometric-critical-path, read-only copy allowed)". The imported copy hash `93cb411e...` should match the leader's current file. The verify script re-checks against canonical origin per the card. I should confirm the leader's file is still that hash (provenance). Let me check the leader worktree.
+
+Let me start the build in the background (it may take a while) while I inspect. First check the release setup: lakefile, toolchain, whether .lake exists.
+
+Actually before running a clean build (which could take 30+ min for Mathlib?), note prior clean build log says 13 project modules, 2771 jobs — probably Mathlib oleans are cached in a shared location or the package was already built. Let me check `release/.lake`.
+dsh: reasoning:
+The build cache exists (31M — hmm, that's small; probably only the project modules, mathlib oleans via symlinked packages). Let me now:
+
+1. Run the verify script (it will compile and run the axiom audit) — background job.
+2. Meanwhile check the ConstantCurvatureRauch source for the exact signature (to confirm hypothesis fidelity) and check the leader worktree provenance.
+
+Note the release/.lake/packages symlink goes to D6_weekly_release worktree — shared mathlib. Fine.
+
+Let me kick off the verification script in the background. But first, check whether the script does a full rebuild (could take long). Let me read the verify script's main steps quickly (maybe just head).
+
+Actually, let me first check python availability and run `python3 tools/l4cp_verify.py`. Reading the script's top docstring to know runtime.
+dsh: reasoning:
+Current time: Sep 12 02:16 UTC 2026. Checkpoint says updated 02:30:00Z — wait, that's in the future relative to now? Checkpoint "updated_at": "2026-09-12T02:30:00Z" but files are dated Sep 12 10:14 local. What's the local timezone? Let me check `date` local. The machine local time shows Sep 12 10:14 for files. UTC is 02:16, so local is UTC+8 (CST). The checkpoint's "updated_at" says 02:30:00Z which is 30 minutes in the future?? Hmm, 02:30Z = 10:30 local. Files are 10:14 local. So the checkpoint timestamp is ~16 min ahead of the file mtimes — likely the prior agent wrote a rounded/incorrect timestamp. Minor.
+
+The checkpoint was written at 10:14 local = 02:14Z. Now it's 10:16 local. So the prior run finished ~2 minutes ago! And this invocation is a continuation... Interesting — that suggests the harness immediately re-invoked? Or the prior run was cut off at the 4-hour limit and the checkpoint says complete. Hmm, files at 10:14 = 2 minutes ago. The invocation limit is four hours.
+
+Wait — maybe this is the container being re-entered and the prior invocation just recently ended. The task says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work."
+
+Given the checkpoint status "complete" with verdict TASK_DONE, my job for this invocation is likely to (a) verify, (b) possibly strengthen/complete any open edges, (c) re-checkpoint. Since the previous work appears complete and verified minutes ago, a re-verification is the right move, plus an independent adversarial look.
+
+Let me run the verify script now in the background.
+
+One consideration: the verify script's gate 1 checks canonical origins in the L1-lean-baseline and L4 leader worktrees — read access should be fine.
+
+Let me start it.
+dsh: reasoning:
+Leader's ConstantCurvatureRauch.lean hash matches the imported one (`93cb411e...`). Good.
+
+Now, while the verify script runs, let me examine the exact statement of `jacobi_le_constCurvModel` and `rauch_upper_of_jacobi_constCurv` in ConstantCurvatureRauch.lean and RauchBridge.lean, to confirm hypothesis fidelity. Use grep.
+dsh: reasoning:
+The hypotheses of `jacobi_le_constCurvModel` are exactly those used in `conjugate_point_bound` with the `hzero` removed and `hK : 0 ≤ K` strengthened to `0 < K`. Hypothesis fidelity confirmed.
+
+Now check `jacobiSolSphere_firstZero`: it's in D10. Let me confirm its statement: `jacobiSolSphere_firstZero (hK : 0 < K) : jacobiSolSphere K (π / sqrt K) = 0` presumably, and `jacobiSol_of_pos : 0 < K → jacobiSol K = jacobiSolSphere K`. Let's grep.
+
+Also confirm the `JacobiSolutionOn` structure fields (continuousOn_u etc.) in D10/D12.
+
+Let me wait for the verify job and meanwhile check these.
+dsh: reasoning:
+The verify script finished quickly. Let me read its output.
+
+Also note: the prior checkpoint was written only ~2 minutes before this invocation. The verify script completed with exit 0 (background job). Let me look.
+dsh: reasoning:
+Verification passed 11/11 again with exit 0. Good.
+
+Now, the question: is there anything left to do? The prior invocation finished minutes ago and I've re-verified. But the task instruction says "Save a compile-checked checkpoint at least every hour" and "Continue from existing files ... do not restart completed work."
+
+Given the checkpoint says complete and my re-verification confirms it, the honest thing is:
+1. Do an independent (fresh-context) adversarial review to satisfy "this is independent acceptance"? Actually, independent acceptance is the controller's job, not mine. But the acceptance criterion says "Classify results honestly and end with TASK_DONE or TASK_BLOCKED; this is independent acceptance, never a Poincare proof." I think this means my deliverable should be independently checkable, and the task itself is not to be conflated with a Poincare proof.
+
+However, there might be value in strengthening the deliverable. Let me consider whether the current deliverable fully satisfies the acceptance, and whether there are any real weaknesses:
+
+1. The theorem `conjugate_point_bound` requires `B` etc. — hypotheses inherited from `rauch_upper_of_jacobi_constCurv`. Fine.
+
+2. Non-vacuous witness: k=2, K=1, T=2 gives `2 ≤ π`. Sharpened by `π/√2`. Fine.
+
+3. Axiom audit: 27 declarations, cones subset. Fine.
+
+Potential concern: the task says "then T <= pi/sqrt(K)". The theorem is `T ≤ Real.pi / Real.sqrt K`. Fine.
+
+Potential subtlety: `Real.sqrt K` notation. Fine.
+
+One thing: the acceptance says "if k >= K > 0 on (0,T)". The formalization has `hk : ∀ t ∈ Ioo 0 T, K ≤ k t`. That's on the open interval. "on (0,T)" in the task maps to the open interval. Good.
+
+Now, is there any gap in the "endpoint limit" that the task explicitly asked? The strict theorem's proof does the limit. Verified.
+
+Given the checkpoint is complete and re-verified, I could simply update the checkpoint with this invocation's re-verification evidence and finish. But the runtime gave me 4 hours; the instruction "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task" suggests the result card must exist and be the completion marker — it does.
+
+Yet, something feels off: why would the controller re-invoke a task whose checkpoint was written 2 minutes prior with status complete? Possibly because the harness restarted after a crash (the checkpoint timestamp 02:30Z is in the future relative to 02:16Z — suspicious; maybe the clock or the checkpoint's timestamp is a placeholder). Or the controller didn't register completion. Or this is an "independent acceptance" invocation: the task text says "this is independent acceptance, never a Poincare proof" — maybe this invocation is meant to independently accept/verify the previous run's output, in which case the deliverable is verification evidence plus honest classification, not new theorems.
+
+Hmm, re-reading the task: "Acceptance: Prove the quantitative conjugate-point bound... Route: extend jacobi_le_constCurvModel ... Deliverable: a compiling theorem plus a non-vacuous witness ... If the endpoint limit cannot be formalized, record the exact failing goal and classify the result conditional-analytic; do not assume the conclusion. Preserve queue, checkpoints and provenance. No forbidden Lean constructs or weakened statements. Classify results honestly and end with TASK_DONE or TASK_BLOCKED; this is independent acceptance, never a Poincare proof."
+
+So the task is the builder task. The checkpoint claims it's done. My continuation should:
+- Verify the existing deliverable holds (done: 11/11 gates).
+- Consider whether any part of the acceptance is not yet satisfied.
+
+Let me look at the result card JSON and the manifest verification JSON fully, plus check the "queue" preservation requirement — "Preserve queue, checkpoints and provenance." The queue files in manifest/ are from D6 release (Sep 9). Maybe I should check `manifest/queue.updated.json` to see if there's an entry for this task that should be updated. Let me look.
+
+Also, perhaps I should consider strengthening the result: e.g., the current witness `k=2, K=1` gives `2 ≤ π`; the task says "sharpened by pi/sqrt 2 for the k=2 solution". Both exist. Good.
+
+Another thought: is `jacobiSol_pos_iff` actually correct? Let me think: for K > 0, `jacobiSol K t = sin(√K t)/√K`, positive on (0,T] iff √K T < π iff T < π/√K. Yes. But wait, the forward direction uses `conjugate_point_bound` applied to the model itself; it also needs `hk : ∀ t ∈ Ioo 0 T, K ≤ k t` with `k ≡ K`, fine.
+
+Let me check the `jacobiSol_of_pos` lemma statement. It's likely `0 < K → jacobiSol K = jacobiSolSphere K`. Fine.
+
+Now, is there any chance the whole thing is circular? `jacobiSol_pos_iff` uses `conjugate_point_bound`, which uses `jacobi_le_constCurvModel`, which uses `rauch_upper_of_jacobi_constCurv`, which uses... the D12 riccati comparison. Not circular.
+
+OK. Let me also consider: maybe the prior invocation was interrupted before finishing the *checkpoint save* correctly? The checkpoint's `updated_at` is 02:30Z which is later than now (02:16Z). Perhaps the clock at checkpoint writing was different, or it's a bug. Not important.
+
+Decision: The strongest, most useful contribution now is:
+1. Re-run a truly clean compile from scratch (delete build cache) to confirm exit 0 — the card claims a clean rebuild; but a fresh clean build would take a while. Actually a clean build of 13 project modules with mathlib cached took... prior log says 2771 jobs. Let me check how long the prior log says. If mathlib is prebuilt and shared, this is maybe 3-10 minutes. I have 4 hours. Doing a genuine clean rebuild is good evidence and cheap insurance.
+   But careful: deleting `release/.lake/build` removes the cache; rebuilding requires mathlib oleans, which live in the symlinked packages dir (`release/.lake/packages` -> D6_weekly_release). `lake build` will rebuild only the project's modules. Risk: if the shared mathlib package doesn't have oleans for this toolchain, the build could try to build mathlib (hours). Let me check if the packages dir has `.lake/build/lib/lean` with Mathlib oleans.
+   
+2. Run an independent adversarial review via a fresh subagent with no prior context, asking it to verify the statements/proofs/audit (an extra layer beyond the prior review). Actually the prior invocation already did this. But since I can't be sure of its quality from a name alone, and independent verification is cheap in parallel with a rebuild, I could spawn one subagent to independently audit the mathematical core: check the strict bound proof's limit step, the witness instantiation, and try to falsify (e.g., check whether hypotheses are satisfiable, check `jacobi_le_constCurvModel` is actually applicable, verify no `sorry`).
+
+Hmm — but wait. I should be careful about resource limits: "Model: use configured host model only; do not invoke until quota recovery is recorded." This suggests model quota issues, and I should avoid unnecessary subagent invocations (subagents may consume quota). The instruction says do not invoke (maybe do not invoke other models?) until quota recovery is recorded. Actually it likely means: this run should use the configured host model only (no model switching), and the warning "do not invoke until quota recovery is recorded" concerns... hmm. It says "Model: use configured host model only; do not invoke until quota recovery is recorded." Ambiguous. Perhaps it's a leftover from a previous scheduling note: the task was queued waiting for quota recovery, and this invocation happens after recovery is recorded. Since I'm running, quota has recovered.
+
+Given that, I'll avoid spawning many subagents. I can do the verification myself.
+
+3. Update the result card and checkpoint with the re-verification evidence (new invocation), keeping provenance intact.
+
+Let me first check the environment for the clean build viability and check the queue file. Also read the result JSON card.
+
+Plan:
+- Check `manifest/queue.updated.json` for this task entry → does it need updating? "Preserve queue" likely means don't clobber queue files. I'll leave them untouched unless there's a clear convention.
+- Clean rebuild test.
+- Independent verification of the audit output logs (parse).
+- Maybe add a small enhancement: a second witness? Not needed.
+
+Actually, let me think about whether there's any genuine mathematical gap worth closing, to strengthen the deliverable beyond what exists:
+
+(a) The theorem requires `hdducont : ContinuousOn ddu (Icc 0 T)` and `|ddu t| ≤ B`. These come from `rauch_upper_of_jacobi_constCurv`. Fine.
+
+(b) The acceptance says "u > 0 on (0,T]" — formalized as `∀ t ∈ Ioc 0 T, 0 < u t`. Good.
+
+(c) "k >= K > 0 on (0,T)" — `∀ t ∈ Ioo 0 T, K ≤ k t` plus `0 < K`. Good.
+
+(d) The bound at the endpoint: strict + non-strict. Good.
+
+(e) Witness `k=2, K=1`: In the witness, `k ≡ 2` and `K = 1`, `T = 2`. The conclusion is `2 ≤ π/√1`. Good. `jacobiSol 2` is the k=2 solution. Good.
+
+(f) "sharpened by pi/sqrt 2 for the k=2 solution": `conjugate_point_bound_witness_k2_K2 : 2 ≤ π/√2`, and `pi_div_sqrt_two_lt_pi`. Good.
+
+Everything is there. So the remaining work is verification + checkpoint + report.
+
+One more consideration: the task says "save a compile-checked checkpoint at least every hour". Since the prior invocation's run was minutes ago, and mine will re-verify, I'll write a new checkpoint after the clean build.
+
+Let me check the packages and start the clean build. Actually, the clean build is the most expensive step; start it now in the background.
+
+Wait — deleting the build dir could interfere if the verify script uses it; no other jobs running. Let me first record the current build state, then delete and rebuild.
+
+Also check the prior clean-build log to see the timing.
+dsh: reasoning:
+Mathlib is prebuilt (8.2 GB). A clean rebuild of the 13 project modules should take ~1-2 minutes as the log suggests (each module ~2s). Let me do it now. I'll delete `release/.lake/build` and rebuild both modules. That's the strongest compile evidence.
+
+Note the shared packages symlink — deleting release/.lake/build won't touch mathlib.
+
+Run it in the background with a log. Then while it runs, inspect the queue and the result JSON.
+dsh: reasoning:
+The queue is the D6 release queue (not L4). "Preserve queue" means don't clobber these shared files in the worktree copy. Fine.
+
+Now, while the clean build runs, let me consider whether to strengthen the deliverable in a meaningful way.
+
+Ideas for genuine added value (not restating):
+1. A *second, independent* proof path for the endpoint bound that doesn't rely on the strict theorem's limit? Not necessary.
+2. The task mentions "sharpened by pi/sqrt 2 for the k=2 solution" — already done.
+3. Maybe add a witness with `K = 1` giving `T ≤ π` at a *sharper T*? Eh.
+4. Could add `conjugate_point_bound` for the manifold-level? Out of scope (that's the L4 leader's blocker U3).
+
+Actually, let me reconsider the "non-vacuous witness" requirement more carefully. The witness `conjugate_point_bound_witness_k2_K1 : 2 ≤ π/√1` is a closed inequality. But does it really witness that the *theorem's hypotheses are simultaneously satisfiable*? Yes — the proof instantiates all 14 hypotheses and concludes. Since the proof compiles, the hypotheses are satisfiable. But a stronger non-vacuity demonstration would be a *concrete instance* statement of the form `∃ (k u du ddu T B t₀ K), hypotheses ∧ conclusion`. The current witness is fine and standard.
+
+5. One thing I could check: is the statement `(2 : ℝ) ≤ Real.pi / Real.sqrt 1` actually the acceptance's "k = 2, K = 1 giving T <= pi/sqrt 1 = pi"? Yes.
+
+Potential issue with the prior run's own claims that I should check independently:
+- The card says "import closure ... does not import the leader's ConjugatePointBound.lean". True per the source imports (only ConstantCurvatureRauch).
+- The card says 13 declarations audited; the audit has 27 queries (13 authored + lock + 6 L4 consumed + 1 D12 + 6 D10 = 27). Yes: 14 + 6 + 1 + 6 = 27.
+
+Let me count the endpoint module declarations: JacobiSolutionOn.mono, basePoint_lt_firstZero, conjugate_point_bound_strict, conjugate_point_bound, jacobiSolTwo_second_deriv_bound_four, jacobiSolTwo_pos_Ioc_two, witness_k2_K1, witness_k2_K2, pi_div_sqrt_two_lt_pi, jacobiSol_pos_iff, jacobiSol_two_pos_iff, jacobiSol_two_firstZero, jacobiSol_two_not_pos_at_firstZero = 13. Good.
+
+So the deliverable is complete. The remaining honest work for this invocation:
+- Fresh clean rebuild evidence (running).
+- Update the result card with a new "re-verification" section noting this continuation invocation's independent re-run (or leave card unchanged? The task says "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task" — the card must exist and be accurate. I can append a re-verification note and update hashes/timestamps).
+- Update checkpoint.json with new invocation evidence.
+
+But wait — if I modify the result card, its sha256 changes and the checkpoint's `result_card.md_sha256` must be updated. The verify script may pin the card hash? Let me check whether `tools/l4cp_verify.py` hashes the result card. Let me grep for "result" in the script. Also gate 1 checks imported sources only. The card hash is in checkpoint.json, not the verify script. Let me confirm.
+
+Also, should I even modify the card? The prior card is thorough and accurate. Adding a re-verification section is honest and useful (records this invocation). Alternatively, I could leave it and just update checkpoint.json. The task says "Save a compile-checked checkpoint at least every hour" — checkpoint.json is the key artifact to update.
+
+Hmm, but there's a subtle risk: the acceptance may compare the card hash recorded in checkpoint.json against the card on disk. If I edit the card, I must update the hash. Fine either way. I think a small, accurate addendum documenting this continuation's clean rebuild + re-verification is appropriate and increases provenance. But I must be careful not to bloat or introduce errors.
+
+Let me think about what genuinely adds value versus churn:
+- The prior run's evidence logs are from 10:14 local. My rerun overwrote `manifest/l4cp-verification.json` and `logs/l4cp-verify-*.log` with identical content presumably (timestamps updated). Actually the verify script writes those files — it may have updated the `generated_at`. Let me check the new manifest content vs prior.
+- The clean build rerun writes a new log `logs/l4cp-clean-build-rerun.log`.
+
+I could also consider a *deeper independent check*: verify the audit parser isn't fooled by a declaration whose cone includes an axiom not in the whitelist. The script has a negative control for sorryAx and declared axiom; the prior reviewer "falsified the audit parser in /tmp". I can do a quick independent falsification test myself: create a temp copy? That would modify files under tmp/ (allowed). But the script's logic — let me read the acceptance predicate part to check it's fail-closed. Let me read the rest of the script while the build runs.
+
+Also, an important independent check: make sure `#print axioms` output actually corresponds to the declarations and the parser doesn't just trust the expected list. The script has gates 8/9. Fine.
+
+Another independent check I can run cheaply: `lake env lean` a small probe file (in tmp/) that `#check`s the theorem types and prints them, verifying the elaborated statement matches the acceptance — that's what the audit lock does by construction.
+
+One more idea to *strengthen the math*: The acceptance's "analytic normalization hypotheses" include `B t₀ ≤ 1/2` and `(K max (1/√K) T) t₀ ≤ 1/2`. The prior work inherits them exactly. Good.
+
+Is there any way the theorem is vacuous *as a bound*? For instance, if the hypotheses were contradictory for T ≥ π/√K, the theorem would be vacuous. But the witness shows hypotheses satisfiable for T=2, K=2 and conclusion 2 ≤ π/√2 = 2.22... Also `jacobiSol_pos_iff` shows satisfiability for every T < π/√K. So non-vacuous.
+
+Now, one potential subtle issue in `jacobiSol_pos_iff`'s forward direction: it applies `conjugate_point_bound` with `B = K * max (1/√K) T`, `t₀ = min T (1/(2B))`, then `hBt₀` and `hBmodel := by simpa only [← hBdef] using hBt₀`. Since `hBmodel` is `(K * max (1/√K) T) * t₀ ≤ 1/2` and `hBdef : B = K * max ...`, `simpa only [← hBdef] using hBt₀` rewrites `B` back to `K * max ...` — correct.
+
+`hB : ∀ t ∈ Ioo 0 T, |(-(K * jacobiSol K t))| ≤ B` from `jacobiSol_second_deriv_bound` after `rw [hBdef]` — correct.
+
+The `hne : T ≠ π/√K` step: if T = π/√K, then `hpos` gives `0 < jacobiSol K (π/√K)`, but `jacobiSol_of_pos hK` then `jacobiSolSphere_firstZero hK` gives 0. Contradiction. Then `lt_of_le_of_ne hle hne` — careful: `lt_of_le_of_ne : a ≤ b → a ≠ b → a < b`. Here `hle : T ≤ π/√K` and `hne : T ≠ π/√K` gives `T < π/√K`. Correct.
+
+So the math is sound.
+
+Let me now read the remainder of the verify script to be sure gate logic is fail-closed, and check the new manifest.
+
+Actually, I realize I should also double-check one potential *forbidden construct* concern: `set ... with hBdef` is fine. No `native_decide`, `unsafe`, etc. Gate 2 strips comments and greps. Let me independently grep the authored files for forbidden tokens to double-check (including in comments — the task says no forbidden constructs; comments mentioning "sorry" would be flagged by the script after comment stripping; using raw grep is stricter). Let me check with a simple grep to see if any literal appears anywhere.
+
+Let me do these checks.
+dsh: reasoning:
+Good: no actual forbidden tokens; only mentions of `sorry` in the audit file's comment (docstring), which the comment-stripping gate ignores.
+
+Let me read the parser and gate logic to verify it's fail-closed (lines ~180-380).
+dsh: reasoning:
+The gate logic is genuinely fail-closed: uses `set(c) <= ALLOWED_AXIOMS` and exact negative-control cones.
+
+One weakness in the parser: it maps `found[name] = cone` — if a declaration is queried multiple times with different results, later overwrites earlier. But the query list is exact and unique. Fine.
+
+Another: `AXIOM_LINE` uses `.*?` with re.S: `^(?:info: )?.*?'([^']+)'` — with re.S, `.` matches newlines, so `.*?` could span across lines. It searches for the first `'name' depends on axioms: [...]`. Since the negative control log produces actual output, it's fine. Potential concern: could a declaration in the main audit be spurious? No.
+
+Now let me check the clean build progress.
+dsh: reasoning:
+Clean rebuild exit 0. Let me inspect the log to confirm 13 modules were rebuilt and 2771 jobs, 0 errors, and that axiom output appeared.
+
+Then I need to decide whether to do anything more substantive. Let me consider the possibility that the controller re-invoked this task because the *previous invocation's completion was not independent* — the acceptance criteria state "this is independent acceptance". Hmm, re-read: "Classify results honestly and end with TASK_DONE or TASK_BLOCKED; this is independent acceptance, never a Poincare proof." I parse this as: the claim of acceptance must be independent, i.e., don't let the theorem's plausibility substitute for independent verification; and don't claim Poincaré.
+
+The prior invocation had an independent adversarial review by a separate agent. I should verify that claim's substance rather than take it on faith: check if there's a review artifact in the worktree. The card mentions §8 but I don't see a review log file in logs/. Let me search for review artifacts. If the only evidence is the card's own prose, that's a weakness in provenance. As the continuation agent, I can perform the independent review myself in this fresh context — that's genuinely independent of the prior session (I have no memory of it; I only see artifacts). Actually — I *am* a fresh session; my verification is genuinely independent. Good.
+
+I could also spawn a separate fresh subagent to adversarially review. But quota concerns. I'll do it myself thoroughly.
+
+Let me now do an independent adversarial falsification pass on the audit claim. Specifically:
+1. Verify the `#print axioms` output list precisely matches the expected 27 and each cone is a subset — done by script, but I'll eyeball the raw log.
+2. Try to *falsify* the audit's coverage: confirm that the endpoint module has no declarations that are not in the expected list (e.g., declarations inside namespaces via `where` clauses)? The scanner regex `^(?:private\s+|protected\s+|noncomputable\s+)*(?:theorem|lemma|def|abbrev)\s+...` at line start. Could a declaration be introduced with a different syntax, e.g. `instance` (covered by unknown-form gate), `@[simp] theorem` (attribute on a preceding line — then the theorem keyword is at line start; regex matches), `local instance` (unknown form gate: `local instance` doesn't match `^(?:private|protected|noncomputable)*instance` since `local` isn't in the prefix list! Hmm — `unknown_form_re` requires the line to start (after optional private/protected/noncomputable) with instance/structure/class/opaque/example/mutual. A `local instance` line wouldn't match. But the file has none; I can grep to be sure.
+3. Confirm no `deriving`, `attribute`, `initialize`, etc. Not relevant to axioms.
+4. Check that `JacobiSolutionOn.mono` etc. don't rely on the `negcontrol` file. They don't.
+
+Also verify there are no `set_option` tricks that could alter soundness (e.g., `set_option maxHeartbeats` is fine; `set_option pp` fine). Let me grep for `set_option`, `macro`, `elab`, `syntax`, `notation`.
+
+Let me check the clean build log and do the extra scans.
+dsh: reasoning:
+All matches for `instance` are inside doc comments (words like "instance"). No `set_option`, no macros. Clean.
+
+Clean rebuild: 13 project modules, 2771 jobs total (2758 mathlib cached), 0 errors, exit 0, 23.6s wall.
+
+Now, let me look at the raw axiom log to confirm the 27 cones, and also examine whether the audit covers all non-lock declarations. Fine.
+
+At this point the deliverable is verified. Now: what to do with the remaining invocation? Options:
+
+A. Minimal: update checkpoint.json with re-verification evidence, add a short addendum to the result card, done.
+B. Add genuine value: e.g., strengthen the result card's provenance by writing a review artifact (logs/l4cp-independent-review-<invocation>.md) with my independent verification findings (statement fidelity checks, proof walkthrough, falsification attempts).
+C. Do additional mathematical strengthening.
+
+Let me think about whether there's a mathematical strengthening that the acceptance might expect and that's feasible. The task's route explicitly mentions "extend jacobi_le_constCurvModel from T < pi/sqrt K to the endpoint by a limiting argument on T'' < pi/sqrt K, then contradict u (pi/sqrt K) > 0 against jacobiSol K (pi/sqrt K) = 0." Done exactly.
+
+"Deliverable: a compiling theorem plus a non-vacuous witness (k = 2, K = 1 giving T <= pi/sqrt 1 = pi, sharpened by pi/sqrt 2 for the k=2 solution), source hash, compile exit, and a fail-closed axiom audit with cone subset {propext, Classical.choice, Quot.sound}."
+
+All present. The card even reports the sharpened threshold.
+
+Possible extra deliverable: the task says "If the endpoint limit cannot be formalized, record the exact failing goal and classify the result conditional-analytic; do not assume the conclusion." Not applicable.
+
+I think the best use of this invocation:
+1. Independently re-verify (done).
+2. Write an independent review artifact documenting my checks (fresh-session adversarial review), including one or two falsification probes.
+3. Update the checkpoint with new invocation evidence and re-verified hashes (the Lean sources unchanged — hashes identical).
+4. Append a short "Re-verification (continuation invocation)" note to the result card, updating checkpoint hashes.
+
+Actually, careful about churn on the result card: the card is the completion artifact; modifying it is allowed (it's "my own" card). But the recorded md sha256 must be updated. The card content is accurate; adding an addendum is honest. However, is there risk that an external acceptance harness checks the card hash against something? The checkpoint records it; I'd update both. The manifest/l4cp-verification.json doesn't include the card hash.
+
+Let me also double-check the JSON result card (longrun/results/L4-child-conjugate-point-bound.json) — read it to see if it duplicates the card and whether it has a hash-of-md field.
+
+Let me read the JSON card fully (14KB).
+dsh: reasoning:
+Wait — the raw log summary shows only 19 lines matched my `grep -o` pattern, but `grep -c "depends on axioms"` = 27. That's because some cones are wrapped over multiple lines, so `grep -o "\[[^]]*\]"` fails on wrapped ones. The parser merges wrapped lines (`re.sub(r"\n\s+", " ", text)`). Fine — 27 total.
+
+But hold on: one line in the head -30 output listing shows 19 entries with single-line cones; the 8 wrapped ones (including the witnesses, lock, etc.) are the multi-line ones. Total 27. OK.
+
+Now let me think about whether there is any additional work with real value before I checkpoint.
+
+Considering the instruction "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task" — maybe the harness considers the task complete only when that file contains TASK_DONE? It does. 
+
+Given that this is a fresh invocation, and the checkpoint is marked complete, I should:
+1. Produce an independent verification record (my own, this session).
+2. Update the checkpoint with this session's evidence.
+3. Possibly append a re-verification section to the result card (and JSON) to reflect this invocation — since the JSON says `invocation: "1 (...)"`, maybe update to "1 + re-verification invocation" or keep invocation 1 and add a `reverification` field.
+
+Actually, wait. Let me reconsider whether the entire deliverable might have a genuine weakness that the acceptance would reject. The acceptance says:
+
+"Prove the quantitative conjugate-point bound for the scalar Jacobi equation: if k >= K > 0 on (0,T), u 0 = 0, u' 0 = 1, u > 0 on (0,T] and the analytic normalization hypotheses of this round's rauch_upper_of_jacobi_constCurv hold, then T <= pi/sqrt(K)."
+
+Hmm — "the analytic normalization hypotheses of rauch_upper_of_jacobi_constCurv". The formalized `conjugate_point_bound` takes `T B t₀ K`, `0 < T`, `0 ≤ B`, `0 < t₀`, `t₀ ≤ T`, `B t₀ ≤ 1/2`, `hBmodel`, plus solution hypotheses. Yes, these are exactly `rauch_upper_of_jacobi_constCurv`'s hypotheses minus `hzero`.
+
+One could quibble: the theorem `conjugate_point_bound` includes the *conclusion-relevant* extra hypothesis `hB : ∀ t ∈ Ioo 0 T, |ddu t| ≤ B` etc. Those are part of the normalization. Fine.
+
+Another quibble: The scalar Jacobi equation's standard normalization `u 0 = 0, u' 0 = 1` is assumed. Yes.
+
+The task wants "a non-vacuous witness (k = 2, K = 1 giving T <= pi/sqrt 1 = pi, sharpened by pi/sqrt 2 for the k=2 solution)". There are two witnesses. But is the "k=2, K=1 giving T ≤ π" witness at the largest T allowed? T=2. The bound says 2 ≤ π. That's a valid instance. And "sharpened by π/√2 for the k=2 solution": `conjugate_point_bound_witness_k2_K2 : 2 ≤ π/√2`. Good.
+
+OK so the deliverable is complete. I'll do a bit more: I want to independently reproduce the *elaborated types* of the headline theorem to make sure the statement isn't hiding something (e.g., `Real.sqrt` vs `NNReal.sqrt`), and run a small probe that prints the types. The audit's acceptance lock already ensures the type is as written in the source. But an independent probe adds confidence: create `tmp/L4CPProbe.lean` (or under release/Probe? No — don't add to the release lib; use `lake env lean` on a standalone file with the right imports) that `#check`s and `#print`s the theorem. Since `lake env lean` sets up the search path, a file outside the package can import Poincare modules.
+
+Let me write `tmp/l4cp_probe.lean` with:
+```lean
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+#print Poincare.L4.GeodesicComparison.conjugate_point_bound
+#check Poincare.L4.GeodesicComparison.conjugate_point_bound
+#check Poincare.L4.GeodesicComparison.conjugate_point_bound_strict
+#check Poincare.L4.GeodesicComparison.conjugate_point_bound_witness_k2_K1
+#check Poincare.L4.GeodesicComparison.conjugate_point_bound_witness_k2_K2
+#check Poincare.L4.GeodesicComparison.jacobiSol_pos_iff
+#check Poincare.L4.GeodesicComparison.jacobiSol_two_pos_iff
+#print axioms Poincare.L4.GeodesicComparison.conjugate_point_bound
+```
+Run `cd release && lake env lean ../tmp/l4cp_probe.lean`. This is an independent check that the compiled olean contains the claimed statements (not just the source text).
+
+Also, I could do a **falsification probe of the theorem's sharpness**: try to prove `¬ (T ≤ π/√K)` under the hypotheses? Not needed.
+
+More interesting falsification: verify that dropping a hypothesis breaks the theorem (i.e., the theorem is not accidentally provable with weaker assumptions). E.g., check that the statement with `K` negative is false (witness `jacobiSol` for K<0 is positive forever: `jacobiSol K t = sinh(√-K t)/√-K > 0` on (0,T] for all T; then `T ≤ π/√K` would be false since √K undefined). With `0 < K` required, fine.
+
+Could test that the bound is tight: `jacobiSol 2` on `(0, π/√2]` gives `T = π/√2` where positivity fails at endpoint. Already formalized.
+
+One more falsification: is `hBmodel` with `t₀ ≤ T` needed? Not relevant.
+
+Let me write the probe and run it. Also, I want to check `HasDerivAtR` is definitionally `HasDerivAt` (the prior review claims this) — grep Definitions.lean.
+
+Then, produce artifacts:
+- `logs/l4cp-independent-reverification.md` (my session's review record) — or better, keep the worktree tidy: put it in `evidence/` (empty dir) or `logs/`. The card's §8 refers to a review; I'll add `evidence/l4cp-reverification-invocation2.md`.
+- Update `checkpoint.json`.
+- Append a short §11 to the card? Hmm.
+
+Actually, let me think about whether editing the result card is wise. The card is the task-completion artifact. If I append a section, I must keep it coherent. I'll add a compact section "11. Continuation invocation re-verification (fresh session)" documenting: identical hashes, clean rebuild from deleted cache (exit 0, 23.6s, 13 modules/2771 jobs/0 errors), 11/11 gates re-run exit 0, 27/27 cones, plus my independent statement probe, and note that no source changed and no new mathematical claim is made. Update the card's sha256 in checkpoint.json and JSON card.
+
+Hmm, but is it maybe better NOT to touch the card, to avoid any risk of invalidating a hash-pinned acceptance record held elsewhere? The checkpoint is the authority within the worktree. The task says "Preserve queue, checkpoints and provenance" — checkpoint is mine to update (it's this task's checkpoint). The card is mine. A hash change might break an external pin if the controller pinned the card... but the controller would re-read the checkpoint. Given the instruction "Save a compile-checked checkpoint at least every hour", updating checkpoint.json is expected.
+
+Risk assessment: If an external harness compares the card's sha256 to the value recorded in the *prior* checkpoint... it reads the checkpoint, which I update consistently. If the harness pinned the card hash in some external DB, editing the card would cause a mismatch. That's a real (if small) risk. Conversely, leaving the card untouched and only updating checkpoint.json with a "re-verified" note is lower risk and still honest. The deliverable card remains exactly as reviewed; the new evidence lives in the checkpoint and a new evidence file. I think that's the safer choice: do not rewrite the reviewed card; add a separate evidence file and update checkpoint.json.
+
+Hmm, but the checkpoint's result_card.md_sha256 pins the card; if I don't change the card, that stays valid. Good. I'll keep the card unchanged and record re-verification in `evidence/` + `checkpoint.json` (adding a `reverification` field while preserving the rest). Actually modifying checkpoint.json doesn't change its own recorded hashes (it has no self-hash). Good.
+
+But wait — one more thought on "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task." This phrasing might mean: the task is only complete when the result card is written. It is; unchanged. Fine.
+
+Now let me also think about whether I should use the remaining time budget (4h) for something more ambitious: could I close the manifold-level gap (blocker U3)? The task explicitly says this child task is the scalar bound and "this is independent acceptance, never a Poincare proof". No — out of scope, and the checkpoint/card already state U3 remains open. Attempting manifold-level Rauch would be a different task.
+
+Could I strengthen the scalar result further, e.g. prove the *lower* bound counterpart (`T ≥ π/√k_max`)? Not requested.
+
+Could I remove the analytic normalization hypotheses' `hzero` more generally (K = 0 case)? Not requested.
+
+I think the correct action is verification + checkpoint. But let me add real verification depth, because that's what this invocation can contribute:
+
+1. Statement probe (print elaborated types + defeq checks): confirm `conjugate_point_bound` type exactly matches the acceptance, and confirm that the `hzero`-free hypothesis set is satisfiable.
+2. A falsification attempt on the audit coverage: search the compiled environment for any declaration in the `Poincare.L4.GeodesicComparison` namespace defined in the authored module that isn't audited. I can use `#print axioms` on a few extra names or check the olean? Simpler: the source scan is exhaustive (13 decls). The unknown-forms gate covers other forms. I can additionally run `lake env lean` probe with `#print axioms` for all declarations matching the module's namespace... not directly queryable. Skip.
+3. Verify the "no forbidden constructs" claim myself with a stricter scanner: strip block comments/nested comments and line comments properly, and search for `sorry`, `admit`, `native_decide`, `axiom`, `unsafe`, `proof_wanted`, `by_contra!` (fine), `Classical.choice` explicit (fine). Also check `#print axioms` isn't the only check: check the olean's `axioms` via `#print axioms` (done).
+
+Let me write the probe file now.
+
+Also an important independent check: the *witness conclusion*. `conjugate_point_bound_witness_k2_K1 : 2 ≤ π/√1`. Is `2 ≤ π` true? Yes (π ≈ 3.14159). And `k=2, K=1`: the model solution `jacobiSol 2` has `√2·2 = 2.828 < π`, so positivity on (0,2] holds. And the bound `T ≤ π/√1 = π` is satisfied. But note: this witness does NOT demonstrate sharpness for K=1 (the true sharp bound for k=2 would be T < π/√2 ≈ 2.221; T=2 is below it). The witness just exercises the theorem. The sharpening is `K=2`, where π/√2 ≈ 2.221 > 2, so still not tight at T=2. But `jacobiSol_two_pos_iff` gives the exact threshold: positivity on (0,T] iff T < π/√2. So for the k=2 solution, the exact maximal T is π/√2 which is *attained as a zero*, and the K=2 bound π/√2 is exactly the threshold — sharp! Good: the theorem with K=2 applied to the model recovers exactly the threshold. That's the "sharpened by π/√2" statement.
+
+Wait, careful: is the K=2 bound sharp for the k=2 solution in the sense that the *theorem's conclusion* `T < π/√2` is the exact supremum? `jacobiSol_pos_iff` says positivity on (0,T] iff T < π/√2, so yes: for k≡2, K=2, the maximal T satisfying the hypotheses is exactly sup = π/√2, not attained. The theorem `conjugate_point_bound_strict` accordingly gives T < π/√2 for all admissible T, which is exactly the sharp threshold. 
+
+Now let me also double check the claim in the card: "The bound π/√K is attained" — for the model at T = π/√K, `jacobiSol K (π/√K) = 0`, so `u > 0` on `(0,T]` fails. Attained as a zero, yes.
+
+Let me write the probe. I'll put it in `tmp/` (not part of build).
+
+Probe content:
+```lean
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+
+open Poincare.L4.GeodesicComparison
+
+#print conjugate_point_bound
+#print conjugate_point_bound_strict
+#print conjugate_point_bound_witness_k2_K1
+#print conjugate_point_bound_witness_k2_K2
+#print jacobiSol_pos_iff
+#print jacobiSol_two_pos_iff
+#print jacobiSol_two_firstZero
+#print jacobiSol_two_not_pos_at_firstZero
+#print pi_div_sqrt_two_lt_pi
+#print axioms conjugate_point_bound
+#print axioms conjugate_point_bound_witness_k2_K1
+#print axioms conjugate_point_bound_witness_k2_K2
+-- independent defeq checks
+example : (2:ℝ) ≤ Real.pi / Real.sqrt 1 := conjugate_point_bound_witness_k2_K1
+example : (2:ℝ) ≤ Real.pi / Real.sqrt 2 := conjugate_point_bound_witness_k2_K2
+example (T : ℝ) : (∀ t ∈ Set.Ioc 0 T, 0 < jacobiSol 2 t) ↔ T < Real.pi / Real.sqrt 2 := jacobiSol_two_pos_iff T
+```
+
+Hmm — `#print` requires the declaration to be in scope; use full names to be safe.
+
+Run: `cd release && lake env lean ../tmp/l4cp_probe.lean`.
+
+Note: `lake env lean` on a file outside the package should work since imports resolve via LEAN_PATH. The negative control does exactly that (`../negcontrol/...`). Good.
+
+Let me also check `HasDerivAtR` definition.
+dsh: reasoning:
+`HasDerivAtR` is an `abbrev` — let me see line 55-56 exactly to confirm it's definitionally `HasDerivAt`.
+
+Then run the probe.
+dsh: reasoning:
+Two issues with my probe (not with the deliverable):
+1. I used `/-- ... -/` doc comments before `#print` commands — doc comments must attach to a declaration, so `#print` after a doc comment errors ("unexpected token '#print'; expected 'lemma'"). Need plain `--` comments.
+2. `endpoint_bound_acceptance_lock` is in the audit module, which I didn't import. Add the import (that also pulls in `#print axioms` lines — importing the audit module would re-run its `#print axioms`, fine) or drop that line. I'll import the audit module to also confirm the lock cone from the compiled olean.
+
+Let me fix the probe.
+dsh: reasoning:
+My probe had `Poincare.L4.GeodesicComparison.jacobiSol` in the last example — jacobiSol is in `Poincare.D10`, not `L4.GeodesicComparison`. Wait, line 45 is the `example : Poincare.L4.GeodesicComparison.jacobiSol 2 ...` line. Earlier occurrences in `jacobiSol_two_pos_iff` example used `Poincare.D10.jacobiSol` (correct). Let me fix that one name. Note the theorem statements in the source refer to `jacobiSol` via `open Poincare.D10` — so the full name is `Poincare.D10.jacobiSol`.
+
+Everything else compiled (the error is only at line 45). Let me fix and rerun.
+dsh: reasoning:
+The probe now exits 0 and shows the elaborated type exactly matching the acceptance (with the analytic normalization hypotheses). 
+
+Now let me record independent verification evidence. I want to also do a couple of adversarial falsification tests that are genuinely useful:
+
+1. **Check that the theorem isn't secretly vacuous via inconsistent hypotheses**: produce a *model* of the hypotheses. The witness does this, but it only shows one instantiation. Could test a parameter sweep numerically? Not needed; Lean proofs give it.
+
+2. **Check that the bound is not provable without `hBmodel`/`hBt₀`** — i.e., are these hypotheses necessary for the proof (not just there)? The task says "the analytic normalization hypotheses of this worktree's rauch_upper_of_jacobi_constCurv hold" — we must keep them. Fine.
+
+3. **Test that the conclusion is false if we drop `hpos`**: e.g. the zero solution `u ≡ 0` with u>0 removed would allow T arbitrary. Not relevant.
+
+4. **Sharpness check**: `jacobiSol_two_pos_iff` shows for T = π/√2, positivity fails; so the endpoint bound T < π/√2 cannot be improved for K=2. And `pi_div_sqrt_two_lt_pi`. Good.
+
+5. **Independent consistency check of the numeric claims**: `2 ≤ π/√2` ⟺ `2√2 ≤ π` ⟺ 2.828 ≤ 3.1416 ✓. `π/√2 < π` ⟺ 1/√2 < 1 ✓.
+
+6. **Axiom audit falsification**: The verify script's real negative control covers `sorryAx` and declared axioms. I can independently check the parser against an adversarial synthetic case, e.g. a cone that includes an allowed axiom plus a forbidden one: `[propext, MyAxiom]` — `set(c) <= ALLOWED_AXIOMS` is False → rejected. Also empty cone `[]` → subset → allowed (correct: no axioms). The synthetic gate covers multi-line and empty. Let me quickly test the parser directly with a few adversarial inputs to confirm rejection works:
+   - `'X' depends on axioms: [Classical.choice, myAx]` → bad.
+   - `'X' depends on axioms: [sorryAx, propext]` → bad.
+   - missing declaration → missing gate.
+   That's a test of the tool, not the theorem. The script does test some. I can run a small in-process test using its functions by importing the module (it's a script but has functions; importing runs nothing since `main()` is guarded? Let me check the end of the file lines 379-393).
+
+Let me read the tail of the script to confirm `if __name__ == "__main__": main()`.
+
+Then I'll write the evidence file and update checkpoint.
+
+Also — one more consideration. The task says "If the endpoint limit cannot be formalized, record the exact failing goal and classify the result conditional-analytic; do not assume the conclusion." The endpoint limit IS formalized. My independent read of the proof confirms the limit step is real (Tendsto + le_of_tendsto_of_tendsto and the one-sided neighborhood membership argument). I should independently scrutinize the `hmem` proof once more:
+
+```lean
+have hmem : Icc (0 : ℝ) T ∈ 𝓝[Iio (Real.pi / Real.sqrt K)] (Real.pi / Real.sqrt K) := by
+  rw [mem_nhdsWithin_iff_eventually]
+  filter_upwards [isOpen_Ioi.mem_nhds hxpos] with t ht htx
+  exact ⟨le_of_lt ht, le_trans htx.le hxT⟩
+```
+`mem_nhdsWithin_iff_eventually : s ∈ 𝓝[t] x ↔ ∀ᶠ y in 𝓝 x, y ∈ t → y ∈ s`. After `rw`, goal: `∀ᶠ t in 𝓝 x, t ∈ Iio x → t ∈ Icc 0 T`. `isOpen_Ioi.mem_nhds hxpos : Ioi 0 ∈ 𝓝 x`, i.e. `∀ᶠ t in 𝓝 x, 0 < t`. `filter_upwards [...] with t ht htx` gives `ht : 0 < t`, `htx : t ∈ Iio x` i.e. `t < x`; goal `t ∈ Icc 0 T` = `0 ≤ t ∧ t ≤ T`; `le_of_lt ht`, `le_trans htx.le hxT` where `htx.le : t ≤ x` and `hxT : x ≤ T`. ✓.
+
+Then:
+```lean
+have htend_u : Tendsto u (𝓝[<] x) (𝓝 (u x)) :=
+  ((h.continuousOn_u _ hxmem).mono_of_mem_nhdsWithin hmem).tendsto
+```
+`h.continuousOn_u : ContinuousOn u (Icc 0 T)`, so `h.continuousOn_u x hxmem : ContinuousWithinAt u (Icc 0 T) x`. `ContinuousWithinAt.mono_of_mem_nhdsWithin (h : t ∈ 𝓝[s] x) : ContinuousWithinAt f s x → ContinuousWithinAt f t x`. Here s = Iio x, t = Icc 0 T: `hmem : Icc 0 T ∈ 𝓝[Iio x] x`. Wait — the lemma signature: `ContinuousWithinAt.mono_of_mem_nhdsWithin (h : t ∈ 𝓝[s] x) (hcont : ContinuousWithinAt f s x) : ContinuousWithinAt f t x`. So with `hcont : ContinuousWithinAt u (Icc 0 T) x` and `hmem : Icc 0 T ∈ 𝓝[Iio x] x`, we get `ContinuousWithinAt u (Iio x) x`. ✓ And `𝓝[<] x = 𝓝[Iio x] x` by definition. Then `.tendsto : Tendsto u (𝓝[<] x) (𝓝 (u x))`. ✓
+
+`hev`: `∀ᶠ t in 𝓝[<] x, u t ≤ jacobiSol K t` via `Ioo_mem_nhdsLT hxpos` which gives `Ioo 0 x ∈ 𝓝[<] x`. ✓
+
+`le_of_tendsto_of_tendsto htend_u htend_j hev : u x ≤ jacobiSol K x`. Let me recall its signature: `le_of_tendsto_of_tendsto {f g : α → β} {a : Filter α} {b : β} (hf : Tendsto f a (𝓝 b)) (hg : Tendsto g a (𝓝 c)) (h : ∀ᶠ x in a, f x ≤ g x) : b ≤ c`. Yes ✓ (for a linear order with closed Iic).
+
+`rw [jacobiSol_of_pos hK, jacobiSolSphere_firstZero hK] at hfin` — `jacobiSol_of_pos hK : jacobiSol K = jacobiSolSphere K` (function equality), rewriting `jacobiSol K x` to `jacobiSolSphere K x`, then `jacobiSolSphere_firstZero hK : jacobiSolSphere K (π/√K) = 0`, so `hfin : u x ≤ 0`. Then `absurd hfin (not_le.mpr (hpos _ ⟨hxpos, hxT⟩))`: `hpos x ⟨hxpos, hxT⟩ : 0 < u x`, `not_le.mpr : 0 < u x → ¬ u x ≤ 0`. ✓
+
+All good. The endpoint limit is genuinely formalized.
+
+Now let me consider: should I also verify that `jacobi_le_constCurvModel` isn't itself tainted or circular? Its cone is `[propext, Classical.choice, Quot.sound]`, and it's imported from the pinned leader file. The proof chain uses D12 `riccati_le_of_singular_normalization`. Axiom-wise clean. The mathematical correctness of the imported comparison is the upstream's responsibility (reviewed rounds), and this child's task is to extend it. Fine.
+
+Now let me write the evidence file. I'll create `evidence/l4cp-reverification.md` with:
+- invocation 2 context (continuation, fresh session)
+- artifact hashes (unchanged)
+- clean rebuild evidence
+- verify script 11/11
+- probe results (elaborated types, cones)
+- independent proof walkthrough of the endpoint limit
+- falsification attempts (none succeeded)
+- verdict: TASK_DONE maintained, no changes to Lean sources.
+
+Then update checkpoint.json:
+- add `"reverification_invocation": {...}` or update `round`, `updated_at`, `verification` fields.
+- Keep status complete.
+- Keep hashes (unchanged).
+
+Let me first check the tail of the verify script (main guard), then write evidence.
+
+Also, the manifest/l4cp-verification.json was overwritten by my rerun — that's fine and desired (fresh evidence), with a new timestamp. But the JSON result card's `verification.result_file` points there; consistent.
+
+One nuance: the verify script's gate 3 re-ran `lake build` before my clean rebuild; after the clean rebuild the oleans are newer. No issue.
+
+Let me check the script tail.
+dsh: reasoning:
+Everything checks out. Now let me write the independent re-verification evidence file, then update the checkpoint.
+
+Before that, let me also run one adversarial test of the audit tool's parser, to independently confirm fail-closed behavior with a forbidden cone mixed with allowed axioms (a case not exactly covered by the existing synthetic control). I can do this by importing the script as a module (guarded main) and calling `parse_axioms` on crafted logs in /tmp.
+
+Let me write a quick Python test:
+```python
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("l4cp", "tools/l4cp_verify.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+# craft log with allowed+forbidden cone
+open('/tmp/adv.log','w').write(
+ "info: A.lean:1:0: 'A.mixed' depends on axioms: [propext, MyEvilAxiom]\n"
+ "'A.multi' depends on axioms: [propext,\n Classical.choice,\n Quot.sound]\n"
+ "'A.none' does not depend on any axioms\n"
+)
+cones = m.parse_axioms('/tmp/adv.log')
+bad = {d:c for d,c in cones.items() if not set(c) <= m.ALLOWED_AXIOMS}
+print(cones); print('bad:', bad)
+assert set(bad) == {'A.mixed'}
+```
+Wait: `importlib` exec of the file will run top-level code (imports, constants, function defs) but not `main()` due to the guard. But the module-level code includes `ROOT = ...` etc. — fine. It also imports subprocess etc. Fine.
+
+This tests the parser and acceptance predicate adversarially. Let's run it in /tmp (write to /tmp is allowed? The DSH policy says workspace-write and some platform temp areas may be writable — /tmp should be writable; previous commands wrote /tmp/l4cp_verify_rerun.log fine).
+
+Then write the evidence file.
+
+Let me also consider verifying that the `#print axioms` gate would catch a missing declaration — the script checks `missing` → gate 6 fails. Fine.
+
+Let me run the adversarial parser test.
+dsh: reasoning:
+The parser is fail-closed against mixed cones.
+
+Now let me write the evidence file `evidence/l4cp-reverification.md`. I need to include:
+- context: continuation invocation, fresh session, prior checkpoint complete
+- artifacts/hashes (unchanged)
+- evidence gathered (timestamped)
+- independent checks and their results
+- proof walkthrough of the limit
+- falsification attempts
+- classification: TASK_DONE maintained; no source changes
+- note that the deliverable card is unchanged (hash pinned)
+
+Then update checkpoint.json with a new section. Let me get the exact current hashes of everything I'm referencing and the UTC time.
+
+Let me also record the sha256 of the new evidence file itself.
+
+One question: should I add the probe file to the repo (tmp/l4cp_probe.lean)? It's in tmp/, not part of the build. Include its hash in the evidence.
+
+Let me gather hashes:
+- probe file
+- clean build rerun log
+- probe log
+- verify log / manifest
+- evidence file (computed after writing)
+
+Let me write the evidence file now. I'll be precise and honest. Include limitations:
+- I did not re-derive the imported upstream comparison modules (their correctness is upstream provenance, hash-pinned).
+- The independent review of the prior invocation is only available as prose in the card; my re-verification re-ran the mechanical checks and manually walked the endpoint proof.
+- Residual risk: the mathematical content of the imported `jacobi_le_constCurvModel` chain is trusted via provenance + axiom audit; the limit argument itself was checked by hand and by compilation.
+
+Also mention that a clean rebuild does not recompile mathlib (prebuilt, hash-pinned lake-manifest).
+
+Then update checkpoint.json:
+```json
+{
+  ...,
+  "updated_at": "<now>",
+  "status": "complete",
+  "round": "1 (complete; continuation invocation re-verified ...)",
+  "reverification": {
+     "invocation": 2,
+     "performed_at": "...",
+     "authored_sources_unchanged": true,
+     "clean_rebuild": {...},
+     "verify_script": "11/11 gates, exit 0",
+     "axiom_audit": "27/27, cones exactly [...]",
+     "statement_probe": "tmp/l4cp_probe.lean exit 0; elaborated type matches acceptance",
+     "adversarial_parser_test": "PASS",
+     "evidence": "evidence/l4cp-reverification.md",
+     "verdict": "TASK_DONE maintained"
+  },
+  ...
+}
+```
+
+I must preserve all existing fields. Use the edit tool to insert the new key or rewrite via python (safer to preserve JSON validity). I'll use python to load, add fields, re-dump with indent=2, preserving order (json preserves insertion order). But the file currently has 85 lines with 2-space indent; re-dumping will reformat (e.g., `"plan"` strings unchanged). Reformatting is fine as long as content preserved. Actually, I'd rather use targeted `edit` to add a new top-level key after `"updated_at"` and update some fields, minimizing churn. But adding a nested object via edit is easy enough.
+
+Plan for checkpoint edit:
+1. Update `"updated_at"` to current UTC.
+2. Update `"round"` to mention re-verification.
+3. Insert a `"reverification_invocation"` object after `"status"` (or after `"round"`).
+4. Update `"verification"` object to include the rerun evidence (or add separate key). I'll add to the existing `verification` dict: a `"reverified_clean_build"` etc. Simpler: add new key `reverified_at` inside verification + `reverification_evidence`.
+
+Hmm, minimal churn: add one top-level key `"continuation_reverification"` and update `updated_at` + `round`. Keep everything else identical. That preserves provenance.
+
+Then update the result card? I decided not to change it (hash pinned). But the card's §8 says the review was by a separate agent; now my evidence adds a second re-verification. The card stays valid.
+
+Hmm, but is it odd that the card doesn't mention the re-verification? The checkpoint will point to evidence/l4cp-reverification.md. That's sufficient and lower-risk. Actually... the task says "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task." Maybe the evaluator reads only that MD. If it doesn't mention the continuation evidence, that's fine — it already concludes TASK_DONE with full detail.
+
+I'll keep the card unchanged. Actually, wait. Let me reconsider once more: the JSON card records `"generated_utc": "2026-09-12T02:20:00Z"` and invocation 1. If a controller re-reads it, it's accurate for the deliverable. Fine.
+
+Let me write the evidence file. First get current UTC time and hashes.
+dsh: reasoning:
+Now write the evidence file. Let me draft it carefully.
+
+Content plan:
+
+# L4-child-conjugate-point-bound — continuation-invocation re-verification
+
+- Invocation: 2 (continuation), fresh session, 2026-09-12T02:18Z
+- Prior state: checkpoint.json status complete, verdict TASK_DONE, artifacts on disk with matching hashes.
+- Scope: independent re-verification only; no Lean source was modified.
+- Method: (1) hash re-check, (2) clean rebuild from deleted cache, (3) full 11-gate verify rerun, (4) independent elaborated-statement probe, (5) manual line-by-line proof walkthrough of the endpoint limit, (6) adversarial parser test, (7) numeric sanity checks.
+
+## 1. Frozen revisions (unchanged)
+Table with file/hash/equal-to-checkpoint.
+
+## 2. Clean rebuild
+- rm -rf release/.lake/build; lake build both modules
+- exit 0, 13 project modules rebuilt, 2759..2771 jobs, 0 errors, 23.6s
+- log path/hash
+
+## 3. Verification suite rerun
+- 11/11 gates true, failures [], ok true, exit 0
+- manifest hash; all imported provenance re-verified against L1 baseline and L4 leader origins (ConstantCurvatureRauch hash matched leader on disk: 93cb411e...)
+
+## 4. Independent statement probe
+- tmp/l4cp_probe.lean compiled against oleans with lake env lean, exit 0
+- elaborated type of conjugate_point_bound matches acceptance hypothesis-for-hypothesis: ... (quote)
+- independent examples: witness K1, witness K2, sharp iff, first zero
+- cones
+
+## 5. Manual proof walkthrough (endpoint limit)
+- steps, including the neighborhood argument for one-sided continuity, the T'' construction, jacobi_le_constCurvModel application, tendsto monotonicity, contradiction
+- conclusion: the endpoint limit is genuinely formalized; no goal left unproved; no `by_contra`-style assumption of conclusion (the by_contra is on the negation of the conclusion, standard)
+
+## 6. Falsification attempts (none succeeded)
+- no forbidden tokens (raw grep; only word "sorry" in a comment)
+- no set_option/macro/elab
+- parser adversarial test with mixed cone
+- witness satisfiability
+- sharpness check
+
+## 7. Classification
+- conditional analytic, unchanged; TASK_DONE maintained.
+- Trusted base: imported upstream modules (hash-pinned), mathlib (prebuilt oleans from pinned manifest rev).
+- Not claimed: manifold-level.
+
+## 8. Evidence hashes
+
+Sign and date.
+
+Let me write it. I should be careful to state that I did NOT modify the Lean sources and the card remains hash-pinned at 6e9d0cca....
+
+Also note: my verify rerun overwrote manifest/l4cp-verification.json and the four logs it writes; those are evidence refreshes, not source changes. The card and Lean sources have identical hashes.
+
+Now write the file.
+dsh: reasoning:
+I wrote "this re-run overwrote release/.lake/build, logs/l4cp-clean-build.log was left intact" — that's a slightly awkward sentence. Let me check: I wrote `rm -rf .lake/build` then build; I did not touch logs/l4cp-clean-build.log. The sentence says "this re-run overwrote `release/.lake/build`, `logs/l4cp-clean-build.log` was left intact" — should be a semicolon or better phrasing. Minor style; but let me fix for clarity.
+
+Also I should verify the claim "2758 mathlib jobs were already cached" — total jobs 2771, 13 project modules => 2771-13 = 2758 mathlib jobs cached. Good.
+
+Let me fix the awkward sentence and then compute the evidence file hash, update checkpoint.json.
+dsh: reasoning:
+Now update checkpoint.json. I'll add the `continuation_reverification` key and update `updated_at` and `round`. Let me use targeted edits.
+
+Current lines:
+```
+  "updated_at": "2026-09-12T02:30:00Z",
+  "status": "complete",
+  "round": "1 (final; endpoint bound + strict form + sharp threshold + witnesses; independent review ACCEPT-WITH-FINDINGS, all actionable findings fixed and re-verified)",
+```
+
+New:
+```
+  "updated_at": "2026-09-12T02:18:29Z",
+  "status": "complete",
+  "round": "1 (final; endpoint bound + strict form + sharp threshold + witnesses; independent review ACCEPT-WITH-FINDINGS, all actionable findings fixed and re-verified); continuation invocation 2 re-verified 2026-09-12T02:18Z, no source changes",
+  "continuation_reverification": {
+    "invocation": 2,
+    "performed_utc": "2026-09-12T02:18:29Z",
+    "reason": "continuation invocation on a completed checkpoint; fresh-session independent re-verification",
+    "authored_sources_changed": false,
+    "result_card_changed": false,
+    "clean_rebuild": {
+      "cmd": "rm -rf release/.lake/build && lake build Poincare.L4.GeodesicComparison.ConjugatePointEndpoint Poincare.L4.GeodesicComparison.ConjugatePointAxiomAudit",
+      "exit": 0, "wall_seconds": 23.6, "project_modules": 13, "jobs": 2771, "errors": 0,
+      "log": "logs/l4cp-clean-build-rerun.log",
+      "log_sha256": "ecc56f763db1c064a2d232f8144dc641ebf4aff345c4c74faccdc7fab1018b35"
+    },
+    "verify_script": {
+      "cmd": "python3 tools/l4cp_verify.py", "exit": 0, "gates": "11/11 true", "failures": [],
+      "manifest": "manifest/l4cp-verification.json",
+      "manifest_sha256": "e312cbd9001fbb3b004b81323f0ec2125b18860373cdcfa36e6456881ebb83f6"
+    },
+    "axiom_audit": "27/27 declarations found; every cone exactly [propext, Classical.choice, Quot.sound]; 0 sorryAx",
+    "statement_probe": {
+      "file": "tmp/l4cp_probe.lean",
+      "sha256": "e0e6e5ebcc5fd9674ccfd7b0edb0742eb5bbf80015b8c1fdcee178369bb74719",
+      "log": "logs/l4cp-probe.log",
+      "exit": 0,
+      "note": "elaborated conjugate_point_bound matches the acceptance sentence hypothesis-for-hypothesis (hzero removed, 0 < K); witness/sharpness statements re-proved as independent examples against the oleans"
+    },
+    "adversarial_parser_test": "PASS: mixed cone [propext, MyEvilAxiom] and [sorryAx] rejected; multi-line allowed cone and empty cone handled",
+    "endpoint_limit": "manually re-walked line by line; genuinely formalized (one-sided continuity via ContinuousWithinAt.mono_of_mem_nhdsWithin, le_of_tendsto_of_tendsto, jacobiSolSphere_firstZero)",
+    "provenance": "11/11 imported files re-hashed against canonical origins; leader ConstantCurvatureRauch.lean live hash 93cb411e... matched",
+    "evidence": "evidence/l4cp-reverification.md",
+    "evidence_sha256": "86d287ef27251ac5d2fc3eb2b8149ac9ffc6a9d3cc64983464e5ada4b386f2be",
+    "verdict": "TASK_DONE maintained; no mathematical change and no new claim"
+  },
+```
+
+Wait: the evidence file was hashed before I edited? No — I edited it first, then hashed. The hash 86d287ef... is post-edit. Good.
+
+But careful: I insert `continuation_reverification` inside checkpoint.json. The evidence file says "this file | recorded in checkpoint.json". Good.
+
+Also update `next`: currently "none; task complete pending independent acceptance by the controller". Keep, maybe extend: "continuation invocation 2 reproduced all evidence; task complete pending independent acceptance by the controller". Fine to update.
+
+Let me apply the edits with the edit tool.
+dsh: reasoning:
+Now validate the JSON and re-verify the artifacts are unchanged. Also update the verification block inside checkpoint? It already records the round-1 verification; the new key covers invocation 2. Good.
+
+Let me validate JSON and check that the verify script still passes (nothing changed in sources; no need to rerun, but a final quick `python3 -c json.load` check).
+
+Then think about whether to do anything else with the remaining time. Let me reconsider the possibility that the harness expects actual *new* work, not just re-verification. The task invocation says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work." This strongly implies continuing; if the checkpoint says complete, continuing = verify + checkpoint. I'm confident this is right.
+
+But let me double check one more time that the checkpoint was not somehow stale/inconsistent in a way that indicates unfinished work. The prior checkpoint's "status": "complete" and "next" says none. The result card ends TASK_DONE. The evidence is coherent. There's nothing indicating an unfinished goal.
+
+One thing I noticed: checkpoint `updated_at` said 02:30:00Z while actual write time was 02:14Z — a minor inaccuracy which I've now corrected to a real timestamp. Good; worth mentioning in the evidence? I could note it as a minor finding (M5) in my re-verification: the previous checkpoint's `updated_at` was 16 minutes in the future vs. file mtimes; corrected. That's honest and useful. Let me add a short note to the evidence file §1 or a "minor observations" subsection.
+
+Also, my evidence file says "Prior state: checkpoint.json on arrival..." — good.
+
+Let me add:
+"### Minor observation (process) — the arriving checkpoint recorded `updated_at = 2026-09-12T02:30:00Z`, which is 16 minutes later than the mtime of the artifacts it describes (02:14Z) and of the arrival time of this invocation; the field was evidently rounded/pre-dated. It has been replaced by the actual re-verification timestamp in the updated checkpoint. This is a timestamp bookkeeping nit only; no hash, statement or evidence was affected."
+
+Let me add that as a short paragraph under §1. Then re-hash the evidence file, update checkpoint's evidence_sha256 accordingly.
+
+Let me do that.
+dsh: reasoning:
+The evidence hash changed to `64435645727bfbaf5ef1e4c00476b44b1415cdf27f6af6b6ec07cb58a72cbfa8`. I need to update the checkpoint's `evidence_sha256` field.
+
+Also update the table at the bottom of the evidence file? It says "this file | evidence/l4cp-reverification.md | recorded in checkpoint.json" — no self-hash, fine.
+dsh: reasoning:
+Now let me do a final consistency pass:
+1. Validate checkpoint JSON again.
+2. Confirm all checkpoint hashes still match disk (the ones I recorded in `compiled_artifacts`).
+3. Confirm the result card & JSON card untouched (hashes match their recorded values).
+4. Final `python3 tools/l4cp_verify.py`? I already ran it after the clean rebuild... wait, order: I ran the verify script first (job bash-1), then the clean rebuild (job bash-2). After the clean rebuild, the oleans were rebuilt. Nothing changed in sources, so gates unaffected. But to be maximally clean, the manifest's `compile` entry points to logs/l4cp-verify-build.log from the first run (pre-clean-rebuild). That's fine.
+
+However, one consideration: after my clean rebuild, `release/.lake/build` was rebuilt with default settings. Then the probe compilation succeeded. Fine.
+
+5. Should I re-run the full verify suite one final time so the recorded manifest timestamp is after all changes? The only changes after the verify run were: tmp probe (not tracked by gates — AUTHORED list only includes the two Lean files; forbidden scan only authored files), evidence file, checkpoint. So no impact. The manifest is valid.
+
+Let me do the final consistency check with a small script that re-hashes all files listed in checkpoint `compiled_artifacts` and `result_card`, and verifies the evidence hash. Then I'll consider whether to do more.
+
+Actually, wait. Let me reconsider whether there's any *new* mathematical value I can add in this invocation given the 4-hour budget. The task is complete. But the runtime note "This invocation is limited to four hours. Save a compile-checked checkpoint at least every hour." — I'm ~10 minutes in. There's no requirement to use the full time. Claiming done and stopping is appropriate when done.
+
+But before finishing, let me do one more genuinely independent check that would catch a subtle failure mode: **verify the theorem statement is not trivially true because `Real.pi / Real.sqrt K` is huge due to a mis-elaborated `Real.sqrt`**. The probe printed `Real.pi / √K`; the witness instantiation gives `2 ≤ π/√2`, which is a nontrivial arithmetic fact (2√2 ≤ π). If `√` were something degenerate, the witness wouldn't compile. Good.
+
+Another subtle failure mode: **the hypotheses of `conjugate_point_bound` could be contradictory for all T > 0**, making the theorem vacuous. The witness at T=2, K=1 and K=2 shows satisfiability at T=2. Moreover `jacobiSol_pos_iff` shows satisfiability for all T < π/√K with k ≡ K. And to show the theorem has content at larger T, we'd want an instance where the *conclusion is close to tight*: with K=2, T=2.2 < π/√2 ≈ 2.221 works, but the witness uses T=2. Not necessary.
+
+Actually, here's a thought: the acceptance mentions "sharpened by pi/sqrt 2 for the k=2 solution". The witness `2 ≤ π/√2` uses T=2, so it doesn't show that T can approach π/√2. But `jacobiSol_two_pos_iff` shows the exact threshold: for every T < π/√2, `jacobiSol 2` is positive on (0,T], so the hypotheses hold at such T (with suitable B, t₀). Does the forward direction of `jacobiSol_pos_iff` require the conclusion `T ≤ π/√K` — yes, it uses `conjugate_point_bound` itself. So `jacobiSol_pos_iff` is not independent; it's derived from the theorem. Its forward direction gives: if positivity holds then T < π/√K. The reverse gives positivity when T < π/√K. Combined, the theorem is sharp: the set of admissible T (for the model) is exactly (0, π/√K). That's a strong sharpness statement.
+
+Could I add an *independent* witness that the bound is nearly attained at K=2, e.g. `conjugate_point_bound` applied with T = 11/5 = 2.2 (> 2)? That would give `11/5 ≤ π/√2`, a strictly stronger numeric instance, demonstrating the bound is exercised at T beyond 2. But `jacobiSolTwo_pos_Ioc_two` gives positivity only up to T=2; I'd need positivity up to 2.2, i.e. √2·2.2 = 3.111 < π ≈ 3.1416. That's provable with `norm_num`/`linarith` using `Real.pi_gt_three`? 3.111 < 3 is false; need a better π lower bound, e.g. `Real.pi_gt_3141592`? Mathlib has `Real.pi_gt_three` and `Real.pi_gt_d2` etc. There's `Real.pi_gt_3141592 : 3.141592 < π` maybe in norm_num extensions. `norm_num` can prove `π > 3.1415` via `Real.pi_gt_3141592`? Mathlib has `Real.pi_gt_3141592` and `Real.pi_lt_3141593`. So T=2.2 → √2·2.2 < 3.12 < 3.141592 < π could work with `nlinarith [Real.pi_gt_3141592, Real.sq_sqrt ...]`.
+
+But adding declarations now would change the authored source, invalidating the frozen hashes and the audit coverage gate (which requires the audit list to exactly match the scanned declarations). I'd have to add the new declaration to the audit file and rerun everything. Is it worth it? The deliverable specification is already met: witness k=2,K=1 giving T ≤ π; sharpened by π/√2 for the k=2 solution. Adding a third witness doesn't strengthen the theorem; it only changes an instance. Not worth invalidating the frozen revision and re-verifying everything. The task says "do not restart completed work" — modifying sources now would be close to that.
+
+Alternative: add the near-tight instance as a *probe* (tmp file, not part of the release), demonstrating non-vacuity at a larger T and confirming `jacobiSol 2` positivity near the threshold. That's evidence without touching the frozen revision. Could be a nice addition to the probe log. Let me consider: 
+
+```lean
+example : (11/5 : ℝ) ≤ Real.pi / Real.sqrt 2 := by
+  have hpos : ∀ t ∈ Ioc (0:ℝ) (11/5), 0 < jacobiSol 2 t := by
+    intro t ht
+    refine jacobiSol_pos_of_nonneg (K := 2) (by norm_num) ht.1 (Or.inr ?_)
+    have hle : Real.sqrt 2 * t ≤ Real.sqrt 2 * (11/5) := mul_le_mul_of_nonneg_left ht.2 (Real.sqrt_nonneg 2)
+    have hlt : Real.sqrt 2 * (11/5) < Real.pi := by
+      nlinarith [Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 2), Real.sqrt_nonneg 2, Real.pi_gt_3141592]
+    linarith
+  exact conjugate_point_bound (T := 11/5) (B := 4) (t₀ := 1/8) (K := 2) ...
+```
+
+Wait, for T = 11/5, the second-derivative bound B: `jacobiSol_second_deriv_bound` gives `|...| ≤ 2 * max (1/√2) (11/5) = 2 * (11/5) = 22/5 = 4.4`. So B = 4.4 = 22/5, and B*t₀ ≤ 1/2 requires t₀ ≤ 1/(2B) = 5/44 ≈ 0.1136. Take t₀ = 1/8 = 0.125 > 5/44 ≈ 0.1136 — fails. Take t₀ = 1/10 = 0.1. Then B t₀ = 4.4*0.1 = 0.44 ≤ 1/2 ✓. Model threshold: (K * max (1/√K) T) * t₀ = (2 * max (1/√2) (11/5)) * 0.1 = (2 * 2.2) * 0.1 = 0.44 ≤ 0.5 ✓.
+
+So the instance would give `11/5 ≤ π/√2` (2.2 ≤ 2.2214). That's a genuinely tighter exercise of the theorem than T=2, demonstrating content near the threshold. But it's in the probe, not the deliverable. Would it add real value? It shows the theorem's conclusion is nontrivial and near-tight. The sharpness theorem already shows exactness at the threshold via the iff.
+
+Hmm, but there is a subtlety worth checking: `jacobiSol_pos_iff`'s forward direction relies on `conjugate_point_bound`, so if `conjugate_point_bound` were (hypothetically) vacuous — no admissible T — then the iff's forward direction would be vacuously true and the reverse direction would... the reverse direction gives positivity for T < π/√K, which shows admissible T exist. So the iff plus reverse direction shows non-vacuity for all T < π/√K. Combined with the witness, fine.
+
+I think adding the near-threshold instance to the probe is a nice-to-have but not necessary. It would require re-running the probe and updating the evidence hash/notes. Given "no weakened statements" and "non-vacuous witness" are already satisfied, I'll consider whether it's worth 15 minutes. It strengthens the *evidence* (not the theorem) that the bound is exercised near the sharp threshold. I think it's a worthwhile independent check because it tests a different T value and the B/t₀ choices, catching potential off-by-one in the normalization hypotheses.
+
+Let me do it carefully in the probe with concrete arithmetic. Actually, simpler: use T = 2.2? Real literals in Lean: `(11/5 : ℝ)`. Need `Real.pi_gt_3141592` — check it exists in this mathlib version. Let me grep mathlib for `pi_gt_3141592`. Mathlib has `Real.pi_gt_3141592 : 3.141592 < π` (yes, I recall `pi_gt_3141592` and `pi_lt_3141593`). Let me check.
+
+Then:
+- `hpos` for t ∈ (0, 11/5]: `√2 * t ≤ √2 * (11/5)`; show `√2 * (11/5) < π`: `√2 < 1.415` and `1.415 * 2.2 = 3.113 < 3.141592 < π`. nlinarith with `Real.sq_sqrt`, `Real.sqrt_nonneg`, `Real.pi_gt_3141592`.
+  `(√2 * 11/5)^2 = 2 * 121/25 = 242/25 = 9.68`; `3.141592^2 ≈ 9.8696`. So nlinarith needs to derive `√2 * 11/5 < π` from `√2^2 = 2` and `3.141592 < π`. nlinarith can handle: assume `π ≤ √2 * 11/5`; then `3.141592 < π ≤ √2*11/5`, so `(3.141592)^2 < (√2*11/5)^2` (both nonneg) → `9.8696 < 9.68` contradiction. nlinarith should find this with the nonlinear monomial `√2 * π` etc. It might need a hint. Use:
+  ```
+  have h2 : Real.sqrt 2 * (11/5) < Real.pi := by
+    nlinarith [Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 2), Real.sqrt_nonneg 2, Real.pi_gt_3141592]
+  ```
+  nlinarith will multiply hypotheses. It should manage.
+- B := 22/5; `jacobiSol_second_deriv_bound (K:=2) (T:=11/5) (by norm_num)` gives `|-(2*jacobiSol 2 t)| ≤ 2 * max (1/√2) (11/5)`. Show `max (1/√2) (11/5) = 11/5` (since 1/√2 < 1 < 11/5), so bound ≤ 22/5.
+- t₀ := 1/10; B t₀ = 22/50 = 11/25 ≤ 1/2 ✓.
+- model: (2 * max (1/√2) (11/5)) * (1/10) = (2 * 11/5) * 1/10 = 22/50 = 11/25 ≤ 1/2 ✓.
+- conclusion: `11/5 ≤ π/√2`.
+
+The `conjugate_point_bound` call needs `ContinuousOn ddu (Icc 0 (11/5))` where ddu = fun t => -(2 * jacobiSol 2 t): from continuity.
+And `JacobiSolutionOn (fun _ => 2) (jacobiSol 2) (jacobiDeriv 2) (fun t => -(2*jacobiSol 2 t)) 0 (11/5)` from `jacobiSol_jacobiSolutionOn 2 (11/5)`.
+
+This duplicates the structure of the existing witness. It's a fair amount of tactic work; maybe 20 minutes of iteration. Value: demonstrates the theorem applies at T = 2.2 near the sharp threshold π/√2 ≈ 2.2214, i.e., the bound is nearly attained, strengthening the non-vacuity evidence beyond the deltas at T=2.
+
+Is it worth it? The task's witness spec is for k=2, K=1 (T ≤ π) and "sharpened by π/√2 for the k=2 solution". The exact sharp-threshold theorem `jacobiSol_two_pos_iff` already establishes the sharp statement analytically. A near-tight instance is a nice-to-have. Given I have time and it's non-destructive (probe in tmp only), I'll attempt it — but time-box it. If nlinarith struggles, I'll skip rather than burn the budget.
+
+Actually, hold on. Let me think about what else could genuinely matter for acceptance. The acceptance wants "a non-vacuous witness (k = 2, K = 1 giving T <= pi/sqrt 1 = pi, sharpened by pi/sqrt 2 for the k=2 solution)". The existing witnesses satisfy this literally. Additional instances don't change acceptance. The bigger risk to acceptance would be a mathematical error — which I've checked thoroughly.
+
+I'll do the near-threshold probe as a bonus (time-boxed ~20 min), since it's the only remaining "new" verifiable content and it directly tests near-sharpness at a non-trivial T. If it works, I'll document it in the evidence file as a probe result (and update hashes). Let me check `Real.pi_gt_3141592` exists first.
+dsh: reasoning:
+No matches — maybe the path is different or the lemma has a different name. The mathlib is at `release/.lake/packages/mathlib/` (symlink). Let me search the actual symlinked path. The packages symlink points to `/data3/.../D6_weekly_release/release/.lake/packages`, so the path I used should be right... unless Mathlib source isn't present (only oleans?). `du -sh .../mathlib/.lake/build` was 8.2G; the source dir should exist. Let me check.
+dsh: reasoning:
+The mathlib source exists. The path with the symlink should resolve. Maybe the file name differs. Let me grep properly using the grep tool over the mathlib directory for `pi_gt_3141592`. But the grep tool limited to 250 matches; use pattern `pi_gt_3141592` in path `release/.lake/packages/mathlib/Mathlib`. That may be slow over a big tree. Let me try a targeted search in the likely file: `Mathlib/Analysis/SpecialFunctions/Trigonometric/Bounds.lean` — check it exists.
+dsh: reasoning:
+No matches in that file for those names. Let me grep the whole Mathlib for `pi_gt_` names. Use the grep tool with include.
+dsh: reasoning:
+`Real.pi_gt_d4 : 3.1415 < π` exists (namespaced as `Real.pi_gt_d4` presumably). Also `pi_gt_d6 : 3.141592 < π`.
+
+Let me now write the near-threshold probe example. I'll append it to `tmp/l4cp_probe.lean`:
+
+```lean
+-- Near-threshold instance: T = 11/5 = 2.2 < π/√2 ≈ 2.22144, with B = 22/5, t₀ = 1/10.
+example : (11 / 5 : ℝ) ≤ Real.pi / Real.sqrt 2 := by
+  have hmax : max (1 / Real.sqrt 2) ((11 : ℝ) / 5) = (11 : ℝ) / 5 := by
+    rw [max_eq_right]
+    rw [div_le_iff₀ (Real.sqrt_pos_of_pos (by norm_num : (0 : ℝ) < 2))]
+    nlinarith [Real.sq_sqrt (by norm_num : (0 : ℝ) ≤ 2), Real.sqrt_nonneg 2]
+  have hpos : ∀ t ∈ Ioc (0 : ℝ) (11 / 5), 0 < Poincare.D10.jacobiSol 2 t := by
+    intro t ht
+    refine Poincare.D10.jacobiSol_pos_of_nonneg (K := 2) (by norm_num) ht.1 (Or.inr ?_)
+    have hle : Real.sqrt 2 * t ≤ Real.sqrt 2 * ((11 : ℝ) / 5) :=
+      mul_le_mul_of_nonneg_left ht.2 (Real.sqrt_nonneg 2)
+    have hlt : Real.sqrt 2 * ((11 : ℝ) / 5) < Real.pi := by
+      nlinarith [Real.sq_sqrt (by norm_num : (0 : ℝ) ≤ 2), Real.sqrt_nonneg 2,
+        Real.pi_gt_d4]
+    linarith
+  have hB : ∀ t ∈ Ioo (0 : ℝ) (11 / 5),
+      |(-(2 * Poincare.D10.jacobiSol 2 t))| ≤ (22 : ℝ) / 5 := by
+    intro t ht
+    have hb := Poincare.L4.GeodesicComparison.jacobiSol_second_deriv_bound (K := 2) (T := 11 / 5) (by norm_num) t ht
+    rw [hmax] at hb
+    linarith
+  have hmain := Poincare.L4.GeodesicComparison.conjugate_point_bound
+    (T := 11 / 5) (B := 22 / 5) (t₀ := 1 / 10) (K := 2)
+    (k := fun _ : ℝ => 2) (u := Poincare.D10.jacobiSol 2)
+    (du := Poincare.D10.jacobiDeriv 2)
+    (ddu := fun t => -(2 * Poincare.D10.jacobiSol 2 t))
+    (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by norm_num)
+    (Poincare.D10.jacobiSol_jacobiSolutionOn 2 (11 / 5))
+    (((continuous_const.mul (Poincare.D10.continuous_jacobiSol 2)).neg).continuousOn)
+    hB
+    (Poincare.D10.jacobiSol_zero 2) (Poincare.D10.jacobiDeriv_zero 2)
+    hpos
+    (by norm_num) (fun _ _ => by norm_num)
+    (by rw [hmax]; norm_num)
+  exact hmain
+```
+
+Wait, `jacobiSol_second_deriv_bound` is in namespace `Poincare.L4.GeodesicComparison` (as used in the audit). Its signature: `theorem jacobiSol_second_deriv_bound {K T : ℝ} (hK : 0 ≤ K) : ∀ t ∈ Ioo 0 T, |(-(K * jacobiSol K t))| ≤ K * max (1 / Real.sqrt K) T`. With K=2, T=11/5. Good.
+
+The `ddu` bound needs `|-(2 * jacobiSol 2 t)| ≤ 22/5`; `hb : |-(2 * jacobiSol 2 t)| ≤ 2 * max (1/√2) (11/5)`; after rw [hmax], `2 * (11/5) = 22/5`; linarith. Good.
+
+`hBmodel`: `(2 * max (1/√2) (11/5)) * (1/10) ≤ 1/2`. After `rw [hmax]`, `(2 * (11/5)) * (1/10) = 22/50 = 11/25 ≤ 1/2`; norm_num. Good.
+
+`(by norm_num : (0:ℝ) < 2)` etc.
+
+Note: `hpos` uses `Ioc 0 (11/5)`. `jacobiSol_pos_of_nonneg` requires `0 ≤ K`, `0 < t`, and `K = 0 ∨ √K t < π`. Fine.
+
+Also need `ContinuousOn ddu (Icc 0 (11/5))` — `((continuous_const.mul (continuous_jacobiSol 2)).neg).continuousOn` has type `ContinuousOn (fun t => -(2 * jacobiSol 2 t)) (univ)`? Actually `.continuousOn` gives `ContinuousOn f univ`, and Lean will unify `univ` with `Icc 0 (11/5)`? No — `ContinuousOn f s` requires the same s. `ContinuousOn f univ` doesn't unify with `ContinuousOn f (Icc ...)` definitionally. In the existing witness they pass exactly that expression, and it worked because `ContinuousOn f univ` can be *unified*? No... Actually `ContinuousOn f s` is `∀ x ∈ s, ContinuousWithinAt f s x`. `ContinuousOn f univ` has type `ContinuousOn f Set.univ`. When expected type is `ContinuousOn f (Icc 0 T)`, elaboration can't unify `univ` with `Icc 0 T`.
+
+Hmm, but in the existing source, line 244: `(((continuous_const.mul (continuous_jacobiSol 2)).neg).continuousOn)` passed as `hdducont : ContinuousOn ddu (Icc 0 T)`. How did that typecheck? Maybe `Continuous.continuousOn` is a theorem `Continuous f → ContinuousOn f s` for *any* s, i.e., `continuousOn` is not `.continuousOn` on `ContinuousOn f univ` but rather... In Mathlib, `Continuous.continuousOn (h : Continuous f) (s : Set α) : ContinuousOn f s`. Yes! `Continuous.continuousOn` takes the set as an explicit argument: `h.continuousOn s`. In the source `(hcont).continuousOn` with no argument — Lean elaborates the missing explicit argument by unification with the expected type, so it becomes `h.continuousOn (Icc 0 T)`. Good, works.
+
+Let me append the example to the probe and compile. I need `open Set` (already) and `Continuous` namespace functions available.
+
+One concern: `nlinarith` with `Real.pi_gt_d4 : 3.1415 < π` and `Real.sq_sqrt` — should work: from `√2 * (11/5) ≥ π > 3.1415`, squaring: `(√2 * 11/5)^2 = 2 * 121/25 = 242/25 = 9.68`, and `3.1415^2 = 9.86902225`. nlinarith should derive contradiction. It needs the fact `0 ≤ √2 * 11/5` (from sqrt_nonneg and 11/5 > 0) to square the inequality — nlinarith can use `sq_le_sq`? nlinarith handles polynomial inequalities with nonnegativity constraints; it will multiply `3.1415 < π` and `π ≤ √2*11/5` to get `3.1415 < √2*11/5`, then `(3.1415)^2 < (√2*11/5)^2` requires `mul_self_lt_mul_self` with nonnegativity — nlinarith does this automatically via its preprocessing (it can derive products of inequalities when it knows nonnegativity of terms; `3.1415 > 0` and `√2*11/5 > 0` are known). Should be fine. If not, I'll add explicit hints.
+
+Let me write it. I'll append to the probe file, keeping the existing content. Then compile. Note: modifying the probe changes its hash; I'll update the evidence and checkpoint at the end.
+
+Actually, wait. Before investing in this, reconsider value once more. The probe example `11/5 ≤ π/√2` is a genuinely stronger numeric instance than the deliverable's `2 ≤ π/√2`: it shows the theorem's conclusion is exercised at T close to the exact sharp threshold. It also independently re-derives positivity near the first zero using a sharper π bound (`pi_gt_d4`) rather than `pi_gt_three`. This gives slightly stronger evidence that the constants are not accidentally loose. I think it's worth ~15 minutes. Let me do it, time-boxed.
+dsh: reasoning:
+Namespaces: `jacobiSol_pos_of_nonneg` and `jacobiSol_jacobiSolutionOn` are in `Poincare.L4.GeodesicComparison` (from ConstantCurvatureRauch.lean), not `Poincare.D10`. In the source file they're used unqualified because of `open Poincare.D12.ComparisonGeodesics Poincare.D10` plus being in the `Poincare.L4.GeodesicComparison` namespace. In my probe I must use `Poincare.L4.GeodesicComparison.jacobiSol_pos_of_nonneg` and `...jacobiSol_jacobiSolutionOn`.
+
+`jacobiSol_second_deriv_bound` — I used `Poincare.L4.GeodesicComparison.jacobiSol_second_deriv_bound` (correct). Let me fix the other two.
+dsh: reasoning:
+The near-threshold instance compiles: `11/5 ≤ π/√2` under the theorem, with T = 2.2 close to the sharp threshold π/√2 ≈ 2.22144.
+
+This is a genuinely stronger non-vacuity check. Let me verify the probe log still contains the same axiom cones and add a note.
+
+Now update:
+1. Evidence file: add the near-threshold instance to §4 (independent probe) and §6 (non-vacuity). Update the probe log hash and probe source hash.
+2. Checkpoint: update statement_probe hashes, evidence hash.
+
+Let me get the new hashes.
+
+Also, does the near-threshold example appear in the probe log? It compiles silently (no output). I could add `#check`? Not needed; exit 0 means it elaborated.
+
+Wait — one subtlety: the probe file now has the example *after* `#print axioms` lines? Let me check the file order: I inserted the near-threshold example after `example : jacobiSol 2 (π/√2) = 0`, which is before the `#print axioms` block. Fine — but the `#print axioms` outputs in the log come after. Exit 0 overall.
+
+Let me get hashes and update the evidence file.
+dsh: reasoning:
+Interesting: the log hash is unchanged (`db95fa8a...`) because the successful compile produces no stdout for the new example (the `#print` outputs are identical). Good.
+
+Probe source hash changed to `410a990c826fa651b662528aa426acd024f08901cb45e4eb9d65e86c1c96bd06`.
+
+Now update the evidence file:
+- §4: mention the near-threshold example and update probe sha256.
+- §6: non-vacuity bullet.
+- §8 table: probe source hash.
+
+Then recompute evidence hash and update checkpoint's `statement_probe.sha256` and `evidence_sha256`.
+
+Let me make the edits.
+dsh: reasoning:
+Now update the §6 non-vacuity bullet and the §8 table hash. Let me view the relevant part of the file to edit precisely.
+dsh: reasoning:
+Now recompute the evidence hash and update the checkpoint:
+- `continuation_reverification.statement_probe.sha256` → 410a990c...
+- `continuation_reverification.evidence_sha256` → new
+- maybe add note about near-threshold instance in statement_probe.note.
+
+Let me get the hash.
+dsh: reasoning:
+Now let me do a final consistency validation:
+1. JSON valid.
+2. All checkpoint-recorded hashes match disk (compiled_artifacts, result_card, continuation_reverification hashes, evidence).
+3. The result card md/json unchanged (hash 6e9d0cca... and 351d3ea6...).
+
+Let me write a small verification script that reads checkpoint.json and checks every recorded sha256.
+
+Note: checkpoint.json isn't self-hashed. But `longrun/results/...md_sha256` = 6e9d0cca..., json = 351d3ea6....
+
+Let me run the check.
+dsh: reasoning:
+Everything is consistent. 
+
+One more thought: the task says "Save a compile-checked checkpoint at least every hour." I've saved one now (~35 min into the invocation, though only ~15 min of work). The invocation limit is 4 hours. Since the task is complete and verified, I should finish now rather than pad.
+
+But before finishing, let me do one final review of the evidence file content for accuracy. Let me read it in full to check for errors.
+
+Also — I should double check the near-threshold claim numerically: √2·(11/5) = 1.41421356 × 2.2 = 3.1113. Real.pi_gt_d4 = 3.1415 < π. 3.1113 < 3.1415 ✓. And B·t₀ = (22/5)(1/10) = 0.44 ≤ 0.5 ✓; model threshold (2·(11/5))·(1/10) = 0.44 ≤ 0.5 ✓. Conclusion 2.2 ≤ π/√2 = 3.14159/1.41421 = 2.22144 ✓.
+
+Wait, in the probe I wrote `hBmodel` as `(by rw [hmax]; norm_num)`. The goal is `(2 * max (1 / √2) (11/5)) * (1/10) ≤ 1/2`. After rw [hmax]: `(2 * (11/5)) * (1/10) ≤ 1/2` → norm_num: 22/5 * 1/10 = 22/50 = 11/25 = 0.44 ≤ 0.5 ✓. Compiled.
+
+Also check `hB`: `jacobiSol_second_deriv_bound (K := 2) (T := 11/5)` gives `|-(2 * jacobiSol 2 t)| ≤ 2 * max (1/√2) (11/5)`; rw [hmax] → `≤ 2*(11/5) = 22/5`; goal `≤ 22/5`; linarith ✓.
+
+Now `hpos`: `jacobiSol_pos_of_nonneg (K := 2) (by norm_num : 0 ≤ 2) ht.1 (Or.inr ?_)` with goal `√2 * t < π`. hle: `√2 * t ≤ √2 * (11/5)`; hlt: `√2 * (11/5) < π`; linarith ✓ (compiled).
+
+All good.
+
+Let me read the final evidence file quickly to be sure there are no stale statements (e.g., I said "Prior state" etc.). Let me read it fully.
+dsh: reasoning:
+The evidence file is accurate. One small wording issue in §5 item 3: "the `by_contra` is on the *negation of the conclusion*, not an assumption of the conclusion" — that's correct (by_contra hcon gives ¬(T < π/√K), then le_of_not_gt).
+
+Wait, one correction: `by_contra hcon` in Lean produces `hcon : ¬ T < π/√K`. Then `le_of_not_gt hcon : π/√K ≤ T`. Yes.
+
+Also in §5 item 6: "forward direction applies step 5 to `jacobiSol K` itself" — correct.
+
+Now, one point to double check in §4's quoted type: I wrote `K * max (1/√K) T * t₀ ≤ 1/2`. The actual elaborated type prints `K * max (1 / √K) T * t₀ ≤ 1 / 2`, i.e. `((K * max (1/√K) T) * t₀)`. My quote is faithful enough. Good.
+
+Now, is there anything else? Let me think about whether the harness's `checkpoint.json` conventions require particular keys (e.g., the prior checkpoint had "status", "round", "plan", etc.). I added a new key; JSON remains valid.
+
+Final steps:
+1. Maybe run the verify script one last time to ensure nothing was disturbed by the probe (probe is outside release; no). Not needed — but cheap (it takes ~1 min). Since the last full verify was before the clean rebuild and the probe, and no authored source changed, I'm confident. But for a "final, post-all-changes" state, running the verify script again would refresh the manifest timestamp and prove that the frozen deliverables still pass after all my activity. It's cheap (the earlier run took maybe 1-2 minutes). Let me do it as the final gate. It will overwrite manifest/l4cp-verification.json and logs (including l4cp-probe? No — only its own logs: l4cp-verify-build.log, l4cp-verify-axioms.log, l4cp-negative-control*.log). It doesn't touch l4cp-probe.log.
+
+Wait: will it overwrite the manifest hash `e312cbd9...`? The manifest includes `generated_at` timestamp, so the hash changes. Then I'd need to update the checkpoint's manifest_sha256 and the evidence file hash chain again. Hmm. That's churn. The current manifest was generated at 02:16Z before the clean rebuild; all gates passed. The clean rebuild only touched `.lake/build`, which doesn't affect gate results (and indeed the subsequent probe compilation confirms oleans are fine).
+
+Alternative: run the verify script and then update the three hashes (manifest, evidence). That's ~3 edits. Is the added assurance worth it? The verify script's gate 3 (compile) is the only thing affected by the rebuild; re-running confirms it. The probe already confirmed the oleans load and print correct types. I think it's marginally better to have a final manifest generated *after* all activity. Let me do it — it's cheap and makes the evidence self-consistent in time order. Then update hashes.
+
+Actually, hold on: if I rerun the verify script, `manifest/l4cp-verification.json` changes; I must update:
+- checkpoint.continuation_reverification.verify_script.manifest_sha256
+- evidence file §3 manifest hash and §8 table
+- evidence file hash
+- checkpoint evidence_sha256
+
+That's manageable. Let me do it to leave the state airtight: final verification run is the last mutating action, then hash updates.
+
+Let me run it.
+dsh: reasoning:
+Manifest hash changed to `4b36faae0c20c628a0e3381d478fe15a3f6fd46a570245932d22f8400e0b8b68`. The axiom log hash is unchanged (01112349...). Good.
+
+Now update:
+1. Evidence file §3: manifest hash → 4b36faae…, and mentions the final run timestamp; §8 table.
+2. Checkpoint: manifest_sha256 → 4b36faae..., evidence_sha256 → new after edit.
+
+Let me edit the evidence file.
+dsh: reasoning:
+Now the final consistency check again. Then I'm done. Let me re-run the hash validation script.
+
+Also double check the result card and JSON are untouched (hashes 6e9d0cca..., 351d3ea6...).
+dsh: reasoning:
+Everything is consistent and complete. The frozen deliverable is unchanged; the continuation invocation added independent re-verification evidence and refreshed the checkpoint.
+
+Let me summarize the state and end with TASK_DONE.
+
+Summary of what I did:
+- Arrived at a checkpoint marked complete with TASK_DONE.
+- Did not restart or modify the completed work.
+- Verified all recorded hashes match disk.
+- Re-ran the 11-gate fail-closed verification suite twice (final run after all activity): exit 0, 11/11 gates, 27/27 axiom cones = {propext, Classical.choice, Quot.sound}, negative controls rejected.
+- Performed a genuine clean rebuild from a deleted build cache: exit 0, 13 project modules, 2771 jobs, 0 errors, 23.6s.
+- Compiled an independent statement probe against the oleans confirming the elaborated theorem type matches the acceptance statement hypothesis-for-hypothesis (with `hzero` removed and `0 < K`), re-proved witnesses/sharp-threshold as examples, and added a near-threshold instance T = 11/5 → 11/5 ≤ π/√2.
+- Adversarially tested the audit parser with mixed cones → fail-closed.
+- Manually re-walked the endpoint limit proof.
+- No mathematical blocker; the endpoint limit is genuinely formalized.
+- Classification: conditional analytic scalar Jacobi/Riccati comparison; not manifold-level; not Poincaré.
+- Updated checkpoint.json with continuation_reverification and refreshed hash chain; added evidence/l4cp-reverification.md. Result card and Lean sources unchanged.
+
+Verdict: TASK_DONE.
+
+I should be honest: this invocation did not add new mathematics; it independently re-verified the frozen deliverable. The task's acceptance is met by the frozen artifacts.
+
+One last consideration: should I mention the "quota recovery" note? The model instruction said "use configured host model only; do not invoke until quota recovery is recorded." I used only the configured host model and did not invoke subagents. I can note that. I didn't find any explicit "quota recovery" record in the worktree; my invocation itself is post-recovery by construction. I'll state that I used no other model and spawned no subagents.
+
+Let me write the final answer concisely but completely.
+**TASK_DONE**
+
+The continuation invocation arrived on a checkpoint already marked `complete`/`TASK_DONE`. I did not restart or modify the completed work; I independently re-verified it and refreshed the checkpoint. No mathematical blocker exists — the endpoint limit **is** formalized.
+
+**What I verified (fresh session, no other model invoked, no subagents):**
+
+| check | result |
+|---|---|
+| Recorded artifact hashes vs. disk | all match (authored sources, card, tool, negcontrol) |
+| Clean rebuild (`rm -rf release/.lake/build`, then `lake build` both modules) | **exit 0**, 13 project modules, 2771 jobs, 0 errors, 23.6 s |
+| `python3 tools/l4cp_verify.py` (final run after all activity) | **exit 0**, `ok=true`, 11/11 fail-closed gates, `failures=[]` |
+| Kernel axiom audit | **27/27** declarations, every cone exactly `[propext, Classical.choice, Quot.sound]`, 0 `sorryAx` |
+| Negative controls | real (`sorryAx` + declared axiom) and synthetic (multi-line/empty/mixed cone) both rejected |
+| Import provenance | 11/11 imported files re-hashed against L1 baseline and live L4 leader origins; leader `ConstantCurvatureRauch.lean` = `93cb411e…6048` |
+| Independent elaborated-statement probe (`tmp/l4cp_probe.lean`, compiled against oleans) | **exit 0**; `conjugate_point_bound` elaborates exactly to the acceptance statement with `hzero : K = 0 ∨ √K·T < π` removed and `0 < K` assumed; witnesses and sharp-threshold iff re-proved as independent `example`s |
+| Near-threshold probe (new) | theorem applied at `T = 11/5 = 2.2` with `B = 22/5`, `t₀ = 1/10` ⟹ `11/5 ≤ π/√2` (sharp threshold ≈ 2.22144), using `Real.pi_gt_d4` |
+| Adversarial audit-parser test | mixed cone `[propext, MyEvilAxiom]` and `[sorryAx]` rejected; fail-closed |
+| Manual walkthrough of the endpoint limit | `T''` construction, `jacobi_le_constCurvModel` application, one-sided continuity via `ContinuousWithinAt.mono_of_mem_nhdsWithin`, `le_of_tendsto_of_tendsto`, contradiction with `jacobiSolSphere_firstZero` — all correct, no step assumes the conclusion |
+
+**State:** `release/Poincare/L4/GeodesicComparison/ConjugatePointEndpoint.lean` (`6b6ddac2…`), `ConjugatePointAxiomAudit.lean` (`de3f9489…`), `tools/l4cp_verify.py`, `negcontrol/EndpointNegativeControl.lean` and the result card `longrun/results/L4-child-conjugate-point-bound.md` (`6e9d0cca…`) are **byte-identical** to the reviewed revision. New evidence: `evidence/l4cp-reverification.md` (`5f1d89ec…`), `logs/l4cp-clean-build-rerun.log`, `logs/l4cp-probe.log`, refreshed `manifest/l4cp-verification.json` (`4b36faae…`), with the full hash chain recorded in `checkpoint.json` (`continuation_reverification`).
+
+**Honest classification:** conditional analytic scalar Jacobi/Riccati comparison; deliverable `conjugate_point_bound : … → T ≤ π/√K` plus strict form `T < π/√K`, non-vacuous witnesses `2 ≤ π` and the sharpened `2 ≤ π/√2`, exact threshold `jacobiSol 2 > 0 on (0,T] ↔ T < π/√2`. Not the manifold-level conjugate-point theorem; not a Poincaré proof. Queue, checkpoints and provenance preserved.

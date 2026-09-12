@@ -1,0 +1,1494 @@
+dsh: reasoning:
+The checkpoint says the task is complete. But there are three continuation reverifications. This is a fresh continuation invocation (5?). The task says: "Continue from existing files and checkpoint.json in this worktree; do not restart completed work. This invocation is limited to four hours. Save a compile-checked checkpoint at least every hour."
+
+So I should re-verify the completed work with fresh, independent checks, and if everything holds, maintain TASK_DONE. Let me first read the result card and key artifacts, then do fresh verification.
+
+Let me set up a todo list and start.
+
+Key things to do:
+1. Read result card and key sources.
+2. Verify hashes match checkpoint.
+3. Fresh clean rebuild.
+4. Run verify script.
+5. Fresh independent audit (perhaps with a new approach).
+6. Check quota/model note: "Model: use configured host model only; do not invoke until quota recovery is recorded." — this suggests I should check whether quota recovery is recorded somewhere. Let me look for that.
+7. Update checkpoint and result card, produce a new evidence file, end with TASK_DONE.
+
+Let me start.
+dsh: reasoning:
+Let me read the result card and the headline source file, and check hashes.
+dsh: reasoning:
+All hashes match the checkpoint. Now let me read the main Lean source to independently verify the math, and start a clean rebuild in the background.
+
+Let me first check the build environment (lake, lean versions) and whether there's a quota note.
+
+The task says "Model: use configured host model only; do not invoke until quota recovery is recorded." I should check for any quota record in the worktree. Let me grep for "quota".
+
+Let me start the clean rebuild in the background right away since it takes ~25-30s, and read sources in parallel.
+dsh: reasoning:
+No quota records found in the worktree. The task instruction "Model: use configured host model only; do not invoke until quota recovery is recorded" — this seems to be a task-level model policy. The prior checkpoint says "model use: configured host model only". Since I am the configured host model, there is no separate model invocation to make. I should record that I used only the configured host model. Let me check if there's a quota record location outside the worktree, e.g. in the parent longrun dir.
+
+Let me look at the parent directory for quota-related files.
+dsh: reasoning:
+The Lean source looks solid. Let me verify a few things about the math:
+
+1. `conjugate_point_bound_strict` — it's a proof by contradiction. Note `_hT` and `_ht₀T` are unused but present. OK.
+2. The endpoint limit: `hmem : Icc 0 T ∈ 𝓝[Iio x] x`. This uses `mem_nhdsWithin_iff_eventually`, `isOpen_Ioi.mem_nhds hxpos`. For `t ∈ Ioi 0` and `t ∈ Iio x`, we get `0 ≤ t` and `t ≤ x ≤ T`, so `t ∈ Icc 0 T`. That's correct — need `t < 0`? `Ioi 0` means `0 < t`, so `le_of_lt` gives `0 ≤ t`. Good.
+3. `hcompare` uses `jacobi_le_constCurvModel` with `Or.inr hT''pi`, i.e., `K = 0 ∨ √K·T'' < π`. It passes `hK.le` for `0 ≤ K`. Then gets `u t ≤ jacobiSol K t` for `t ∈ (0, T'')`. Good.
+4. Then limit: `hev` eventually in `𝓝[<] x`, `u t ≤ jacobiSol K t`; `le_of_tendsto_of_tendsto` gives `u x ≤ jacobiSol K x`. Then `jacobiSol_of_pos hK : jacobiSol K (π/√K) = jacobiSolSphere K (π/√K)`? Actually `jacobiSol_of_pos` presumably states `jacobiSol K t = jacobiSolSphere K t` for `K > 0`... then `jacobiSolSphere_firstZero hK : jacobiSolSphere K (π/√K) = 0`. So `hfin : u x ≤ 0`, contradicting `hpos x ⟨hxpos, hxT⟩ : 0 < u x`. Good.
+
+Wait — but there's a subtlety: `le_of_tendsto_of_tendsto` requires the two functions to have limits and the eventual inequality. Here `htend_u` is the tendsto of `u` at `𝓝[<] x`, and `htend_j`. The eventual inequality holds in `𝓝[<] x`. `Ioo_mem_nhdsLT hxpos` gives `Ioo 0 x ∈ 𝓝[<] x`. That's right for the filter `𝓝[<] x = 𝓝[Iio x] x`; a set containing `Ioo 0 x`... Hmm, `Ioo_mem_nhdsLT hxpos` — this is a mathlib lemma: `Ioo a b ∈ 𝓝[<] b` when `a < b`? Let me trust the compile.
+
+5. `jacobiSol_pos_iff`: forward direction uses `conjugate_point_bound` on `jacobiSol K` with `t₀ = min T (1/(2B))`, `B = K * max (1/√K) T`. Then it gets `T ≤ π/√K` and `T ≠ π/√K` (since at equality, `jacobiSol K (π/√K) = 0` contradicting hpos). Good. Reverse direction from explicit formula.
+
+Wait, in the forward direction, the `hBmodel` hypothesis for `conjugate_point_bound` at K: `(K * max (1/√K) T) * t₀ ≤ 1/2`. They pass `by simpa only [← hBdef] using hBt₀`. Good. But note in that call, `B := B`, `t₀ := t₀`; the theorem requires `B * t₀ ≤ 1/2` (hBt₀ ✓), `0 ≤ B` (✓), `0 < t₀` (✓), `t₀ ≤ T` (✓), and `hB : ∀ t ∈ Ioo 0 T, |ddu t| ≤ B` where `ddu := fun t => -(K * jacobiSol K t)`. They pass `jacobiSol_second_deriv_bound`. Good.
+
+One important check: the `jacobiSol_pos_iff` forward direction handles `T ≤ 0`: they prove `π/√K > 0 ≥ T`, so `T < π/√K`. Good.
+
+Now, potential issue: in `hBt₀`, `have h2 : B * (1 / (2 * B)) = 1 / 2 := by field_simp`. `field_simp` needs `B ≠ 0`; it uses hBpos.ne' in context. Fine.
+
+Now let me check the audit module and the verify script. Also let me check the background build.
+
+Also — the task's acceptance statement mentions "the analytic normalization hypotheses of this round's rauch_upper_of_jacobi_constCurv". Let me verify that the hypothesis list matches. Let me read ConstantCurvatureRauch.lean around `rauch_upper_of_jacobi_constCurv`, `jacobi_le_constCurvModel`, `jacobiSolSphere_firstZero`.
+
+Let me check the build job first.
+dsh: reasoning:
+Let me read the relevant portions of ConstantCurvatureRauch.lean around those two theorems.
+dsh: reasoning:
+The dependency statements match exactly: `conjugate_point_bound` uses all the same hypotheses as `rauch_upper_of_jacobi_constCurv` except `hzero` removed and `hK : 0 ≤ K` strengthened to `0 < K`. That's exactly the acceptance.
+
+The build is still running. Meanwhile, let me read the verify script to understand its gates, and prepare a fresh independent audit script. Also let me check the reference copies and provenance.
+
+Let me also inspect the negcontrol file.
+dsh: reasoning:
+The verify script is comprehensive. Now let me check the build status and then run the verify script.
+
+While the build runs, let me think about what *fresh* independent verification I can add. The prior invocations did inv2, inv3, inv4 with:
+- inv2: clean rebuild, verify script, probe
+- inv3: same
+- inv4: clean rebuild, verify, independent audit script with new parser, independent probe with fresh witness k=3,K=3
+
+For inv5, I could:
+1. Clean rebuild (running).
+2. Run verify script.
+3. Write a fresh independent check: verify the statement lock type equals the headline type, verify no `sorryAx` anywhere in the olean via `#print axioms` on the *imported module* root declarations, check the *negation* of the theorem is not provable (e.g., show that the theorem applied to a counterexample would yield absurdity), check that the axioms list of the module's declarations can't be fooled.
+4. A genuinely new check: verify that the *elaborated* type of `conjugate_point_bound` is definitionally equal to an independently-written type, and check `conjugate_point_bound_strict` implies `conjugate_point_bound` (already proven). Also test an *independent numeric instance* with a different k, e.g. k = 3, which inv4 did. Maybe use a different solution: k = 5, K = 4 with explicit threshold. Or use `jacobiSol 4` with K=4: T ≤ π/4? Wait: jacobiSol K has first zero at π/√K. For K=4, π/2. Let's construct a witness with K = 4, k = 4, T = 3/2 < π/2, B = 4*max(1/2, 3/2)=6, t₀ = 1/12 gives B*t₀ = 1/2, model: (4*max(1/2,3/2))*1/12 = 4*(3/2)/12 = 6/12 = 1/2. Good. Then conclusion T ≤ π/√4 = π/2, i.e. 3/2 ≤ π/2. That's a fresh witness with different structure (K ≠ k, no... K = k = 4). Better: k = 5, K = 4, T = 3/2: needs `K ≤ k` pointwise ✓, model threshold same. Conclusion 3/2 ≤ π/2. And strict version 3/2 < π/2.
+
+Actually a more interesting independent check: a *falsification attempt* — try to construct a counterexample to show the theorem is not vacuously true. E.g., show that `jacobiSol 2 (π/√2) = 0` means the hypothesis `∀ t ∈ Ioc 0 T, 0 < u t` fails at T = π/√2, consistent with `jacobiSol_two_pos_iff`.
+
+Another genuinely new check: verify that the endpoints of the theorem really are used — check with a "mutation test": modify a copy of the theorem (e.g., drop `hBmodel`) and see the proof fails to compile. That's a good adversarial check that the proof isn't accidentally proving something trivial. But it costs compile time. Could be worth it: it demonstrates non-vacuity of the hypotheses. Actually the witness already shows non-vacuity (hypotheses satisfiable). A mutation test shows the hypotheses are needed. Hmm.
+
+A more valuable fresh check: verify `K > 0` is genuinely needed — e.g., the theorem with `K = 0` would be false (u = t on (0,T) any T). Actually, the statement with K = 0 would give T ≤ π/√0 = π/0 = 0 (in Lean, division by zero = 0), so T ≤ 0 contradiction with 0 < T. So the theorem at K = 0 would be false; the `hK : 0 < K` hypothesis is essential. This is a good falsification test: prove that if the conclusion of the acceptance statement held with `hK : 0 < K` replaced by `0 ≤ K`, then we'd get a contradiction. Actually simpler: verify that `conjugate_point_bound` with K=0 would imply `False` — but it's not provable; instead verify that a *modified* statement (with `0 ≤ K`) is refutable: `¬ (∀ {k u du ddu T B t₀ K}, ... 0 ≤ K → ... → T ≤ π/√K)` by instantiating with k=0, K=0, u t = t, T=1. That's a genuine independent check that the theorem isn't over-strong/vacuous in its hypotheses. Hmm but it requires proving the refutation, which needs care with the JacobiSolutionOn for u = t (ddu = 0). Could be some work but feasible.
+
+Actually, the strongest independent verification I can do within budget: 
+- Independently re-derive the endpoint-limit argument in a *fresh* Lean file that does NOT import `ConjugatePointEndpoint`, but instead proves the endpoint bound directly from `ConstantCurvatureRauch` (i.e., an independent proof in a new file). That's a genuinely independent reproduction, not just re-checking the artifact. It would also catch a hidden flaw in the original proof if the same approach works. But it's basically re-doing the proof, which is a strong acceptance test: if an independently written proof compiles from the same imports, that's a big confidence boost. Given the four-hour budget and that the proof is short (the endpoint limit is ~60 lines), I can write an independent version.
+
+Hmm, but there's a risk of wasting time. The task is already complete; my job is independent acceptance. A fresh independent proof from scratch is the strongest evidence. Let me do a moderately strong version: write `tmp/l4cp_independent_reproof.lean` that imports `ConstantCurvatureRauch` only, and proves the endpoint bound by a *different* route if possible — e.g., using `le_of_forall_lt` or `ciSup`? Actually a cleaner independent route: prove `T ≤ π/√K` by showing `∀ t < T, t < π/√K`... no wait. Hmm, we want T ≤ π/√K. Equivalently, if π/√K < T then contradiction. Suppose π/√K < T. Then u is positive at π/√K ∈ (0,T], and the model zero at π/√K gives a contradiction with the same comparison applied on (0, π/√K) — but jacobi_le_constCurvModel requires strict `√K*T'' < π` and positivity of u on (0,T''], which holds. Use T'' = (π/√K) (directly? we need strict T'' < π/√K; the comparison hypothesis is `∀ t ∈ Ioo 0 T'', u t ≤ jacobiSol K t`, and we need `u t ≤ jacobiSol K t` for t near π/√K from below). Ah — jacobi_le_constCurvModel itself needs the model zero hypothesis `√K T'' < π`. So we can't apply it at T''=π/√K. So we need the limit argument again. But we can do a *different* limit formulation: apply at T'' = π/√K - ε for ε>0 small... then take a limit. Essentially the same.
+
+Alternative independent route: monotonicity — `u/j_K` is antitone, so `u t / j_K t ≤ u s / j_K s` for s < t; as s→0, ratio →1. So `u t ≤ j_K t` for all t < π/√K by a direct limit that doesn't need `jacobi_le_constCurvModel`... that's the same content.
+
+I think the "independent reproof" route is valuable. Let me plan: write a fresh file importing only `Poincare.L4.GeodesicComparison.ConstantCurvatureRauch` and prove:
+
+```lean
+theorem indep_conjugate_point_bound {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}
+    (hT : 0 < T) ... : T ≤ Real.pi / Real.sqrt K
+```
+
+using `jacobi_le_constCurvModel` and a limit argument written independently (maybe using `Filter.Tendsto` and `le_of_tendsto_of_tendsto'` or using `closure`/`IsClosed` arguments). To be genuinely independent, I can use a different endpoint technique: show `∀ a < π/√K, a ≤ ...` hmm.
+
+Actually here's a genuinely different technique: use `le_of_forall_pos_le_add`? Or prove by contradiction using the *strict* comparison at a point: suppose T > π/√K. Then set x = π/√K. For each n, T'' = x - 1/(n+1). Apply comparison, get u t ≤ j_K t for t ∈ (0, T''). In particular at t = x - 1/(n+1): u(x - 1/n) ≤ j_K(x - 1/n). Take n → ∞ using `tendsto` of the sequence... This is a sequential limit rather than a filter limit. That's genuinely a different formalization path (using `Filter.Tendsto` along `atTop` with `Real.tendsto_one_div_add_atTop_nhds_zero_nat` etc.). It might be more painful.
+
+Simplest genuinely-different path: use `ContinuousOn` and the fact that `{t | u t ≤ jacobiSol K t}` ... hmm.
+
+Alternative: prove that `Ioo 0 x ⊆ {t | u t ≤ j_K t}` and use `closure`/`IsClosed.Icc_subset`? The set `{t | u t ≤ j_K t}` is closed (preimage of Iic under continuous map), and contains `Ioo 0 x`; hence contains `closure (Ioo 0 x) = Icc 0 x`, so `u x ≤ j_K x = 0`, contradicting positivity. That's a genuinely different technique: closure instead of filter limits. Nice and short:
+
+```lean
+have hclosed : IsClosed {t : ℝ | u t ≤ jacobiSol K t} := isClosed_le h.continuousOn_u.continuousOn?? 
+```
+
+Hmm, `u` is continuous on `Icc 0 T` but not globally. For the closure argument I need continuity at x, which is exactly the one-sided limit issue again. But I can use: `ContinuousOn u (Icc 0 T)` and the set `Icc 0 x`; use `IsClosed` relative to the subspace. Something like: `IsClosed ((Icc 0 x) ∩ {t | u t ≤ j_K t})` hmm.
+
+Honestly, the filter-limit approach in the original is the natural one. Since the four-hour budget is plenty, maybe the most valuable independent verification is:
+
+(a) Re-run all mechanical checks (hashes, build, verify script, axiom audit).
+(b) Write a fresh probe file that:
+   - re-elaborates the acceptance statement independently and checks defeq to the headline type;
+   - instantiates with a *new* witness (k=5, K=4, T=3/2, B=6, t₀=1/12) — new numbers;
+   - proves the *sharp* case failure: at T = π/√2 exactly for jacobiSol 2 the hypothesis `u > 0 on (0,T]` fails (already have);
+   - **falsification/mutation test**: prove that a variant of the statement with `0 ≤ K` instead of `0 < K` is *false* (by instantiating with K=0, k=0, u = id, T=1), demonstrating the hypotheses are not vacuous and the K>0 restriction is essential. This is a genuinely new, strong check that the theorem is not accidentally over-strong.
+   - Optionally: numerically instantiate at a very near-threshold case, e.g. T = 11/5 with K = 2 like inv2 did (T ≤ π/√2). Maybe use T = 22/10... Let me pick something new: for k=2, K=2, T = 20/9 ≈ 2.2222, and π/√2 ≈ 2.22144, so T=20/9 ≈ 2.2222 > π/√2 — that would be false! Careful: the witness needs T < π/√2 for positivity. We need `√2*T < π`, i.e., T < 2.22144. So pick T = 2.2 = 11/5 (as inv2). Fine. Or T = 22/10 = 11/5 same. To be new, use T = 155/70 = 31/14 ≈ 2.2142, still < 2.22144 and > 2. Need to prove √2 * 31/14 < π, i.e. 31√2/14 < π ⟺ 31√2 < 14π. Square: 1922 < 196π². π² > 9.86..., need proof. Simpler: use `Real.pi_gt_d4` (π > 3.14) as inv2 did: 14π > 14*3.14 = 43.96, and 31√2 ≤ 31*1.4143 = 43.84... need √2 < 1.4143: 2 < 1.4143² = 2.00024... yes. So 31√2 < 43.8433 < 43.96 < 14π. Feasible with nlinarith if we provide the squared bounds.
+
+Simplest new witness: k = 3, K = 3 was inv4. Let me do k = 5, K = 4? Then the theorem instance gives T ≤ π/√4 = π/2, with T = 3/2. For the witness, we need `u = jacobiSol 5`? No wait: `u` must satisfy the Jacobi equation with `k`. If we set k ≡ 5 and u = jacobiSol 5, ddu = -5*jacobiSol 5, then `hk : ∀ t ∈ Ioo 0 T, K ≤ k t` becomes 4 ≤ 5 ✓. Positivity of jacobiSol 5 on (0, 3/2]: √5 * 3/2 < π ⟺ 3√5 < 2π ⟺ 6.708 < 6.283? NO! √5 ≈ 2.236, *1.5 = 3.354 > π. So jacobiSol 5 is not positive on (0, 1.5]. Use K = 5, k = 5: jacobiSol 5 positive up to π/√5 ≈ 1.405. T = 4/3 ≈ 1.333: √5*4/3 ≈ 2.981 < π ✓. Then conclusion 4/3 ≤ π/√5. Model threshold: B = 5*max(1/√5, 4/3) = 5*(4/3) = 20/3; t₀ = 1/(2B) = 3/40; check (K*max(1/√K) T)*t₀ = (20/3)*(3/40) = 1/2 ✓. B*t₀ = 1/2 ✓. And `jacobiSol_second_deriv_bound` gives |ddu t| ≤ B = 5*max(1/√5, 4/3) = 20/3. Need max(1/√5, 4/3) = 4/3: 1/√5 ≤ 4/3 ⟺ 3 ≤ 4√5, true. So witness k=5,K=5,T=4/3 gives 4/3 ≤ π/√5, and strict 4/3 < π/√5. That's a fresh instance different from k=2 and k=3.
+
+Hmm, but for these witnesses I need to prove positivity of jacobiSol 5 on (0,4/3]: √5 * 4/3 < π. Need √5 < 3π/4 ≈ 2.356. √5 ≈ 2.236 < 2.356 ✓. Proof: √5 < 2.25 = 9/4 < 3π/4 since π > 3. `√5 < 9/4` ⟺ 5 < 81/16 = 5.0625 ✓ (nlinarith). And 9/4 < 3π/4 ⟺ 3 < π ✓ (Real.pi_gt_three). So √5 * 4/3 < (9/4)*(4/3) = 3 < π ✓. 
+
+And the acceptance statement requires, at K=5: threshold `(5 * max (1/√5) (4/3)) * (3/40) ≤ 1/2` ✓.
+
+Also the falsification test with K = 0: Let me think about whether I can easily prove `¬ (statement with 0 ≤ K)`. Statement S(hK : 0 ≤ K) : T ≤ π/√K. Instantiate: k ≡ 0, u = id (u t = t), du ≡ 1, ddu ≡ 0, T = 1, B = 0? We need `JacobiSolutionOn 0 id (fun _ => 1) (fun _ => 0) 0 1`, u 0 = 0 ✓, du 0 = 1 ✓, u > 0 on (0,1] ✓, and `|0| ≤ B` needs B ≥ 0; B = 1, t₀ with B t₀ ≤ 1/2, t₀ = 1/2, t₀ ≤ T ✓; model threshold: `(0 * max (1/√0) 1) * t₀ ≤ 1/2` ⟺ 0 ≤ 1/2 ✓ (0 * anything = 0). Then the conclusion of the K=0 variant would be `1 ≤ π/√0 = π/0 = 0` (in Lean `π / 0 = 0`), i.e. `1 ≤ 0`, false. So the K=0 variant is refutable by `norm_num`. This proves the theorem's `0 < K` hypothesis is essential — the non-strict `0 ≤ K` version is false. But hold on: is the "K=0 variant" exactly what we get by replacing `hK : 0 < K` with `0 ≤ K`? `rauch_upper_of_jacobi_constCurv` has `hK : 0 ≤ K` plus `hzero`. So the endpoint bound genuinely needs K > 0. This is a nice, genuinely new falsification check demonstrating that our statement isn't a trivial weakening and that the hypotheses are tight.
+
+However, writing this in Lean requires proving JacobiSolutionOn for u = id — a bit of work with HasDerivAt. Let me check what `JacobiSolutionOn` requires exactly. Let me read the D12 Definitions file.
+
+Actually, a simpler refutation of the "K=0 variant" might be: the K=0 variant with k ≡ 0 and u = id. Need:
+- hasDerivAt_u : ∀ t ∈ Ioo 0 T, HasDerivAt u (du t) t. u = id, du = 1: `hasDerivAt_id`.
+- hasDerivAt_du : HasDerivAt du (ddu t) t. du ≡ 1, ddu ≡ 0: `hasDerivAt_const`.
+- eq_secondDeriv : ddu t = -k t * u t. 0 = -0 * t ✓.
+- continuousOn_u : ContinuousOn id (Icc 0 1) ✓
+- continuousOn_du : ContinuousOn (fun _ => 1) ✓
+
+That's easy. Then the "modified theorem" can be written as a hypothesis: `(h : ∀ {k u du ddu T B t₀ K}, ... 0 ≤ K → ... → T ≤ π/√K)` and derive False. Or more simply, write a lemma `not_endpoint_bound_nonneg_K : ¬ (statement with 0 ≤ K)`. Writing the full statement twice is verbose but can be done via a `have` with explicit binders. Alternatively: prove `¬ (∀ {T B t₀ K : ℝ}, 0 ≤ K → (K * max (1/Real.sqrt K) T) * t₀ ≤ 1/2 → T ≤ Real.pi / Real.sqrt K)` — a much smaller statement that captures the failure mode: take K=0, T=1, t₀=1/2, B=... hmm, but B enters via `B t₀ ≤ 1/2`. The minimal false consequence: with K=0, T=1: `(0 * max ... ) * t₀ ≤ 1/2 → 1 ≤ π/√0`. Taking t₀ = 1: 0 ≤ 1/2 true, and π/√0 = π/0 = 0, so 1 ≤ 0 false. So `¬ (∀ {T t₀ K}, 0 ≤ K → 0 < t₀ → K * max (1/√K) T * t₀ ≤ 1/2 → T ≤ π/√K)` is provable by instantiating K=0, T=1, t₀=1. This isolates exactly why `0 < K` is needed: the model normalization bound degenerates at K=0 (it's `0 ≤ 1/2`, vacuous). That's clean and quick to write. And it directly demonstrates that the acceptance theorem's `0 < K` hypothesis is not removable — i.e., the acceptance statement is sharp in that respect.
+
+Actually, careful: is this "not removable" claim really meaningful? The K=0 case is covered by `hzero : K = 0 ∨ ...` in the imported theorem, and there the comparison is with `jacobiSol 0 = id` (Euclidean), which never vanishes, so no conjugate point bound is expected. Yes, it's meaningful: the endpoint bound genuinely needs positive curvature. Good.
+
+Let me also consider a mutation test on the proof: e.g., check that removing `hBmodel` (or weakening `hpos` to `(0,T)`) makes the statement false. `hpos` on `(0,T)` instead of `(0,T]`: with u = jacobiSol 2, T = π/√2, u > 0 on (0,T) but zero at T; then conclusion T ≤ π/√2 still holds (equality) — so that's not a refutation. Hmm. What about `K > 0` needed ✓ (above). The `hBmodel` threshold: needed for the singular Riccati engine, presumably essential. Not easy to refute quickly.
+
+OK. Let me also plan a "closure" style independent reproof? Given budget, I think a fresh probe with:
+1. Independent re-elaboration of the acceptance sentence (definitional equality check against the headline type).
+2. New witness k=5,K=5,T=4/3.
+3. Sharpness at K=5: jacobiSol 5 (π/√5) = 0.
+4. Refutation of the `0 ≤ K` variant.
+5. Axiom cones of all new declarations.
+6. Verify `conjugate_point_bound` applied to the leader's reference statement? No, skip.
+
+Also: check that `endpoint_bound_acceptance_lock`'s type is *defeq* to `conjugate_point_bound`'s type — via `example : (type of lock) = (type of theorem) := rfl` or by `#check` with ascription.
+
+Additionally, I want to do an independent hash/provenance check against the canonical origins (the verify script does it, but I'll do an independent shell-level pass with `cmp`) — cheap.
+
+Let me check build status now.
+dsh: reasoning:
+Clean rebuild exit 0. Now run the verify script (which does its own build + axiom run + negative controls).
+
+Let me also check the D12 Definitions file for JacobiSolutionOn to write the probe.
+dsh: reasoning:
+`HasDerivAtR` — the reference mentioned it's definitionally equal to `HasDerivAt`. Good.
+
+Now let me write the fresh independent probe file. I'll write it in `tmp/l4cp_probe_inv5.lean`.
+
+Content plan:
+
+```lean
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+
+noncomputable section
+open Set Filter
+open scoped Topology
+namespace Poincare.L4.GeodesicComparison
+
+open Poincare.D12.ComparisonGeodesics Poincare.D10
+
+/- 1. Statement fidelity: the lock's type is definitionally the headline type -/
+example : (∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}, ... → T ≤ Real.pi / Real.sqrt K) = ... := rfl
+```
+
+Hmm, comparing types for equality with `rfl` requires writing the type twice. Alternative: use `#check` with an explicit ascription, e.g.
+
+```lean
+example :
+    (∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ},
+      (0:T) < T → ... → T ≤ Real.pi / Real.sqrt K) :=
+  fun ... => conjugate_point_bound ...  -- partial application
+```
+
+Actually simplest defeq check:
+
+```lean
+-- the headline theorem's type, written out independently
+def HeadlineType : Prop := ∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}, ... 
+
+example : HeadlineType := conjugate_point_bound  -- elaboration by defeq
+```
+
+Hmm, `conjugate_point_bound` is a theorem (proof), not a definition; `example : HeadlineType := conjugate_point_bound` works if HeadlineType unfolds to exactly the theorem's type (defeq). And for the lock: `example : HeadlineType := endpoint_bound_acceptance_lock`. Also to check that the *conclusion direction* is right (not, say, `≥`), the ascription forces exact match. That's a strong independent statement-fidelity check without reusing the lock's own type.
+
+Also check that the lock type equals the theorem type by `example : (endpoint_bound_acceptance_lock's type) = ... ` — simpler: define `LockType` as the lock's type? Can't easily. But: `example : HeadlineType := endpoint_bound_acceptance_lock` and `example : HeadlineType := conjugate_point_bound` together show both have a type defeq to HeadlineType (Prop-valued function types are defeq-checked up to unfolding of definitions — but `HeadlineType` is a def, so `example : HeadlineType := ...` requires `inferType` of the theorem to be defeq to `HeadlineType` after unfolding; fine).
+
+2. New witness k=5, K=5, T=4/3, B=20/3, t₀=3/40:
+
+```lean
+theorem witness_k5_K5 : (4/3 : ℝ) ≤ Real.pi / Real.sqrt 5 := by
+  have hmain := conjugate_point_bound (T := 4/3) (B := 20/3) (t₀ := 3/40) (K := 5)
+    (k := fun _ => 5) (u := jacobiSol 5) (du := jacobiDeriv 5)
+    (ddu := fun t => -(5 * jacobiSol 5 t))
+    (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by norm_num)
+    (jacobiSol_jacobiSolutionOn 5 (4/3))
+    (((continuous_const.mul (continuous_jacobiSol 5)).neg).continuousOn)
+    (fun t ht => by
+       -- |ddu t| ≤ 20/3 from jacobiSol_second_deriv_bound with max (1/√5) (4/3) = 4/3
+       have hb := jacobiSol_second_deriv_bound (K := 5) (T := 4/3) (by norm_num) t ht
+       have hmax : max (1 / Real.sqrt 5) (4/3 : ℝ) = 4/3 := by
+         rw [max_eq_right]
+         rw [div_le_iff₀ (Real.sqrt_pos_of_pos (by norm_num : (0:ℝ) < 5))]
+         nlinarith [Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 5), Real.sqrt_nonneg 5]
+       rw [hmax] at hb
+       -- hb : |-(5 * jacobiSol 5 t)| ≤ 5 * (4/3) = 20/3
+       linarith)
+    (jacobiSol_zero 5) (jacobiDeriv_zero 5)
+    (fun t ht => ...)   -- positivity
+    (by norm_num) (fun _ _ => by norm_num)
+    (by norm_num)  -- threshold (5 * max (1/√5) (4/3)) * (3/40) ≤ 1/2
+```
+
+Positivity: need `∀ t ∈ Ioc 0 (4/3), 0 < jacobiSol 5 t`. Use `jacobiSol_pos_of_nonneg hK.le ht.1 (Or.inr ?_)` with `√5 * t < π`. Since t ≤ 4/3 and √5 < 9/4, `√5*t ≤ (9/4)(4/3) = 3 < π`.
+
+```lean
+    (fun t ht => by
+      refine jacobiSol_pos_of_nonneg (K := 5) (by norm_num) ht.1 (Or.inr ?_)
+      have h5 : Real.sqrt 5 < 9/4 := by
+        nlinarith [Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 5), Real.sqrt_nonneg 5]
+      calc Real.sqrt 5 * t ≤ Real.sqrt 5 * (4/3) := mul_le_mul_of_nonneg_left ht.2 (Real.sqrt_nonneg 5)
+        _ < (9/4) * (4/3) := by nlinarith
+        _ = 3 := by norm_num
+        _ < Real.pi := Real.pi_gt_three
+```
+
+Threshold: `(5 * max (1/√5) (4/3)) * (3/40) ≤ 1/2`. With hmax: 5*(4/3) = 20/3; 20/3 * 3/40 = 1/2 ✓. `by rw [hmax]; norm_num` — but hmax is defined inline in the hB argument. Better to define `have hmax5 : max (1/Real.sqrt 5) (4/3:ℝ) = 4/3 := ...` at the top of the theorem and reuse.
+
+3. Sharpness at K=5: `jacobiSol 5 (Real.pi / Real.sqrt 5) = 0` and `¬ 0 < jacobiSol 5 (π/√5)`. Also `jacobiSol_pos_iff` at K=5 specialized.
+
+4. Refutation of the `0 ≤ K` variant:
+```lean
+theorem not_endpoint_bound_nonneg_K :
+    ¬ (∀ {T t₀ K : ℝ}, 0 ≤ K → 0 < t₀ → (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1/2 →
+        T ≤ Real.pi / Real.sqrt K) := by
+  intro h
+  have hbad := h (T := 1) (t₀ := 1) (K := 0) (by norm_num) (by norm_num) (by norm_num)
+  -- hbad : (1:ℝ) ≤ Real.pi / Real.sqrt 0
+  rw [Real.sqrt_zero, div_zero] at hbad   -- π / 0 = 0
+  norm_num at hbad
+```
+Wait: `Real.pi / 0 = 0` by `div_zero`. `Real.sqrt_zero : Real.sqrt 0 = 0`. Then `hbad : 1 ≤ 0`, `norm_num at hbad` closes. Let me double check the threshold at K=0: `(0 * max (1/√0) 1) * 1 ≤ 1/2` → `0 * ... = 0`? `max (1/0) 1 = max 0 1 = 1`; `0 * 1 * 1 = 0 ≤ 1/2` ✓. `norm_num` should handle `Real.sqrt 0`? Not automatically; use `rw [Real.sqrt_zero]` then `norm_num`. Actually `1/Real.sqrt 0 = 1/0 = 0`, so max 0 1 = 1; `0*1*1 = 0`; `(0:ℝ) ≤ 1/2` ✓. With `norm_num` and simp lemmas for sqrt_zero... let me write `simp [Real.sqrt_zero]` or `norm_num [Real.sqrt_zero]`.
+
+This theorem is a genuinely new *falsification* check: it shows the honest-strengthening direction (K>0) is essential, i.e., the acceptance statement is not weaker than it should be and the `0 < K` hypothesis is not removable.
+
+Hmm — one concern: is this "refutation" a fair check? The task acceptance says "k >= K > 0", so K>0 is in the acceptance. The refutation shows that dropping it makes it false, i.e. our statement is not a vacuous special case of something weaker. It's a non-vacuity/necessity check on the hypothesis. Good.
+
+5. An additional check: verify that the theorem's conclusion is *not* trivially true for all T, by showing that the theorem's hypotheses *fail* at T = π/√2 for jacobiSol 2 — i.e., derive from `jacobiSol_pos_iff` that positivity at the endpoint fails. Already have `jacobiSol_two_not_pos_at_firstZero`. Fresh check: show that no T > π/√2 works, i.e. `¬ (∀ t ∈ Ioc 0 (π/√2 + 1), 0 < jacobiSol 2 t)` — that follows from `jacobiSol_two_pos_iff`. This shows the threshold is attained in the strong sense that beyond it positivity fails. It also shows the bound `T ≤ π/√K` is sharp in the sense that no larger bound holds for the model. Let me add:
+
+```lean
+theorem jacobiSol_two_pos_fails_beyond : ¬ (∀ t ∈ Ioc 0 (Real.pi / Real.sqrt 2 + 1), 0 < jacobiSol 2 t) := by
+  intro h
+  have hlt : Real.pi / Real.sqrt 2 + 1 < Real.pi / Real.sqrt 2 := (jacobiSol_two_pos_iff _).mp h
+  linarith
+```
+
+6. Also verify a numerical *near-threshold* instance: T = 11/5 (2.2) with k=2, K=2 giving 11/5 ≤ π/√2. Needs hpos: √2 * 11/5 < π ⟺ 11√2 < 5π. With π > 3.14 and √2 < 1.415: 11*1.415 = 15.565, 5*3.14 = 15.7. So need √2 < 1415/1000 = 283/200: 2 < 283²/200² = 80089/40000 = 2.002225 ✓. And 11 * 283/200 = 3123/200 = 15.615 < 15.7 = 157/10 ✓ since π > 314/100 = 157/50 → 5π > 157/10. Let me use `Real.pi_gt_d4 : 3.14 < π`? Let me check the name in mathlib: `Real.pi_gt_d4 : 3.14 < π` I believe exists (added as a norm_num-friendly lemma). inv2 used `Real.pi_gt_d4` per the checkpoint. Good. Then: `√2 < 283/200` by nlinarith [sq_sqrt]; `11 * √2 < 11 * 283/200 = 3123/200`; `5π > 5 * 3.14 = 15.7 = 3140/200 > 3123/200`. So `11√2 < 5π`, then `√2 * 11/5 < π` by linarith/nlinarith.
+
+This near-threshold instance demonstrates the theorem is not just numerically weak: T = 11/5 is within 0.001 of the threshold 2.22144. Good. But inv2/inv3 already did this. It's fine to repeat as a fresh check (I'm writing it independently). Maybe I'll do the fresh k=5 witness and a near-threshold K=5 instance instead: for K=5, threshold π/√5 ≈ 1.40496. Near-threshold T = 7/5 = 1.4 (within 0.005). √5 * 7/5 = 7/√5 ≈ 3.1305 < π. Proof: √5 * 7/5 < π ⟺ 7√5 < 5π. √5 < 2.24 (since 5 < 5.0176), so 7√5 < 15.68 < 15.7 = 5*3.14 < 5π ✓. Great — a fresh near-threshold instance: T = 7/5, K = 5, k = 5.
+
+Let me construct it:
+- hpos: ∀ t ∈ Ioc 0 (7/5), 0 < jacobiSol 5 t: √5 * t ≤ √5 * 7/5 < (2.24)*(1.4) = 3.136 < π. Need √5 < 2.24 = 56/25: 5 < 3136/625 = 5.0176 ✓.
+  7/5 * 56/25 = 392/125 = 3.136. And π > 3.14 = 157/50 = 392.5/125. So 3.136 < 3.14 < π ✓.
+- B = 5 * max (1/√5) (7/5) = 5 * 7/5 = 7 (since 1/√5 < 1 < 7/5). t₀ with B*t₀ ≤ 1/2 and threshold (5*7/5)*t₀ = 7 t₀ ≤ 1/2: t₀ = 1/14: B*t₀ = 7/14 = 1/2 ✓, threshold 7/14 = 1/2 ✓.
+- Conclusion: 7/5 ≤ π/√5.
+
+That's a nice new witness near the threshold. It requires hmax : max (1/√5) (7/5) = 7/5: 1/√5 ≤ 7/5 ⟺ 5 ≤ 7√5, true. nlinarith with sqrt bounds.
+
+Hmm, this is getting long. Maybe two witnesses is enough: (a) k=5, K=5, T=4/3 (mid-range) and (b) k=5, K=5, T=7/5 (near threshold). Both new. Actually (b) subsumes... no, T=7/5 > 4/3, so (b) is a stronger instance (larger T). Both are non-vacuous; (b) is near-threshold. Actually maybe just do (b) with the strict theorem `conjugate_point_bound_strict` giving `7/5 < π/√5`, which is the sharp version, plus the non-strict. Let me do (b) as the main new witness, and also apply the strict form.
+
+Hold on — for T = 7/5 and K = 5, is 7/5 ≤ π/√5 actually true? π/√5 = 3.14159/2.23607 = 1.40496. 7/5 = 1.4 ≤ 1.40496 ✓. Good.
+
+And near-threshold strict: 7/5 < 1.40496 ✓.
+
+For a *fail* check: T = 1.42 > 1.40496 should violate positivity: √5 * 1.42 = 3.175 > π. So `¬ (∀ t ∈ Ioc 0 (71/50), 0 < jacobiSol 5 t)`. Proof via `jacobiSol_pos_iff` (K=5): the pos condition is equivalent to `71/50 < π/√5`, so it suffices to prove `¬ (71/50 < π/√5)`, i.e. `π/√5 ≤ 71/50`, i.e. `50π ≤ 71√5`. Numerically 157.0796 ≤ 158.77 ✓. Proof: 50π ≤ 50*3.15 = 157.5 (need π ≤ 3.15: `Real.pi_lt_d4`? there's `Real.pi_lt_315`? Hmm. mathlib has `Real.pi_lt_d6 : π < 3.15`? Let me check available names: `Real.pi_gt_d4 : 3.14 < π`, `Real.pi_lt_d4 : π < 3.15`? Actually I recall `Real.pi_lt_315 : π < 3.15` or `Real.pi_lt_d6`. Not sure. Simpler: avoid this direction; not needed.
+
+Alternatively prove non-positivity beyond the threshold abstractly via `jacobiSol_pos_iff` without numerics:
+
+```lean
+theorem jacobiSol_five_pos_fails_beyond :
+    ¬ (∀ t ∈ Ioc 0 (Real.pi / Real.sqrt 5 + 1), 0 < jacobiSol 5 t) := by
+  intro h
+  have := (jacobiSol_pos_iff (K := 5) (T := Real.pi / Real.sqrt 5 + 1) (by norm_num)).mp h
+  linarith
+```
+
+That shows that for the K=5 model, positivity fails for any T beyond π/√5 — sharpness of the bound as a *bound* (not just the threshold).
+
+Let me now also double check: is `jacobiSol_pos_iff` itself relying on `conjugate_point_bound`, which relies on the endpoint limit? Yes, so it's a self-consistency check; fine.
+
+7. Also, importantly: an independent check that the theorem is not circular / that the endpoint limit is genuinely formalized. How? The proof term inspection: `#print conjugate_point_bound_strict` shows the proof term. If it contained `sorryAx`, the axiom audit would catch it. The `#print axioms` check already proves no sorryAx. Circularity would mean using the conclusion as a hypothesis; not detectable mechanically, but the proof term review shows it's the standard by_contra + limit argument. I'll inspect `#print` output for the key lemmas used.
+
+Also I can do a mechanical check: search the proof term for uses of `conjugate_point_bound` inside `conjugate_point_bound_strict` — the strict theorem is the base, and the non-strict derives from it. Let me check `#print conjugate_point_bound_strict` output contains `jacobi_le_constCurvModel` and `jacobiSolSphere_firstZero` but not `conjugate_point_bound`. That's a good non-circularity check.
+
+Let me write the probe file now. Note it must be compiled with `lake env lean` from the release dir, and imports the olean. The probe file lives in tmp/, but can be run with path `../tmp/l4cp_probe_inv5.lean` from release (like the negcontrol). Since it imports `Poincare.L4...`, running from release dir with LEAN_PATH set via lake env should work.
+
+Let me check how it's done: `run(["lake", "env", "lean", "../negcontrol/EndpointNegativeControl.lean"], cwd=RELEASE, ...)`. So same approach.
+
+For `#print axioms` on new probe declarations, I'll put them in a namespace and query.
+
+Let me now write the probe. Careful with Lean syntax and available lemmas.
+
+Key pieces:
+
+```lean
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+
+noncomputable section
+
+open Set Filter
+open scoped Topology
+
+namespace Poincare.L4.GeodesicComparison
+
+open Poincare.D12.ComparisonGeodesics Poincare.D10
+
+/-- The acceptance sentence written out independently of both the implementation file and the
+statement-lock file. -/
+def inv5_HeadlineType : Prop :=
+  ∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ},
+    0 < T → 0 ≤ B → 0 < t₀ → t₀ ≤ T → B * t₀ ≤ 1 / 2 →
+    JacobiSolutionOn k u du ddu 0 T → ContinuousOn ddu (Icc 0 T) →
+    (∀ t ∈ Ioo 0 T, |ddu t| ≤ B) → u 0 = 0 → du 0 = 1 →
+    (∀ t ∈ Ioc 0 T, 0 < u t) → 0 < K → (∀ t ∈ Ioo 0 T, K ≤ k t) →
+    (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1 / 2 → T ≤ Real.pi / Real.sqrt K
+```
+
+Then:
+```lean
+example : inv5_HeadlineType := conjugate_point_bound
+example : inv5_HeadlineType := endpoint_bound_acceptance_lock
+```
+
+Wait: `conjugate_point_bound` has implicit binders `{k u du ddu T B t₀ K}` — matching. The `HeadlineType` has the same implicit binders. So `example : inv5_HeadlineType := conjugate_point_bound` should typecheck by defeq unfolding of `inv5_HeadlineType`. Note: `def` is reducible for defeq, yes.
+
+Hmm, but the theorem's implicit arguments are `{k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}` with the order `T B t₀ K`? From the #check in the result card: `{k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}`. Yes.
+
+Also, the type of `conjugate_point_bound` in Lean includes auto-bound implicit universe? No.
+
+Now, the near-threshold witness at K=5:
+
+```lean
+theorem inv5_witness_k5_near_threshold : (7 / 5 : ℝ) ≤ Real.pi / Real.sqrt 5 := by
+  have hsqrt5pos : 0 < Real.sqrt 5 := Real.sqrt_pos_of_pos (by norm_num)
+  have hmax : max (1 / Real.sqrt 5) (7 / 5 : ℝ) = 7 / 5 := by
+    rw [max_eq_right]
+    rw [div_le_iff₀ hsqrt5pos]
+    nlinarith [Real.sq_sqrt (by norm_num : (0 : ℝ) ≤ 5), Real.sqrt_nonneg 5]
+  have hmain := conjugate_point_bound (T := 7 / 5) (B := 7) (t₀ := 1 / 14) (K := 5)
+    (k := fun _ : ℝ => 5) (u := jacobiSol 5) (du := jacobiDeriv 5)
+    (ddu := fun t => -(5 * jacobiSol 5 t))
+    (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by norm_num)
+    (jacobiSol_jacobiSolutionOn 5 (7 / 5))
+    (((continuous_const.mul (continuous_jacobiSol 5)).neg).continuousOn)
+    (fun t ht => by
+      have hb := jacobiSol_second_deriv_bound (K := 5) (T := 7 / 5) (by norm_num) t ht
+      rw [hmax] at hb
+      norm_num at hb ⊢
+      exact hb)
+    (jacobiSol_zero 5) (jacobiDeriv_zero 5)
+    (fun t ht => by
+      refine jacobiSol_pos_of_nonneg (K := 5) (by norm_num) ht.1 (Or.inr ?_)
+      have h5 : Real.sqrt 5 < 56 / 25 := by
+        nlinarith [Real.sq_sqrt (by norm_num : (0 : ℝ) ≤ 5), Real.sqrt_nonneg 5]
+      calc Real.sqrt 5 * t ≤ Real.sqrt 5 * (7 / 5) :=
+            mul_le_mul_of_nonneg_left ht.2 (Real.sqrt_nonneg 5)
+        _ < (56 / 25) * (7 / 5) := by nlinarith
+        _ = 392 / 125 := by norm_num
+        _ < Real.pi := by nlinarith [Real.pi_gt_d4])
+    (by norm_num) (fun _ _ => by norm_num)
+    (by rw [hmax]; norm_num)
+  exact hmain
+```
+
+Careful with `(by norm_num)` for `B * t₀ ≤ 1/2` → `7 * (1/14) = 1/2` ✓; `t₀ ≤ T` → 1/14 ≤ 7/5 ✓; `0 ≤ B` = 0 ≤ 7 ✓.
+
+`hB`: after `rw [hmax] at hb`, `hb : |(-(5 * jacobiSol 5 t))| ≤ 5 * (7/5)`. The goal is `|(-(5 * jacobiSol 5 t))| ≤ 7`. `norm_num at hb` turns `5 * (7/5)` into 7. Then exact hb. But careful: `norm_num at hb ⊢` may mangle `jacobiSol 5 t`? It shouldn't (opaque function application). Actually `norm_num at hb` on `|...| ≤ 5 * (7/5)` should simplify the RHS to 7. Then `exact hb`. Let me just use `linarith [hb]` after `rw [hmax] at hb` — `5*(7/5) = 7` needs ring normalization; linarith handles numerals. I'll use `linarith [hb]`.
+
+`Real.pi_gt_d4`: need to confirm the exact name. Let me grep mathlib. Actually, easier: use `Real.pi_gt_three` and compare 392/125 = 3.136 > 3, but that's the wrong direction! We need 392/125 < π, and π > 3 only gives π > 3 < 3.136, insufficient. So we need π > 3.14 = `Real.pi_gt_d4`. Let me check the name exists in this mathlib version by grepping. I'll do that.
+
+Alternative without π > 3.14: use rational bounds around √5: need √5 * 7/5 < π, i.e. 7√5 < 5π. Using √5 < 9/4 (2.25): 7*9/4 = 63/4 = 15.75 > 15.7... insufficient with π > 3.14 (5π > 15.7). Need √5 < 157/70 = 2.2428: 5 < 24649/4900 = 5.0304 ✓ and 7*157/70 = 157/10 = 15.7 — but strictness: 7√5 < 157/10 needs √5 < 157/70 ✓ strict, and 5π > 157/10 = 15.7 from π > 3.14 ✓. So 7√5 < 15.7 < 5π. With `Real.pi_gt_d4 : (3.14:ℝ) < π` and `√5 < 157/70`, we get it. Or simply use `Real.pi_gt_d4`. Let me check the lemma name.
+
+Also for the statement lock `example : inv5_HeadlineType := endpoint_bound_acceptance_lock` — the lock is in the audit module, which the probe imports transitively (ConjugatePointEndpoint doesn't import the audit). So I need to import `Poincare.L4.GeodesicComparison.ConjugatePointAxiomAudit` in the probe to see the lock. But importing the audit module adds the `#print axioms` output to the probe log — that's noisy but fine, or I can filter. Actually it's fine; I'll grep the probe log. Alternatively, do statement fidelity only for `conjugate_point_bound`, and check the lock separately via a small file that imports the audit module. Let me import both — the log will have the audit output first, which is fine.
+
+Hmm — actually for the probe I'd like the `#print axioms` of my new declarations only; importing the audit module will produce its 27 lines too. Not a problem.
+
+Now the refutation:
+
+```lean
+theorem inv5_K_zero_variant_false :
+    ¬ (∀ {T t₀ K : ℝ}, 0 ≤ K → 0 < t₀ →
+        (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1 / 2 → T ≤ Real.pi / Real.sqrt K) := by
+  intro h
+  have hbad := h (T := 1) (t₀ := 1) (K := 0) (by norm_num) (by norm_num) (by norm_num)
+  rw [Real.sqrt_zero, div_zero] at hbad
+  norm_num at hbad
+```
+
+Check `div_zero : a / 0 = 0` exists in Lean core (`div_zero`). Yes: `div_zero : a / 0 = 0` for division by zero in a `DivisionByZero`... In Lean4/mathlib, `div_zero` is a theorem. `Real.pi / 0` with `Real.sqrt 0` — `rw [Real.sqrt_zero]` gives `Real.pi / 0`, then `rw [div_zero]` gives 0, or a single `rw [Real.sqrt_zero, div_zero]`. Then `hbad : 1 ≤ 0`, and `norm_num at hbad` closes the goal since hbad is False. Actually `norm_num at hbad` should derive False and close. Or `linarith`. Let's use `norm_num at hbad`.
+
+But wait — the threshold hypothesis at K=0: `(0 * max (1/√0) 1) * 1 ≤ 1/2`. `1/√0 = 1/0 = 0`, `max 0 1 = 1`, `0*1*1 = 0 ≤ 1/2` ✓. Will `norm_num` prove it? It needs `Real.sqrt 0 = 0` and `1/0 = 0` and `max 0 1 = 1`. `norm_num` might not know `Real.sqrt_zero`. Add `simp [Real.sqrt_zero]` or provide: `(by norm_num [Real.sqrt_zero])`. Let me write `(by rw [Real.sqrt_zero]; norm_num)`. Hmm, `max (1/(0:ℝ)) 1` — `1/0 = 0` by `div_zero`; `max 0 1 = 1` by `max_eq_right zero_le_one`... `norm_num` should do max computations? `norm_num` can evaluate `max` on numerals: `max (0:ℝ) 1 = 1` — I think `norm_num` handles `max`/`min` via `Mathlib.Tactic.NormNum`. To be safe: `(by simp [Real.sqrt_zero])`. `simp` knows `div_zero`, `max_eq_right`, `zero_mul`, `zero_le_one`... `(0 * max ... ) * 1 ≤ 1/2` → simp: `0 * x = 0`, `0 * 1 = 0`, `0 ≤ 1/2` needs norm_num. So `(by norm_num [Real.sqrt_zero])` or `(by simp [Real.sqrt_zero])` might leave `0 ≤ 1/2`; `norm_num` closes. I'll use `by norm_num [Real.sqrt_zero]` and if it fails, adjust.
+
+And the extra sharpness checks:
+
+```lean
+theorem inv5_jacobiSol_five_firstZero : jacobiSol 5 (Real.pi / Real.sqrt 5) = 0 := by
+  rw [jacobiSol_of_pos (by norm_num : (0:ℝ) < 5), jacobiSolSphere_firstZero (by norm_num : (0:ℝ) < 5)]
+
+theorem inv5_jacobiSol_five_pos_fails_beyond :
+    ¬ (∀ t ∈ Ioc 0 (Real.pi / Real.sqrt 5 + 1), 0 < jacobiSol 5 t) := by
+  intro h
+  have := (jacobiSol_pos_iff (K := 5) (T := Real.pi / Real.sqrt 5 + 1) (by norm_num)).mp h
+  linarith
+```
+
+And the strict witness:
+```lean
+theorem inv5_witness_k5_strict : (7/5 : ℝ) < Real.pi / Real.sqrt 5 := ... (same but conjugate_point_bound_strict)
+```
+To avoid duplicating all the hypothesis discharges, I can define a helper theorem that packages the hypotheses and then derive both. Or just derive strict from non-strict + ne. Simpler: derive strict from non-strict plus `7/5 ≠ π/√5` (which follows from `jacobiSol 5 (7/5) > 0` and `jacobiSol 5 (π/√5) = 0`). Actually simplest: write the big witness once using `conjugate_point_bound_strict` and derive the non-strict by `le_of_lt`. Then the witness to the acceptance theorem itself... hmm, the acceptance form is non-strict. I could write the strict instance (which is the stronger deliverable) and then note `conjugate_point_bound` follows. But for a check on the non-strict headline, the lock example already covers the type. The witnesses k=2/K=1, k=2/K=2, k=3/K=3 exist in the artifact. My fresh witness can use the strict form to demonstrate the stronger statement at new numbers. That's fine and new.
+
+Actually, let me do both via one helper: define the hypothesis package as a `have` isn't possible across theorems. I'll write the strict one (with all hypothesis discharges), then:
+
+```lean
+theorem inv5_witness_k5_near_threshold : (7/5 : ℝ) ≤ Real.pi / Real.sqrt 5 :=
+  le_of_lt inv5_witness_k5_strict
+```
+
+Wait — but the strict theorem needs the same hypotheses; writing it via `conjugate_point_bound_strict` requires all discharges once. Then the non-strict follows. 
+
+But hmm, is T=7/5 with the strict theorem giving `7/5 < π/√5` genuinely checked? It's the same as the non-strict plus the fact. Fine.
+
+For a *non-strict* independent application at a *different* K (to exercise the acceptance form directly), I can add the k=2, K=1 instance? That's already in the artifact. Never mind; the lock example exercises the acceptance form.
+
+Also, an interesting check: instantiate the acceptance theorem at the *exact model equality* case to show the positivity hypothesis is what fails — already covered by sharpness.
+
+Another good independent check: verify the theorem *cannot* be applied with T > π/√K, e.g. show that the hypotheses at T = π/√5 + 1/10 with u = jacobiSol 5 are *inconsistent*: `¬ (0 < jacobiSol 5 t for all t ∈ Ioc 0 (π/√5 + 1/10))`. This follows from `jacobiSol_pos_iff`. I have the "+1" version; the "+1/10" version is sharper and still provable via `jacobiSol_pos_iff` + linarith. Let me use `Real.pi / Real.sqrt 5 + 1/10`.
+
+Now, additionally I want to check for hidden `sorryAx` in the olean more broadly: `#print axioms` of the *module's* top-level declarations covers the authored ones. The verify script covers all 14 authored + consumed.
+
+Let me also consider: the verify script's gate `forbidden_tokens_clean` scans only AUTHORED files (the two). Good.
+
+One more independent check to add: confirm the import closure. `lake env lean --deps`? There's `lake query` or the `.olean` trace. Prior inv4 checked "import closure contains no ConjugatePointBound/SturmZeroCount module". I can do a fresh check by scanning the source imports transitively: the file imports ConstantCurvatureRauch, which imports RauchBridge/DownstreamComparison... Let me just grep the import lines of the 11 modules to confirm none imports ConjugatePointBound. Cheap shell check.
+
+Let me now check mathlib lemma names (`Real.pi_gt_d4`, `div_zero`, `Ioo_mem_nhdsLT`) and then write the probe.
+
+Let me also check the verify job status.
+dsh: reasoning:
+Verify script: exit 0, all 11 gates true (from the head of the output; let me confirm the head shows provenance/forbidden/compile too). The tail was truncated to the last 40 lines. Let me check the full log quickly for the gate list.
+
+The import closure confirms no `ConjugatePointBound` import anywhere — the only L4 imports are the three GeodesicComparison deps. 
+
+Now, `Real.pi_gt_d4` — my grep of mathlib's Trigonometric/Basic.lean found nothing. Let me check the actual location: it might be in `Mathlib.Analysis.Real.Pi.Bounds`. Let me grep the whole mathlib.
+
+Also `Real.pi_gt_314`? In recent mathlib, the lemmas are `Real.pi_gt_d20`, `Real.pi_gt_d4`? Let me check.
+dsh: reasoning:
+`Real.pi_gt_d4 : 3.1415 < π`. So 5π > 15.7075 > 15.7. Good.
+
+For the near-threshold K=5, T=7/5: need 7√5 < 5π. 7√5 ≈ 15.6525. Using √5 < 157/70 ≈ 2.242857: 7*157/70 = 15.7. Strict: 7√5 < 15.7 < 15.7075 < 5π. So with `√5 < 157/70` and `Real.pi_gt_d4`, we get it: 5π > 5*3.1415 = 15.7075; 7√5 < 15.7. Both rational comparisons. nlinarith can handle if given `Real.pi_gt_d4` and `h5 : √5 < 157/70`.
+
+Let me now write the probe file. I'll include:
+
+1. `inv5_HeadlineType` + two defeq checks (implementation theorem, statement lock).
+2. `inv5_witness_k5_near_threshold_strict : 7/5 < π/√5` via `conjugate_point_bound_strict` with all hypotheses discharged.
+3. `inv5_witness_k5_near_threshold : 7/5 ≤ π/√5` via `le_of_lt`.
+4. `inv5_jacobiSol_five_firstZero`.
+5. `inv5_jacobiSol_five_pos_fails_beyond : ¬ (∀ t ∈ Ioc 0 (π/√5 + 1/10), 0 < jacobiSol 5 t)` — sharpness beyond the threshold.
+6. `inv5_K_zero_variant_false` — the `0 ≤ K` variant is refutable.
+7. `#print axioms` for each of the above, plus `#print axioms` for `conjugate_point_bound`, `conjugate_point_bound_strict` for a fresh parse.
+8. `#print conjugate_point_bound_strict` maybe too verbose; I'll do `#print` in a separate run and grep. Actually let me add `set_option pp.proofs false in #print conjugate_point_bound_strict`? Hmm, `#print` of a theorem prints its type and proof term. The prior invocation examined the proof term. I can do a separate run capturing the proof term and grep for `conjugate_point_bound` to check non-circularity. Let me include `#print Poincare.L4.GeodesicComparison.conjugate_point_bound_strict` in a separate file to avoid cluttering; or just run `lake env lean` with a here-doc? Lean needs a file. I can create `tmp/l4cp_print_inv5.lean`.
+
+Actually, simpler: use `#print axioms` for non-circularity is not enough, but inspecting the proof term with grep is a good check. Let me put `#print` in the same probe file but at the end; the parser for axiom cones uses regex on `depends on axioms:` lines so extra output is fine.
+
+Careful: `#print conjugate_point_bound_strict` output includes the full proof term which may reference `conjugate_point_bound`? No — strict is the base; it uses `jacobi_le_constCurvModel`, `basePoint_lt_firstZero`, etc. And `conjugate_point_bound` (non-strict) uses `conjugate_point_bound_strict`. The check: grep the proof term of strict for "conjugate_point_bound" — but careful, the *name* `conjugate_point_bound_strict` contains "conjugate_point_bound" as a substring. I'll grep for `conjugate_point_bound ` with word boundary not followed by `_strict`. Fine.
+
+Also let me check the strict proof term references `jacobiSolSphere_firstZero` — evidence the endpoint limit is real.
+
+Now let me write the file. Also note: the probe imports `ConjugatePointAxiomAudit` for the lock; this means the probe log will include the 27 audit outputs. That's okay but let me structure so axiom parsing still finds mine.
+
+One more consideration: `example : inv5_HeadlineType := conjugate_point_bound` — the implicit binder order in my `HeadlineType` must match exactly. Since Lean's `∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}, ...` elaborates to a Pi type with implicit binders; defeq between two Pi types requires the binder info and domains to match (binder *names* don't matter). Since I copy the exact order from the #check output, should be fine.
+
+Let me now write it.
+dsh: reasoning:
+Wait, there's an issue in the positivity calc: I need `√5 * t < π` derived from `√5 * t < (157/70)*(7/5) = 157/50` and `157/50 < 5π`. But I wrote `_ < 5 * Real.pi` — that's wrong! `√5 * t < 5π` is too weak; I need `√5 * t < π`. Let me redo.
+
+We want `√5 * t < π`. Given `√5 < 157/70` and `t ≤ 7/5`: `√5 * t < (157/70)*(7/5) = 157/50 = 3.14`. And `π > 3.1415 > 3.14`. So `√5 * t < 157/50 < π`.
+
+Fix the calc:
+```lean
+calc Real.sqrt 5 * t ≤ Real.sqrt 5 * (7/5) := ...
+  _ < (157/70) * (7/5) := by nlinarith [h5, ht.1]
+  _ = 157/50 := by norm_num
+  _ < Real.pi := by nlinarith [Real.pi_gt_d4]
+```
+`Real.pi_gt_d4 : 3.1415 < π` and `157/50 = 3.14`, so `nlinarith` works.
+
+Hmm, also `by nlinarith [h5, ht.1]` for `√5 * (7/5) < (157/70)*(7/5)`: since 7/5 > 0, from h5 we get it. nlinarith should manage with h5: √5 < 157/70. Actually the goal is `√5 * (7/5) < (157/70) * (7/5)`. nlinarith with h5 can multiply both sides. Should be fine but let me be safe: use `mul_lt_mul_of_pos_right h5 (by norm_num : (0:ℝ) < 7/5)`.
+
+Also `hmax` proof: `1/√5 ≤ 7/5 ⟺ 5 ≤ 7√5`. nlinarith with h5sq and hsqrt5nonneg: from `1/√5 ≤ 7/5`, multiply by 5√5 > 0: `5 ≤ 7√5`. Squaring: `25 ≤ 245` true. nlinarith may struggle with division; `rw [div_le_iff₀ hsqrt5pos]` turns goal into `1 ≤ (7/5) * √5` (after moving). Actually `div_le_iff₀ hsqrt5pos : 1 / √5 ≤ 7/5 ↔ 1 ≤ (7/5) * √5`. Then nlinarith [h5sq, hsqrt5nonneg] should prove `1 ≤ (7/5)*√5` from `√5*√5 = 5` and `√5 ≥ 0`: (7/5)*√5 ≥ (7/5)*2 = 2.8 > 1 since √5 ≥ 2 (√5 ≥ 2 from h5sq and nonneg: if √5 < 2 then √5*√5 < 4, contradiction). nlinarith should find it. OK.
+
+Wait, actually I also want to double check `jacobiSol_second_deriv_bound`'s statement — it gives `|ddu t| ≤ K * max (1/√K) T` for the *model* ddu = `-(K * jacobiSol K t)`. Yes, used the same way in the artifact.
+
+Also `linarith [hb]` after `rw [hmax] at hb`: hb: `|-(5 * jacobiSol 5 t)| ≤ 5 * (7/5)`, goal `|-(5 * jacobiSol 5 t)| ≤ 7`. `linarith` handles numerals and multiplication by constants; `5 * (7/5)` normalizes to 7. Should work. If not, `norm_num at hb; exact hb`.
+
+Also the `calc ... _ = 5 * Real.pi := rfl` line must be removed/replaced.
+
+Let me fix the file. Also `by norm_num [Real.sqrt_zero]` for the threshold at K=0: goal `(0 * max (1 / Real.sqrt 0) 1) * 1 ≤ 1/2`. `norm_num [Real.sqrt_zero]` should simplify: sqrt_zero → 0, 1/0 → 0 (div_zero is simp lemma), max 0 1 → 1, 0*1*1 → 0, `(0:ℝ) ≤ 1/2` ✓. Let's see.
+
+Let me apply the fix.
+dsh: reasoning:
+Probe compiled exit 0 with 8 axiom declarations. Let me extract the cones for my new declarations and verify they're exactly the allowed set.
+dsh: reasoning:
+The probe log lines 10-22 show wrapped multi-line cones. Let me view them fully to confirm each cone is exactly `{propext, Classical.choice, Quot.sound}`.
+
+Also interesting: the verify log `l4cp-verify-inv5-final.log` hash `fa62246b...` matches the inv3/inv4 final logs — byte identical, meaning deterministic. Good sign. The manifest hash differs from inv4's due to `generated_at` timestamp.
+
+Let me read the cone lines.
+dsh: reasoning:
+All 8 cones exactly `[propext, Classical.choice, Quot.sound]`.
+
+Now let me do the proof-term non-circularity check: print `conjugate_point_bound_strict` and check it doesn't reference `conjugate_point_bound` (as a premise), and that it references `jacobi_le_constCurvModel` and `jacobiSolSphere_firstZero`.
+
+I'll create a small file for `#print`.
+
+Also, I want to double-check an important potential subtlety in `conjugate_point_bound_strict`: the `hpos` is on `Ioc 0 T`, and the contradiction uses `hpos x ⟨hxpos, hxT⟩`. Since `x = π/√K` and `hxT : x ≤ T`, `hxpos : 0 < x` — so `x ∈ Ioc 0 T` ✓.
+
+And `jLe` (hfin): `le_of_tendsto_of_tendsto htend_u htend_j hev`. Note `hev` is `∀ᶠ t in 𝓝[<] x, u t ≤ jacobiSol K t`. `le_of_tendsto_of_tendsto` requires `Tendsto u (𝓝[<] x) (𝓝 (u x))` and `Tendsto j (𝓝[<] x) (𝓝 (j x))` — yes, that's what they have. ✓.
+
+One more check: `htend_j` uses `(continuous_jacobiSol K).continuousAt.tendsto` then `.mono_left nhdsWithin_le_nhds`. ✓.
+
+Let me also verify the *definitional* equality claim about `HasDerivAtR` — the prior review mentioned it. Not needed for my checks.
+
+Now the proof term print. Note `#print` output can be large. Let me write `tmp/l4cp_print_inv5.lean` with:
+```
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+set_option pp.all false
+#print Poincare.L4.GeodesicComparison.conjugate_point_bound_strict
+```
+Then grep for `jacobi_le_constCurvModel`, `jacobiSolSphere_firstZero`, and for a reference to `conjugate_point_bound` not followed by `_strict`.
+
+Actually, `#print` prints the type and the proof term (value). For a theorem proved by tactic, the value is the generated term. It should mention `jacobi_le_constCurvModel`, `JacobiSolutionOn.mono`, `basePoint_lt_firstZero`, `jacobiSolSphere_firstZero`, `ContinuousWithinAt.mono_of_mem_nhdsWithin`, `le_of_tendsto_of_tendsto`, `not_le.mpr`, `absurd`. Let me check.
+
+Also, I want to verify the *strict* theorem is not derived from the non-strict one — grep for `conjugate_point_bound` occurrences; they should all be part of `conjugate_point_bound_strict` or other names, but not the bare non-strict theorem used as a premise. The proof term of strict shouldn't mention `conjugate_point_bound` alone. Let me check via regex.
+
+Let me run both.
+dsh: reasoning:
+The proof term of `conjugate_point_bound_strict` uses the endpoint-limit ingredients (`ContinuousWithinAt.mono_of_mem_nhdsWithin`, `le_of_tendsto_of_tendsto`, `jacobiSolSphere_firstZero`, `jacobi_le_constCurvModel`) and does NOT use the non-strict theorem — so the endpoint bound is not circular and the strict form is the primitive proof.
+
+Now, remaining independent checks:
+1. Provenance: independently hash the 11 imported files against canonical origins (verify script did it, but let me do a shell-level independent check with `cmp`).
+2. Check the negcontrol file contents.
+3. Check the reference copies (leader's documents) for the honest overlap statement.
+4. Check the queue/checkpoint preservation requirement: "Preserve queue, checkpoints and provenance." Look at what queue files exist in the worktree (manifest/queue.updated.json etc. are from the D6 release). Ensure I don't modify them.
+
+Also: the model/quota note. "Model: use configured host model only; do not invoke until quota recovery is recorded." Let me check the quota scanning scripts to understand the environment. Perhaps there's a quota state file. Let me look at `/data3/guoshaoyang/workdir/lean_poincare/longrun/quota_scan.py` and any quota state. This matters because the task says not to invoke until quota recovery is recorded. I am the configured host model (deepseek-flash per the system prompt). Since the prior invocations recorded "model use: configured host model only", I'll do the same. But let me check whether there's a quota record that says recovery.
+
+Let me check for quota state files.
+dsh: reasoning:
+Provenance: 11/11 byte-identical to canonical origins. 
+
+Quota: there are quota pause scripts from 00:04-01:48. The task says "Model: use configured host model only; do not invoke until quota recovery is recorded." The prior invocations at 02:18-02:31 recorded "model use: configured host model only" — meaning no *external* model invocation (e.g., no `subagent`/API calls beyond the host). Since I'm running as the host model, and there is no separate invocation, I should not spawn subagents or call external models. I won't. The work is purely local compilation and shell/Python checks — no model invocation whatsoever. I'll record that explicitly.
+
+Let me check `queue.json` for the task state, and confirm the task's own state directory and whether there's a pause marker for this task. This matters for "preserve queue, checkpoints and provenance".
+
+Let me look at the state for L4-child-conjugate-point-bound.
+dsh: reasoning:
+There's a `PAUSED.resumed-...` marker, meaning the pause was resumed. The controller has resumed this task (invocations 2-5). The "do not invoke until quota recovery is recorded" refers to the controller's admission gating, which has evidently recorded resume (the marker `PAUSED.resumed-1789178261`). So I'm allowed to proceed as the configured host model. No external model invocation needed.
+
+Let me check the state checkpoint and last_run to make sure I preserve them properly, and to understand what the controller expects. Also `heartbeat.json` is updated by the harness presumably.
+
+Actually the local worktree's checkpoint.json is what I update. The controller's `state/L4-child-conjugate-point-bound/checkpoint.json` is separate (206 bytes, from 03:02). Let me read it — read-only, I shouldn't modify the controller's state (preserve queue).
+dsh: reasoning:
+Interesting: the controller's state checkpoint says "prepared_waiting_quota" and "resume only after host-side API/balance probe succeeds", and the PAUSED.resumed marker says "provider quota/rate-limit failure; resume from checkpoint after API probe". But `last_run.json` shows round 4 ended at 10:27:05 with exit code 0 — so the controller has been dispatching this task repeatedly (rounds 2,3,4 = my invocations 2,3,4). 
+
+The task instruction says: "Model: use configured host model only; do not invoke until quota recovery is recorded." This is a constraint on which model to use and when to invoke models. The fact that the controller dispatched this invocation (round 5) means admission has been granted. But "until quota recovery is recorded" — is there a recorded quota recovery? The PAUSED.resumed marker is not exactly a quota recovery record. Hmm.
+
+Let me look at the admission gating: `ADMISSION_PAUSED.lifted-1789178647` and `pause_admission.py`, `clear_gates.py`. Let me check the dispatcher state to see whether the controller considers quota recovered. This matters: if the controller is dispatching, then presumably it decided to resume. My job as the child is to do local verification work (compile, hash, audit) which does NOT require any API/model invocation. There's no "model invocation" involved in running lake/lean/python. The wording "do not invoke until quota recovery is recorded" most plausibly means: do not invoke *other models* (subagents / external API calls) until a quota recovery is recorded. Since I will not invoke any subagent or external model, I satisfy this constraint trivially.
+
+Let me check the dispatcher latest log to see the reason for this round — maybe it says "quota probe succeeded". Let me grep the latest.log tail of my task state, and the queue's concurrency settings.
+
+Actually, my own session's `latest.log` is the controller's log for my run. Let me look at its tail.
+dsh: reasoning:
+The queue's `controller_note` explicitly records: "2026-09-12 10:0x operator: provider recovered (probe L4-child-conjugate-point-bound running with live inference); target 1->6, min 1->2 ...". So quota recovery *is* recorded in the queue's controller_note, and this very task was the live probe. That satisfies the "do not invoke until quota recovery is recorded" condition. Good — I can note this in the checkpoint.
+
+The `latest.log` for my task appears to be the transcript of my own current session (it's showing my reasoning!). That's the harness capturing this session. So the controller is logging my session's output. Fine.
+
+Now let me finish the independent verification:
+
+1. ✅ Hashes match checkpoint.
+2. ✅ Clean rebuild exit 0.
+3. ✅ verify script 11/11 gates exit 0.
+4. ✅ Fresh probe with new witness, defeq fidelity, sharpness, K=0 falsification, all cones allowed.
+5. ✅ Proof term non-circularity.
+6. ✅ Provenance 11/11 byte-identical.
+7. ✅ Import closure has no ConjugatePointBound.
+8. Quota recovery recorded in queue controller_note.
+9. Need: independent audit of the manifest and the statement-level check that `conjugate_point_bound` really concludes `T ≤ π/√K` and not something else (defeq check covers it).
+
+Additional checks worth doing:
+- The negcontrol real file: let me read it to confirm it's genuinely tainted (contains sorry and a declared axiom).
+- Check `manifest/l4cp-verification.json` ok=true and gate count (done).
+- Verify determinism: the verify log is byte-identical to inv3/inv4 logs (`fa62246b...`), which is a strong reproducible-build signal. Let me confirm by comparing with the prior logs.
+- Also record the manifest diff vs inv4 (only timestamp).
+
+Let me also do an independent check of the acceptance statement by *evaluating* it against an independently written type (done via `inv5_HeadlineType`). But one more: verify the *negation* isn't provable, i.e. the statement is consistent — trivially true by the witness.
+
+One more valuable check: confirm the `#print axioms` audit covers *all* declarations in the endpoint module — the verify script's gate 6 does this via regex `theorem|lemma|def|abbrev`. Let me independently count declarations in the source: grep. It scanned 13 + lock = 14. Let me independently list them.
+
+Let me also inspect the `negcontrol/EndpointNegativeControl.lean`.
+dsh: reasoning:
+Everything checks out:
+- 13 declarations in the endpoint module, all audited (plus the lock in the audit module = 14 authored).
+- verify log byte-identical across invocations 3, 4, 5 (deterministic, reproducible).
+- negcontrol genuinely tainted.
+
+Now let me also verify the `JacobiSolutionOn.mono` declaration name issue: the theorem is named `JacobiSolutionOn.mono` inside namespace `Poincare.L4.GeodesicComparison`, so its fully qualified name is `Poincare.L4.GeodesicComparison.JacobiSolutionOn.mono` — matching the audit query. Good, and the grep matched.
+
+One more check: the verify script's gate for `authored_declarations_all_audited` scans `theorem|lemma|def|abbrev` — but there's a subtlety: `JacobiSolutionOn.mono` is in the `JacobiSolutionOn` namespace. Fine.
+
+Now let me consider whether I should do anything *more* substantial with the remaining budget. The task was complete; my role is independent acceptance. I've done:
+
+1. Fresh hash check vs checkpoint ✓
+2. Fresh clean rebuild from deleted cache, exit 0 ✓
+3. Fresh 11-gate verify run, exit 0, byte-identical log to prior two invocations ✓
+4. Fresh independent probe: statement defeq fidelity (impl + lock), new near-threshold witness at k=5/K=5/T=7/5 through the strict theorem, sharpness beyond threshold, K=0 hypothesis-necessity falsification, all cones exactly allowed triple ✓
+5. Proof-term inspection for non-circularity and endpoint-limit ingredients ✓
+6. Independent byte-level provenance vs canonical origins (11/11) ✓
+7. Import-closure check (no ConjugatePointBound) ✓
+8. Negative control inspection ✓
+9. Quota recovery recorded in queue controller_note ✓
+
+Is there any remaining doubt about the mathematics? Let me think hard about the potential gaps in the formalization, as an independent reviewer would.
+
+**Potential concern 1: The acceptance sentence says "u > 0 on (0,T]" and "k >= K > 0 on (0,T)".** The theorem has `hpos : ∀ t ∈ Ioc 0 T, 0 < u t` ✓ and `hk : ∀ t ∈ Ioo 0 T, K ≤ k t` ✓. Also `h : JacobiSolutionOn k u du ddu 0 T` ✓. The normalization hypotheses: `hT, hBnn, ht₀, ht₀T, hBt₀, hdducont, hB, hu0, hdu0, hBmodel` — all from `rauch_upper_of_jacobi_constCurv` except `hzero` removed ✓ and `hK : 0 ≤ K` strengthened to `0 < K` ✓. So statement fidelity is exact.
+
+**Potential concern 2: Is the conclusion `T ≤ π/√K` correct in the degenerate case where K is positive but T ≤ 0?** hT : 0 < T is assumed. Fine.
+
+**Potential concern 3: `Real.sqrt` of K > 0 is positive, so π/√K is positive ✓.**
+
+**Potential concern 4: The endpoint limit.** The compare holds for all t ∈ Ioo 0 (π/√K). Note: this requires π/√K ≤ T (from by_contra), so for t < π/√K we have t < T ✓ and the model zero hypothesis √K·t < π ✓. The `T''` construction: `max t t₀ < min T (π/√K)` requires t < T ✓, t < π/√K ✓, t₀ < T (from basePoint_lt_firstZero and π/√K ≤ T) ✓, t₀ < π/√K ✓. Then T'' = (max t t₀ + m)/2 satisfies max t t₀ < T'' < m ✓. The `jacobi_le_constCurvModel` application gets `hzero = Or.inr hT''pi` with `√K·T'' < π` ✓, `hK.le` ✓, `hBmodel''` from monotonicity of max ✓. So `u t ≤ jacobiSol K t` for t ∈ Ioo 0 T'' ✓ (and t < T'').
+
+Then the eventual inequality in `𝓝[<] x`: `Ioo_mem_nhdsLT hxpos` gives `Ioo 0 x ∈ 𝓝[<] x`; for t ∈ Ioo 0 x we have t ∈ Ioo 0 (π/√K) = Ioo 0 x, so hcompare applies ✓.
+
+Continuity: `h.continuousOn_u x hxmem` gives `ContinuousWithinAt u (Icc 0 T) x`; then `.mono_of_mem_nhdsWithin hmem` where `hmem : Icc 0 T ∈ 𝓝[Iio x] x`. `ContinuousWithinAt.mono_of_mem_nhdsWithin` signature: `ContinuousWithinAt f s x → t ∈ 𝓝[s] x → ContinuousWithinAt f t x`? Let me check: In mathlib, `ContinuousWithinAt.mono_of_mem_nhdsWithin (h : ContinuousWithinAt f s x) (ht : t ∈ 𝓝[s] x) : ContinuousWithinAt f t x`. Hmm, actually the direction: if `s ∈ 𝓝[t] x` then continuity on s implies continuity on t... The statement is `theorem ContinuousWithinAt.mono_of_mem_nhdsWithin (h : ContinuousWithinAt f s x) (ht : t ∈ 𝓝[s] x) : ContinuousWithinAt f t x`. Here `s = Icc 0 T`, `t = Iio x`, and `𝓝[Iio x] x ∋ Icc 0 T` means the filter `𝓝[Iio x] x` contains the set `Icc 0 T` — i.e. `Icc 0 T ∈ 𝓝[Iio x] x`. Then continuity within Icc 0 T at x implies continuity within Iio x at x. ✓ (Since nearby points of Iio x are eventually in Icc 0 T, continuity restricted to a larger set implies continuity restricted to a smaller set that's eventually contained.) Good.
+
+`(ContinuousWithinAt ...).tendsto : Tendsto f (𝓝[Iio x] x) (𝓝 (f x))` — yes, `ContinuousWithinAt.tendsto` gives `Tendsto f (𝓝[s] x) (𝓝 (f x))`. ✓ Note `𝓝[<] x` notation = `𝓝[Iio x] x` ✓.
+
+`le_of_tendsto_of_tendsto` — signature `le_of_tendsto_of_tendsto (hf : Tendsto f l (𝓝 a)) (hg : Tendsto g l (𝓝 b)) (h : ∀ᶠ x in l, f x ≤ g x) : a ≤ b` ✓.
+
+`jacobiSol_of_pos hK` — what's its statement? Let me check: probably `jacobiSol K = jacobiSolSphere K` for K > 0? Let me grep to be sure the rewrite `rw [jacobiSol_of_pos hK, jacobiSolSphere_firstZero hK] at hfin` yields `u x ≤ 0`. If `jacobiSol_of_pos hK : jacobiSol K t = jacobiSolSphere K t` (pointwise or function equality), fine. And `jacobiSolSphere_firstZero hK : jacobiSolSphere K (π/√K) = 0`. Let me verify quickly the exact statements.
+
+**Potential concern 5: `jacobiSol_pos_iff` forward direction.** It applies `conjugate_point_bound` to the model with B = K*max(1/√K) T and t₀ = min T (1/(2B)). Then concludes `T ≤ π/√K` and uses `T ≠ π/√K` to get `<`. The `hne` proof: if T = π/√K, then `hpos x ⟨hxpos, le_of_eq heq.symm⟩ : 0 < jacobiSol K x` and `jacobiSol_of_pos hK` + `jacobiSolSphere_firstZero hK` gives `jacobiSol K x = 0`, so `0 < 0`, contradiction ✓.
+
+**Potential concern 6: no hidden hypotheses in the witnesses.** The witnesses k=2/K=1, k=2/K=2 discharge all 14 args. My new k=5 witness discharges all 14 for the strict theorem, which compiled. This proves non-vacuity independently at new numbers.
+
+Everything looks sound. One more possible check: `#print axioms` for the *statement lock* being a theorem whose type equals the headline (done).
+
+Now, let me also sanity check that the *manifest* file contains the provenance entries as expected and `ok: true`. Done via the log; the manifest was regenerated by my run at 10:29.
+
+Let me now also record: the verify log is byte-identical to inv3/inv4 (deterministic), and the manifest differs only in the `generated_at` timestamp. Let me verify that claim by diffing the manifest with the inv4 snapshot, ignoring generated_at.
+
+Then I'll:
+- Write `evidence/l4cp-reverification-inv5.md`.
+- Update `checkpoint.json` with a `continuation_reverification_inv5` section (preserving all prior keys).
+- Possibly update the result card? The instruction says the result card is the completion artifact; I should not change the mathematical claims. Prior invocations didn't change the result card. I'll leave the result card unchanged (hash preserved) and note that in evidence. Actually, should I update the result card's "Invocation" line? Prior invocations left it unchanged (result_card_changed: false). To preserve provenance and hashes, I'll leave it unchanged too. The checkpoint records the re-verification.
+
+Let me check the manifest diff and jacobiSol_of_pos statement.
+dsh: reasoning:
+The manifest is identical to inv4's except the timestamp. 
+
+Let me check `jacobiSol_of_pos`:
+dsh: reasoning:
+`jacobiSol_of_pos h t : jacobiSol K t = jacobiSolSphere K t`. The `rw [jacobiSol_of_pos hK, jacobiSolSphere_firstZero hK] at hfin` works: rewrites `jacobiSol K x` to `jacobiSolSphere K x` then to 0. ✓
+
+All checks are consistent. Now let me write the evidence file and update the checkpoint.
+
+Before that, let me think about whether I should attempt anything more substantive. The task wording says: "Continue from existing files and checkpoint.json in this worktree; do not restart completed work. This invocation is limited to four hours. Save a compile-checked checkpoint at least every hour. Report a genuine mathematical blocker rather than claiming completion with a weaker theorem."
+
+So the expected behavior for a continuation on completed work is re-verification + honest reporting. I've done a thorough re-verification. One more thing I could add for extra acceptance strength: an *independent re-proof* of the endpoint bound in a separate file from scratch (not importing ConjugatePointEndpoint), using a different formalization strategy. That would be the strongest possible independent check of the mathematics. Given I have plenty of time budget (four hours, used maybe 20 minutes), let me attempt it. If it compiles, it's a major independent confirmation; if it fails, I still have the existing verified artifact and can report honestly.
+
+Design of the independent reproof (file `tmp/l4cp_independent_reproof_inv5.lean`), importing only `Poincare.L4.GeodesicComparison.ConstantCurvatureRauch`:
+
+Goal: 
+```lean
+theorem inv5_independent_endpoint_bound {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}
+    (hT : 0 < T) (hBnn : 0 ≤ B) (ht₀ : 0 < t₀) (ht₀T : t₀ ≤ T) (hBt₀ : B * t₀ ≤ 1/2)
+    (h : JacobiSolutionOn k u du ddu 0 T) (hdducont : ContinuousOn ddu (Icc 0 T))
+    (hB : ∀ t ∈ Ioo 0 T, |ddu t| ≤ B) (hu0 : u 0 = 0) (hdu0 : du 0 = 1)
+    (hpos : ∀ t ∈ Ioc 0 T, 0 < u t) (hK : 0 < K) (hk : ∀ t ∈ Ioo 0 T, K ≤ k t)
+    (hBmodel : (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1/2) :
+    T ≤ Real.pi / Real.sqrt K
+```
+
+Different strategy ideas:
+(A) Sequential limit: Suppose π/√K < T. For n : ℕ, define T_n = π/√K - 1/(n+1). Since π/√K < T, for large n, T_n > 0 and T_n < T. Apply `jacobi_le_constCurvModel` on (0, T_n) to get u t ≤ j_K t for t ∈ (0,T_n). In particular at t = π/√K - 1/(n+1): u(T_n) ≤ j_K(T_n). Take n → ∞: u → u(x), j → j(x) = 0, so u(x) ≤ 0, contradicting u(x) > 0 for x ∈ (0,T]. This is essentially the same but with sequences.
+
+Actually, hmm: applying jacobi_le_constCurvModel on (0,T_n) gives the inequality for t ∈ Ioo 0 T_n. We evaluate at t = T_n which is NOT in Ioo 0 T_n (it's the endpoint). So we'd need t slightly less than T_n. Instead use T_n = π/√K - 1/(n+1) and evaluate at s_n = π/√K - 2/(n+1) (also in (0, T_n) for n large). Then u(s_n) ≤ j_K(s_n) and s_n → x, so limit gives u(x) ≤ j_K(x). That works with sequences.
+
+But to be genuinely different from the filter approach, use `tendsto` along `atTop` for sequences. In Lean this requires:
+- `Tendsto (fun n => x - 1/(n+1)) atTop (𝓝 x)` via `tendsto_const_nhds.sub (tendsto_one_div_add_atTop_nhds_zero_nat)`.
+- Eventually T_n < T and 0 < T_n.
+- `tendsto_nhds_unique`? No, just use `le_of_tendsto_of_tendsto'` for sequences: `le_of_tendsto_of_tendsto' (hf : Tendsto f atTop (𝓝 a)) (hg : Tendsto g atTop (𝓝 b)) (h : ∀ n, f n ≤ g n) : a ≤ b`.
+
+Then contradictions as before.
+
+(B) Closure argument with `IsClosed`. Since u is only continuous on Icc 0 T, use `ContinuousOn` and `IsClosed` in the subspace... The clean version: the set `{t ∈ Icc 0 T | u t ≤ jacobiSol K t}` is closed in the subspace `Icc 0 T` (as preimage of Iic under the continuous map `t ↦ u t - j_K t` restricted to Icc 0 T). And `Ioo 0 x`... but x might equal T. Hmm. Actually: `Ioo 0 x ⊆ {t ∈ Icc 0 T | u t ≤ j_K t}` and the closure of `Ioo 0 x` in ℝ is `Icc 0 x ⊆ Icc 0 T` (since x ≤ T). If the set is closed *in ℝ*, then `Icc 0 x ⊆ set`, giving u x ≤ j_K x. Is the set closed in ℝ? It's `Icc 0 T ∩ {t | u t - j_K t ≤ 0}`; `{t | u t - j_K t ≤ 0}` is closed only if `u - j_K` is continuous globally. It isn't (u only continuous on Icc 0 T). But: for the closure argument I need: `x ∈ closure (Ioo 0 x) ⊆ closure(set)`, and `set` closed in ℝ requires global continuity. Alternatively, show `{t | u t - j_K t ≤ 0} ∩ Ioo 0 T` ... hmm. 
+
+We can use: `IsClosed (Icc 0 x ∩ {t | u t ≤ j_K t})`? Within the subspace topology induced on `Icc 0 x`, the map `u` restricted is continuous (ContinuousOn u (Icc 0 x) since Icc 0 x ⊆ Icc 0 T) and j_K is continuous globally; so `{t ∈ Icc 0 x | u t ≤ j_K t}` is closed in the subspace `Icc 0 x` (i.e. `IsClosed` in the relative topology — mathlib's `IsClosed` is about the ambient space; for relative closedness use `IsClosed ((↑) '' s)`? There's `IsClosed` + `ContinuousOn` API: `IsClosed.preimage` requires global continuity. There's `IsClosed.preimage_of_continuousOn`? Hmm.
+
+Actually, mathlib has `IsClosed.preimage` for continuous maps, and for `ContinuousOn` there's the notion of closed in the subspace via `IsClosed (s ∩ f ⁻¹' t)` if `ContinuousOn f s`: lemma `IsClosed.inter_preimage_of_continuousOn`? Not sure of the name. Simpler: since we only need `x`, we can use the filter limit anyway.
+
+(C) Use `Filter.Tendsto` but with a different construction: instead of `le_of_tendsto_of_tendsto`, use `ge_of_tendsto`/`le_of_tendsto` on the constant sequence? Or use `ContinuousWithinAt` + `closure`?
+
+(D) A genuinely different route: define the "antitone ratio" argument directly. `areaRatio_antitone_of_logDeriv_le` gives that `u/j_K` is antitone on (0,T). Then `u x / j_K x = lim_{t→x⁻} u t/j_K t ≤ ...`. Hmm, same limit issue.
+
+Honestly, (A) with sequences is genuinely different in formalization (different lemmas: `le_of_tendsto_of_tendsto'`, `tendsto_one_div_add_atTop_nhds_zero_nat`, `eventually_atTop`), and would confirm the endpoint limit in a second way. Let me attempt it. If it compiles, great evidence. Time cost: maybe 30-60 min of iteration. I have budget.
+
+Actually, even better for independence: also re-derive `jacobi_le_constCurvModel`'s conclusion? No — the task explicitly allows using the imported comparison; the endpoint limit is the novel part.
+
+Let me write it. Key steps:
+
+```lean
+import Poincare.L4.GeodesicComparison.ConstantCurvatureRauch
+
+noncomputable section
+open Set Filter
+open scoped Topology
+
+namespace Poincare.L4.GeodesicComparison
+open Poincare.D12.ComparisonGeodesics Poincare.D10
+
+theorem inv5_independent_endpoint_bound {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}
+    (hT : 0 < T) (hBnn : 0 ≤ B) (ht₀ : 0 < t₀) (ht₀T : t₀ ≤ T) (hBt₀ : B * t₀ ≤ 1 / 2)
+    (h : JacobiSolutionOn k u du ddu 0 T) (hdducont : ContinuousOn ddu (Icc 0 T))
+    (hB : ∀ t ∈ Ioo 0 T, |ddu t| ≤ B) (hu0 : u 0 = 0) (hdu0 : du 0 = 1)
+    (hpos : ∀ t ∈ Ioc 0 T, 0 < u t) (hK : 0 < K) (hk : ∀ t ∈ Ioo 0 T, K ≤ k t)
+    (hBmodel : (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1 / 2) :
+    T ≤ Real.pi / Real.sqrt K := by
+  by_contra hcon
+  push_neg at hcon   -- hcon : Real.pi / Real.sqrt K < T
+  set x : ℝ := Real.pi / Real.sqrt K with hxdef
+  have hxpos : 0 < x := by rw [hxdef]; exact div_pos Real.pi_pos (Real.sqrt_pos_of_pos hK)
+  have hxT : x < T := hcon
+  -- comparison on any interval ending before x
+  have hcompare : ∀ t ∈ Ioo 0 x, u t ≤ jacobiSol K t := by
+    intro t ht
+    ... same T'' construction as before ...
+  -- sequence s_n = x - 2/(n+1) eventually in (0,x)
+  have hxpos : 0 < x ...
+  -- The sequence s n tends to x from below
+  have hlim_s : Tendsto (fun n : ℕ => x - 2 / (n + 1 : ℝ)) atTop (𝓝 x) := by
+    have h0 : Tendsto (fun n : ℕ => (2 : ℝ) / (n + 1)) atTop (𝓝 0) := by
+      simpa using (tendsto_const_nhds.div_atTop (tendsto_natCast_atTop_atTop.atTop_add tendsto_const_nhds)) -- complicated
+    ...
+```
+
+Hmm, the sequence limit lemmas can be fiddly. Alternative: use `Tendsto` of `fun n => 2/(n+1)` to 0. In mathlib there's `tendsto_one_div_add_atTop_nhds_zero_nat : Tendsto (fun n : ℕ => (1:ℝ) / (n + 1)) atTop (𝓝 0)`. Then `(tendsto_one_div_add_atTop_nhds_zero_nat.const_mul 2)` gives `Tendsto (fun n => 2 * (1/(n+1))) atTop (𝓝 (2*0))`; convert to `2/(n+1)`. Then `tendsto_const_nhds.sub` for `x - ...`.
+
+Then:
+```lean
+  have hev : ∀ᶠ n in atTop, (fun n => x - 2/(n+1)) n ∈ Ioo 0 x := ...
+  -- or just prove ∀ n large
+```
+Use `Filter.Tendsto.eventually` with `Ioo_mem_nhds hxpos ...`? Actually we want eventually `0 < s n` and `s n < x`. `Ioo 0 x ∈ 𝓝 x` since `0 < x`, so `hlim_s.eventually (Ioo_mem_nhds hxpos le_rfl)` gives `∀ᶠ n, s n ∈ Ioo 0 x`. Good.
+
+Then for such n, `hcompare (s n) (hs n)`.
+
+Then `le_of_tendsto_of_tendsto'`:
+- `hf : Tendsto (fun n => u (s n)) atTop (𝓝 (u x))`: from `h.continuousOn_u.continuousWithinAt hxmem` where hxmem : x ∈ Icc 0 T (x < T and x > 0 → x ≤ T from le_of_lt) and `hlim_s.mono_left nhdsWithin_le_nhds`? Hmm: `ContinuousWithinAt u (Icc 0 T) x` gives `Tendsto u (𝓝[Icc 0 T] x) (𝓝 (u x))`. I need `Tendsto (fun n => u (s n)) atTop (𝓝 (u x))`. If s n ∈ Icc 0 T eventually (true since 0 < s n < x < T), then `hlim_s` composed with... The clean way: `ContinuousWithinAt.tendsto` + `Tendsto.mono_right`? Filters: `Tendsto u (𝓝[Icc 0 T] x) (𝓝 (u x))`. I have `Tendsto s atTop (𝓝 x)`. I need `Tendsto s atTop (𝓝[Icc 0 T] x)`, which follows if s n ∈ Icc 0 T eventually: `tendsto_nhdsWithin_iff.mpr ⟨hlim_s, hev_mem⟩`. Then `(hcont.tendsto.comp this)`. Alternatively, `Tendsto.comp` with `nhdsWithin_le_nhds`: if I have `Tendsto u (𝓝 x) ...` — no, u isn't globally continuous.
+
+Simplest: use the `ContinuousWithinAt` at x and the fact that the sequence is eventually in the set:
+```lean
+have hmem_ev : ∀ᶠ n in atTop, s n ∈ Icc 0 T := ...
+have hf : Tendsto (fun n => u (s n)) atTop (𝓝 (u x)) :=
+  ((h.continuousOn_u x hxmem).tendsto.comp (tendsto_nhdsWithin_iff.mpr ⟨hlim_s, hmem_ev⟩))
+```
+Hmm, `ContinuousWithinAt.tendsto` is `Tendsto f (𝓝[s] x) (𝓝 (f x))`, so composing with `Tendsto s atTop (𝓝[s] x)`.
+
+Actually maybe simpler to avoid `ContinuousWithinAt` and use the `𝓝[<] x` version like the original but with sequences... that's the same.
+
+Honestly, this reproof is converging to the same `T''` construction with a different limit formalization. It's still a meaningful independent check (different limit lemma, sequence-based). Let me write it and iterate. If it takes too long, I'll fall back.
+
+Actually — alternative genuinely-different endpoint strategy that avoids limits altogether: use the *strict* monotonicity/antitone ratio and the explicit formula for `jacobiSol K` plus the fact that `jacobiSolSphere K` has a sign change at π/√K. Hmm, still needs a limit.
+
+Or: use `SturmComparison`/`SturmZeroCount`-style argument? The D12 `SturmComparison.lean` may have a zero-counting/Sturm theorem. Let me check what's in there — maybe there's a lemma `exists_zero_between` or similar that, combined with the comparison on intervals, gives the result more directly. Let me look at the file's theorem list. If there's a Sturm separation/zero existence lemma, I could route differently. But the task's suggested route is the limit; a second route would be even better evidence.
+
+Let me check `SturmComparison.lean` and `Comparison.lean` (D10) for relevant lemmas.
+dsh: reasoning:
+Interesting! `SturmComparison.lean` has `sturm_zero_comparison` and `sturm_zero_comparison_of_pos`, plus `nonneg_of_continuousOn_of_posOn_Ioo` and `sign_constant_of_no_zero`. Also `D10.Comparison` has `jacobiSol_firstZero`. 
+
+Let me look at `sturm_zero_comparison` — maybe I can derive the endpoint bound via a Sturm zero-existence argument on `[0, x]` instead of a limit:
+
+Suppose x = π/√K ≤ T. Consider u on (0,x). We know u > 0 on (0,x]. The model j_K has j_K(x) = 0 and j_K > 0 on (0,x). Sturm comparison typically says: if u > 0 on (a,b) and k ≥ K, then... Let me read the exact statements of `sturm_zero_comparison` and `nonneg_of_continuousOn_of_posOn_Ioo`.
+
+`nonneg_of_continuousOn_of_posOn_Ioo`: If u₁ > 0 on (a,b) and continuous on [a,b], then u₁ b ≥ 0. That's the limit! So one could combine: apply `sturm_zero_comparison_of_pos` on `[0, x]`? But at 0, j_K(0)=0 which breaks positivity assumptions. Hmm, the comparison theorems likely need positivity on the open interval and handle zeros at endpoints.
+
+Actually the route with the limit seems cleaner. But maybe `sturm_zero_comparison` gives a more direct contradiction: it might say "if u₂ has a zero in (a,b] and u₁ > 0 on (a,b), then u₁ has a zero in (a,b)" or similar. Let me read the exact statement. If so, the endpoint bound could follow without limits — a genuinely different proof route (contradiction: j_K has zero at x ∈ (0,T], u > 0 on (0,x], so Sturm would force u to have a zero in (0,x), contradiction). Let me read.
+dsh: reasoning:
+`sturm_zero_comparison_of_pos` is a rigidity result (equality of k's) rather than a zero-existence result. Let me read `sturm_zero_comparison` (line 268) — maybe it's the classical one.
+dsh: reasoning:
+`sturm_zero_comparison` is exactly what I need for a genuinely different proof of the endpoint bound **without any limit argument**!
+
+Setup: Suppose x := π/√K ≤ T. Apply Sturm on [0, x] with:
+- k₁ = k (unknown), u₁ = u; k₂ = K (model), u₂ = jacobiSol K.
+- hab : 0 < x.
+- hk : ∀ t ∈ Icc 0 x, K ≤ k t. But our hypothesis is `hk : ∀ t ∈ Ioo 0 T, K ≤ k t`; since Icc 0 x ⊆ Ioo 0 T? No: 0 ∈ Icc 0 x but 0 ∉ Ioo 0 T. Hmm. `sturm_zero_comparison` requires `hk` on `Icc a b` = `Icc 0 x`. The unknown k is only bounded on `Ioo 0 T`, which excludes 0. So I can't directly apply with a = 0 because k at 0 is unconstrained.
+
+Workaround: apply Sturm on `[ε, x]` for ε > 0? But then u₁(ε) = u(ε) ≠ 0 and u₂(ε) = j_K(ε) ≠ 0, so the initial-zero hypotheses fail. Sturm's theorem needs both solutions to vanish at the left endpoint.
+
+Alternative: use a shift/scaling trick: define u₁(t) = u(ε + t), u₂(t) = j_K(ε + t)... those don't vanish at 0. There's a Wronskian-based comparison for nonzero left endpoints: if u₁, u₂ > 0 on (a,b), then W = u₁'u₂ - u₁u₂' at a ... Actually the classical Sturm comparison for positive solutions: if u₁, u₂ > 0 on (a,b) and (k₁-k₂)u₁u₂ ≥ 0, then the Wronskian is monotone, and if u₂(b) = 0 then... Let's think: W = u₁ du₂ - u₂ du₁ (order matters). `wronskian_antitoneOn_of_le` requires `u₁·u₂ ≥ 0` on (a,b) and k₂ ≤ k₁. Then W is antitone on [a,b]. If u₂(b) = 0 and u₂ > 0 on (a,b), then W(b) = u₁(b)·du₂(b). With u₁ > 0 on (a,b) and u₁ continuous on [a,b], u₁(b) ≥ 0. Also du₂(b) ≤ 0 (deriv_nonpos_of_posOn_Ioo_of_eq_at_right). So W(b) ≤ 0. Also W(a) = u₁(a)du₂(a) - u₂(a)du₁(a); at a = 0, u₁(0)=u₂(0)=0 so W(0)=0. If we could take a = 0, we'd get W antitone from 0 to b, so W(b) ≤ 0; but for a contradiction we'd need... Hmm, this is the same as `sturm_zero_comparison_of_pos`'s rigidity proof: W(b) = 0 forced. Indeed, if u₁ > 0 on (0,x] and u₂ = j_K with j_K(x)=0, j_K > 0 on (0,x), then W is antitone on [0,x] with W(0)=0, W(x)=0 → W ≡ 0 → W' = (k - K)·u₁·u₂ = 0 on (0,x) → k = K on (0,x), which is possible (no contradiction!). Right, that's the rigidity case: if k ≡ K, then u = c·j_K which vanishes at x, contradicting u > 0 at x. Actually with u(0)=0, u'(0)=1, if k ≡ K then u = j_K (by uniqueness, not formalized), so u(x)=0, contradiction. But in the rigidity case where k = K only on (0,x) and unknown elsewhere, we'd need uniqueness, which isn't available. So the Sturm route gives: either u has a zero in (0,x) (contradiction with hpos) or k = K on (0,x) (no immediate contradiction).
+
+So Sturm doesn't directly give the endpoint bound without uniqueness. The limit route is better. Interesting.
+
+Alternative genuinely-different route: the *ratio* monotonicity (areaRatio_antitone_of_logDeriv_le) used inside jacobi_le_constCurvModel, plus a limit of the ratio. But that's again a limit.
+
+Hmm, what about proving the endpoint bound using `jacobi_le_constCurvModel` on a *fixed* T'' < x and evaluating at t → x via `ContinuousOn`? That's the done thing.
+
+So a "genuinely different" proof would differ only in the limit formalization. The sequence-based variant is still worth doing as an independent reproduction: it demonstrates the T''-limiting argument can be re-formalized from the imported comparison by a different author. But is it worth the token/time budget? I have plenty of time. Let me do a moderate version: prove the endpoint bound via `Filter.Tendsto` with sequences using `le_of_tendsto_of_tendsto'`. Actually, there's an even simpler genuinely different formulation that avoids the `T''` construction inside the proof of `hcompare`:
+
+Use the *eventual* comparison directly: for each t ∈ Ioo 0 x, apply `jacobi_le_constCurvModel` with `T'' = (t + min T x)/2`. That's the same.
+
+Alternative: prove `u ≤ j_K` on `Ioo 0 x` using `jacobi_le_constCurvModel` at `T'' = x` — impossible because of the strict model-zero hypothesis.
+
+Honestly, the sequence-based variant tests the same mathematical content but a different Lean formalization of the limit. The payoff is a second independent proof term. I think it's worthwhile as "independent acceptance" evidence, but the marginal value is limited given the proof term inspection already showed the endpoint ingredients.
+
+Let me instead consider a *more valuable* independent check: verify that the theorem's conclusion cannot be strengthened/weakened incorrectly by testing *near-miss* statements in Lean:
+(a) K=0 variant false ✓ (done).
+(b) Could `T ≤ π/√K` be improved to `T < π/√K` without `hpos` on the closed endpoint? The strict theorem already gives `<`; fine.
+(c) Is `hBmodel` needed? Test: is the statement without `hBmodel` false? Hard to refute numerically without solving ODEs.
+
+I think what I have is sufficient and strong. Let me do a compact sequence-based independent reproof attempt with a time cap. If it compiles within a reasonable number of iterations, include it; otherwise, note it as attempted (not necessary for acceptance).
+
+Actually, let me reconsider: the highest-value remaining action might be to *verify the mathematical claim numerically/analytically outside Lean* — i.e., confirm that the statement as formalized really implies the classical conjugate point bound. That's a semantic review, already done by the prior independent review and by me reading the statement. Fine.
+
+Let me do the sequence-based reproof. Plan the Lean code carefully.
+
+```lean
+import Poincare.L4.GeodesicComparison.ConstantCurvatureRauch
+
+noncomputable section
+open Set Filter
+open scoped Topology
+
+namespace Poincare.L4.GeodesicComparison
+open Poincare.D12.ComparisonGeodesics Poincare.D10
+
+/-- Independent re-proof of the endpoint bound (invocation 5), sequence-based. -/
+theorem inv5_independent_endpoint_bound {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}
+    (hT : 0 < T) (hBnn : 0 ≤ B) (ht₀ : 0 < t₀) (ht₀T : t₀ ≤ T) (hBt₀ : B * t₀ ≤ 1 / 2)
+    (h : JacobiSolutionOn k u du ddu 0 T) (hdducont : ContinuousOn ddu (Icc 0 T))
+    (hB : ∀ t ∈ Ioo 0 T, |ddu t| ≤ B) (hu0 : u 0 = 0) (hdu0 : du 0 = 1)
+    (hpos : ∀ t ∈ Ioc 0 T, 0 < u t) (hK : 0 < K) (hk : ∀ t ∈ Ioo 0 T, K ≤ k t)
+    (hBmodel : (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1 / 2) :
+    T ≤ Real.pi / Real.sqrt K := by
+  by_contra hcon
+  rw [not_le] at hcon
+  set x : ℝ := Real.pi / Real.sqrt K with hxdef
+  have hsqrtK : 0 < Real.sqrt K := Real.sqrt_pos_of_pos hK
+  have hxpos : 0 < x := by rw [hxdef]; exact div_pos Real.pi_pos hsqrtK
+  have hxT : x < T := hcon
+  have ht₀x : t₀ < x := basePoint_lt_firstZero hK ht₀ hBmodel
+  -- comparison on any subinterval ending before x
+  have hcompare : ∀ t ∈ Ioo 0 x, u t ≤ jacobiSol K t := by
+    intro t ht
+    have htT : t < T := lt_trans ht.2 hxT
+    have htpi : Real.sqrt K * t < Real.pi := by
+      have h1 := mul_lt_mul_of_pos_left ht.2 hsqrtK
+      rwa [mul_div_cancel₀ Real.pi hsqrtK.ne'] at h1
+    have ht₀T : t₀ < T := lt_trans ht₀x hxT
+    set m : ℝ := min T x with hmdef
+    have htm : max t t₀ < m := max_lt (lt_min htT ht.2) (lt_min ht₀T ht₀x)
+    set T'' : ℝ := (max t t₀ + m) / 2 with hT''def
+    ...
+    exact (jacobi_le_constCurvModel ... ) t ⟨ht.1, htT''⟩
+```
+
+Hmm, this duplicates the artifact's `hcompare` exactly. For genuine independence in the *limit*, I only need `hcompare` for the specific sequence values, which I can instantiate on the fly. Let me define the sequence and prove the comparison along it:
+
+```lean
+  -- sequence approaching x from below
+  have hlim_sub : Tendsto (fun n : ℕ => x - 2 / ((n : ℝ) + 1)) atTop (𝓝 x) := by
+    have h1 : Tendsto (fun n : ℕ => (1 : ℝ) / ((n : ℝ) + 1)) atTop (𝓝 0) :=
+      tendsto_one_div_add_atTop_nhds_zero_nat
+    have h2 : Tendsto (fun n : ℕ => 2 * ((1 : ℝ) / ((n : ℝ) + 1))) atTop (𝓝 (2 * 0)) :=
+      tendsto_const_nhds.mul h1
+    have h3 : Tendsto (fun n : ℕ => 2 / ((n : ℝ) + 1)) atTop (𝓝 0) := by
+      simpa [div_eq_mul_inv] using h2
+    exact tendsto_const_nhds.sub h3
+```
+
+Then:
+```lean
+  have hev : ∀ᶠ n : ℕ in atTop, x - 2 / ((n:ℝ)+1) ∈ Ioo 0 x :=
+    hlim_sub.eventually (Ioo_mem_nhds hxpos le_rfl)   -- Ioo 0 x is a nbhd of x
+```
+Wait `Ioo_mem_nhds : a < b → Ioo a b ∈ 𝓝 b`? In mathlib: `Ioo_mem_nhds (h : a < b) : Ioo a b ∈ 𝓝 b`. Hmm, actually `Ioo_mem_nhds : a < b → Ioo a b ∈ 𝓝 b`? Let me recall: `Ioo_mem_nhds (h : a < b) : Ioo a b ∈ 𝓝 b` — I think the signature is `theorem Ioo_mem_nhds (h : a < b) : Ioo a b ∈ 𝓝 b := Ioo_mem_nhds_of_mem ...`? There are `Ioo_mem_nhds_left`, `Ioo_mem_nhds_right`. To be safe: `Ioo_mem_nhds hxpos (le_refl x)`? Hmm. In recent mathlib: `theorem Ioo_mem_nhds (h : a < b) : Ioo a b ∈ 𝓝 b`. Let me just use `isOpen_Ioo.mem_nhds ⟨?_, ?_⟩`: `Ioo 0 x ∈ 𝓝 x` since `Ioo 0 x` is open and `x ∈ Ioo 0 x` (needs `0 < x`). So:
+```lean
+  have hIoo_nhds : Ioo 0 x ∈ 𝓝 x := isOpen_Ioo.mem_nhds ⟨hxpos, le_rfl⟩
+  have hev : ∀ᶠ n : ℕ in atTop, x - 2 / ((n:ℝ)+1) ∈ Ioo 0 x := hlim_sub.eventually hIoo_nhds
+```
+
+Then the eventual inequality:
+```lean
+  have hev_le : ∀ᶠ n : ℕ in atTop, u (x - 2/((n:ℝ)+1)) ≤ jacobiSol K (x - 2/((n:ℝ)+1)) := by
+    filter_mono? -- from hev and hcompare
+    exact hev.mono fun n hn => hcompare _ hn
+```
+
+Tendsto of the left side:
+```lean
+  have hxmem : x ∈ Icc (0:ℝ) T := ⟨hxpos.le, hxT.le⟩
+  have hmem_ev : ∀ᶠ n : ℕ in atTop, x - 2/((n:ℝ)+1) ∈ Icc (0:ℝ) T :=
+    hev.mono fun n hn => ⟨hn.1.le, le_of_lt (lt_trans hn.2 hxT)⟩
+  have hf : Tendsto (fun n => u (x - 2/((n:ℝ)+1))) atTop (𝓝 (u x)) :=
+    ((h.continuousOn_u x hxmem).tendsto.comp (tendsto_nhdsWithin_iff.mpr ⟨hlim_sub, hmem_ev⟩))
+  have hg : Tendsto (fun n => jacobiSol K (x - 2/((n:ℝ)+1))) atTop (𝓝 (jacobiSol K x)) :=
+    ((continuous_jacobiSol K).tendsto x).comp hlim_sub
+  have hfin := le_of_tendsto_of_tendsto' hf hg hev_le
+  rw [hxdef, jacobiSol_of_pos hK, jacobiSolSphere_firstZero hK] at hfin
+  exact absurd hfin (not_le.mpr (hpos x ⟨hxpos, hxT.le⟩))
+```
+
+Wait, `le_of_tendsto_of_tendsto'` signature: `le_of_tendsto_of_tendsto' (hf : Tendsto f l (𝓝 a)) (hg : Tendsto g l (𝓝 b)) (h : ∀ x, f x ≤ g x) : a ≤ b`. Yes, there's a primed version taking a plain ∀ instead of eventually. Good.
+
+And for `hcompare` I still need the T'' construction per t. Let me write it once as a local `have hcompare : ∀ t ∈ Ioo 0 x, ...` exactly like before but with my own writing. It's going to look similar because the math is the same. That's fine — the point is independent re-formalization.
+
+Alternatively, simplify `hcompare` by choosing a different T'' formula, e.g. `T'' = (t + x)/2` when `(t+x)/2 < T`... but we need T'' ≤ T for `JacobiSolutionOn.mono`. With `t < x < T`, `(t+x)/2 < x < T` ✓. And `t < (t+x)/2` ✓, `(t+x)/2 < x` ✓. But we also need `t₀ ≤ T''` for `jacobi_le_constCurvModel`'s `ht₀T` hypothesis! If t₀ > (t+x)/2, that fails. So use `T'' = (max t t₀ + x)/2`:
+- `t < T''` ✓ since t ≤ max t t₀ < (max + x)/2 as max < x.
+- `t₀ ≤ T''` ✓.
+- `T'' < x` ✓ (since max t t₀ < x).
+- `T'' ≤ T` ✓ (T'' < x < T).
+- `√K T'' < π` ✓.
+- `max (1/√K) T'' ≤ max (1/√K) T` ✓.
+This is slightly simpler than the original (uses x directly instead of m = min T x). It's a genuinely different (simpler) choice. 
+
+So my independent proof:
+```lean
+  have hcompare : ∀ t ∈ Ioo 0 x, u t ≤ jacobiSol K t := by
+    intro t ht
+    have htx : t < x := ht.2
+    have htT : t < T := lt_trans htx hxT
+    have ht₀x' : t₀ < x := ht₀x
+    set M : ℝ := max t t₀ with hMdef
+    have hMx : M < x := max_lt htx ht₀x
+    set T'' : ℝ := (M + x) / 2 with hT''def
+    have htT'' : t < T'' := by rw [hT''def]; linarith [le_max_left t t₀]
+    have ht₀T'' : t₀ ≤ T'' := by rw [hT''def]; linarith [le_max_right t t₀]
+    have hT''x : T'' < x := by rw [hT''def]; linarith
+    have hT''T : T'' ≤ T := le_of_lt (lt_trans hT''x hxT)
+    have hT''pos : 0 < T'' := lt_trans ht.1 htT''
+    have hT''pi : Real.sqrt K * T'' < Real.pi := by
+      have h1 := mul_lt_mul_of_pos_left hT''x hsqrtK
+      rwa [mul_div_cancel₀ Real.pi hsqrtK.ne'] at h1   -- x = π/√K
+    have hBmodel'' : (K * max (1 / Real.sqrt K) T'') * t₀ ≤ 1 / 2 := ...
+    exact (jacobi_le_constCurvModel (T := T'') (B := B) (t₀ := t₀) (K := K)
+      hT''pos hBnn ht₀ ht₀T'' hBt₀ (h.mono hT''T) ...) t ⟨ht.1, htT''⟩
+```
+
+Note `h.mono` — the artifact defines `JacobiSolutionOn.mono` but my file doesn't import it (it's in ConjugatePointEndpoint). I need my own restriction. I can prove restriction inline or define my own local version. Let me define `inv5_mono` myself (it's 5 lines) — genuinely independent.
+
+Also note `hT''x : T'' < x` combined with `hxdef : x = π/√K`; `h1 := mul_lt_mul_of_pos_left hT''x hsqrtK : √K * T'' < √K * x`; then `√K * x = π` needs rewriting with hxdef: `√K * x = √K * (π/√K) = π`. `rw [hxdef, mul_div_cancel₀ Real.pi hsqrtK.ne']` — careful: the term is `√K * (π / √K)`; `mul_div_cancel₀` states `a * b / a = b` for `a ≠ 0` — actually `mul_div_cancel_left₀ : a ≠ 0 → a * b / a = b` and `mul_div_cancel₀ : b ≠ 0 → a * b / b = a`. Here `√K * (π/√K)` — is that `(√K * π)/√K`? `mul_div_assoc` says `a * (b / c) = a * b / c`. So `√K * (π/√K) = (√K * π)/√K`, and `mul_div_cancel_left₀ hsqrtK.ne' π : √K * π / √K = π`. Hmm, but the original code used `rw [mul_div_cancel₀ Real.pi hsqrtK.ne']` on `√K * (x)` where the expression was `√K * (π/√K)` — and it worked, presumably because `mul_div_cancel₀` matches after `rw` normalizes to `√K * π / √K`? Actually `mul_div_cancel₀` has signature `mul_div_cancel₀ (a : G₀) (hb : b ≠ 0) : a * b / b = a`? Let me check: in Lean4 mathlib, `mul_div_cancel_left₀ : a ≠ 0 → a * b / a = b` and `mul_div_cancel_right₀ : b ≠ 0 → a * b / b = a`. The original code writes `rw [mul_div_cancel₀ Real.pi hsqrtK.ne']` for `√K * (π / √K)`; the lemma name `mul_div_cancel₀` there refers to `a * b / b = a`? The argument order `(Real.pi) (hsqrtK.ne')` suggests `mul_div_cancel₀ a hb : a * b / b = a` — no wait, with `a = Real.pi`, `b = √K`: `Real.pi * √K / √K = Real.pi`. But the expression is `√K * π / √K`, which is the same by commutativity, but `rw` needs syntactic matching up to reducible defeq... `rw` uses keyed matching and can handle commutativity? No, `rw` doesn't use commutativity. Since the original compiles, the expression after `mul_lt_mul_of_pos_left ht.2 hsqrtK` must be `√K * t < √K * (π/√K)`, and `rw` with `mul_div_cancel₀` — hmm. Perhaps the actual lemma is `mul_div_cancel₀ : b ≠ 0 → a * b / b = a` in a `GroupWithZero`, and the LHS `√K * (π/√K)` elaborates/associates as `√K * π / √K` due to `mul_div_assoc` being a simp lemma applied in `rw`'s normalization? `rw` does not normalize, but the pretty printer shows `√K * (π / √K)`. Matching `a * b / b` against `√K * (π / √K)`: the pattern is `HMul.hMul (HDiv.hDiv ?a ?b) ?b`; the target is `HMul.hMul ?c (HDiv.hDiv ?d ?e)`. These are not syntactically the same. So maybe the lemma used in the original is `mul_div_cancel₀` with a different signature: perhaps `mul_div_cancel₀ (a : G₀) (hb : b ≠ 0) : a * b / b = a`? No...
+
+Since the original file compiles (verified with exit 0), the rewrite works there. I'll copy that exact pattern. Let me not worry.
+
+Actually, in Lean's mathlib, `mul_div_cancel₀` is: `theorem mul_div_cancel₀ (a : G₀) (hb : b ≠ 0) : a * b / b = a` — hmm, that's `mul_div_cancel_right₀` in some versions. In Lean 4 mathlib (current): 
+- `mul_div_cancel_left₀ (ha : a ≠ 0) (b : G₀) : a * b / a = b`
+- `mul_div_cancel_right₀ (hb : b ≠ 0) (a : G₀) : a * b / b = a`
+- `mul_div_cancel₀` might be an alias for `mul_div_cancel_right₀` with argument order `(a) (hb)`. 
+
+Whatever — the original compiles, so I'll write the same. If it fails I'll adjust.
+
+Also `rw [hxdef]` for the T'' case: I have `x : ℝ := π/√K` as a local `set`, so `hT''x : T'' < x`. `mul_lt_mul_of_pos_left hT''x hsqrtK : √K * T'' < √K * x`. Then `rw [hxdef] at this` gives `√K * T'' < √K * (π/√K)`, then `rwa [mul_div_cancel₀ Real.pi hsqrtK.ne'] at this`. Good.
+
+And for the final line: `rw [hxdef, jacobiSol_of_pos hK, jacobiSolSphere_firstZero hK] at hfin`. hfin : u x ≤ jacobiSol K x. rw [hxdef] might rewrite x everywhere; then `jacobiSol K (π/√K)` → via jacobiSol_of_pos hK → `jacobiSolSphere K (π/√K)` → 0. So hfin : u x ≤ 0 after also rewriting u x? Careful: `rw [hxdef] at hfin` rewrites `x` to `π/√K` giving `u (π/√K) ≤ jacobiSol K (π/√K)`, then the two lemmas rewrite the RHS. Then `hpos x ⟨hxpos, hxT.le⟩ : 0 < u x` — but `x` is a local definition; after `set x := ... with hxdef`, `hxpos : 0 < x` etc. are in terms of `x`, and the goal `absurd hfin (not_le.mpr (hpos x ⟨hxpos, hxT.le⟩))` needs `hfin : u x ≤ 0` (in terms of x) rather than `u (π/√K) ≤ 0`. Since `x` is a local `set` variable, `u x` and `u (π/√K)` are propositionally but not definitionally equal (x is a local constant with hypothesis hxdef : x = π/√K). So it's cleaner to avoid `set` and just use `x` as a `let`/direct expression, or use `have hxdef : x = Real.pi / Real.sqrt K`.
+
+Simplest: don't use `set`; define `let x := Real.pi / Real.sqrt K`? In tactic mode, `set x : ℝ := ... with hxdef` creates a local definition with `hxdef : x = ...`. Then rewriting hfin with hxdef changes it to the unfolded form and I'd need to rewrite back. Better approach: keep `x` as a plain expression everywhere (`Real.pi / Real.sqrt K`), or define `x` via `set` and at the end use `rw [← hxdef] at hfin`? 
+
+Cleanest: use `let x : ℝ := Real.pi / Real.sqrt K` in the proof — `let` in tactic mode creates a local definition that is definitionally equal to its value, so `u x` and `u (Real.pi / Real.sqrt K)` are defeq. Then no rewriting needed at the end: `rw [jacobiSol_of_pos hK, jacobiSolSphere_firstZero hK] at hfin` — hmm, still needs the RHS to be `jacobiSol K (Real.pi / Real.sqrt K)` syntactically; with `let x`, `jacobiSol K x` is defeq to `jacobiSol K (π/√K)` but `rw` matching might fail. I can `change u x ≤ jacobiSol K (Real.pi / Real.sqrt K) at hfin` or `show`... 
+
+Alternative: prove `jacobiSol K x = 0` as a local `have hxzero : jacobiSol K x = 0 := by rw [show x = Real.pi / Real.sqrt K from rfl, jacobiSol_of_pos hK, jacobiSolSphere_firstZero hK]` — with `let x`, `show x = ... from rfl` works. Then `rw [hxzero] at hfin`.
+
+OK let me write it with `set` and a local zero lemma:
+```lean
+  set x : ℝ := Real.pi / Real.sqrt K with hxdef
+  ...
+  have hxzero : jacobiSol K x = 0 := by
+    rw [hxdef, jacobiSol_of_pos hK, jacobiSolSphere_firstZero hK]
+  ...
+  have hfin : u x ≤ jacobiSol K x := le_of_tendsto_of_tendsto' hf hg hev_le
+  rw [hxzero] at hfin
+  exact absurd hfin (not_le.mpr (hpos x ⟨hxpos, hxT.le⟩))
+```
+`rw [hxdef, ...]` in hxzero: the goal is `jacobiSol K x = 0`; `rw [hxdef]` replaces `x` by `Real.pi / Real.sqrt K`; then the rest. ✓
+
+For `hT''pi`, I need `√K * T'' < π` where `T'' < x` and `x = π/√K`; use `hxdef`:
+```lean
+    have hT''pi : Real.sqrt K * T'' < Real.pi := by
+      have h1 := mul_lt_mul_of_pos_left hT''x hsqrtK
+      rw [hxdef, mul_div_cancel₀ Real.pi hsqrtK.ne'] at h1
+      exact h1
+```
+Hmm, `rw [hxdef] at h1` rewrites `x` to `π/√K` in h1 : `√K * T'' < √K * x` giving `√K * T'' < √K * (π/√K)`; then `mul_div_cancel₀` — same as original. Fine.
+
+For `ht₀x : t₀ < x` from `basePoint_lt_firstZero hK ht₀ hBmodel : t₀ < π/√K`, use `by rw [hxdef]; exact basePoint_lt_firstZero ...` or `hxdef ▸ ...`. Note `hxdef : x = π/√K`, so `rw [hxdef]` changes goal `t₀ < x` to `t₀ < π/√K`. ✓
+
+Now `tendsto_one_div_add_atTop_nhds_zero_nat` — check the name exists in this mathlib. Let me grep.
+
+Also `Tendsto.comp`, `tendsto_nhdsWithin_iff`, `Filter.Tendsto.eventually`, `le_of_tendsto_of_tendsto'`. Let me grep for exact names.
+
+Let me check these names quickly.
+dsh: reasoning:
+All the lemma names exist. Let me check `tendsto_one_div_add_atTop_nhds_zero_nat`'s exact type and `le_of_tendsto_of_tendsto'`.
+
+- `tendsto_one_div_add_atTop_nhds_zero_nat {𝕜} [DivisionSemiring 𝕜] [CharZero 𝕜] : Tendsto (fun n : ℕ => (1:𝕜) / (n + 1)) atTop (𝓝 0)` probably.
+- `le_of_tendsto_of_tendsto' {f g : β → α} {b : Filter β} {a₁ a₂ : α} [NeBot b] (hf : Tendsto f b (𝓝 a₁)) (hg : Tendsto g b (𝓝 a₂)) (h : ∀ x, f x ≤ g x) : a₁ ≤ a₂`. Let me check the argument order.
+
+Let me read those lines.
+dsh: reasoning:
+All good. `NeBot atTop` for ℕ is an instance. Now let me write the independent reproof file.
+
+Note: `Ioo_mem_nhds` — let me just use `isOpen_Ioo.mem_nhds ⟨hxpos, le_rfl⟩`.
+
+One concern: `hlim.eventually hIoo_nhds` — `Filter.Tendsto.eventually` is `Tendsto f l (𝓝 a) → s ∈ 𝓝 a → ∀ᶠ x in l, f x ∈ s`, accessed as `hlim.eventually hIoo_nhds`? The method is `Filter.Tendsto.eventually (hf : Tendsto f l₁ l₂) (h : s ∈ l₂) : ∀ᶠ x in l₁, f x ∈ s`. Yes.
+
+Also `Filter.Eventually.mono` for the comparison: `hev.mono fun n hn => hcompare _ hn`.
+
+For `hf`: 
+```lean
+have hf : Tendsto (fun n : ℕ => u (x - 2 / ((n : ℝ) + 1))) atTop (𝓝 (u x)) :=
+  ((h.continuousOn_u x hxmem).tendsto.comp
+    (tendsto_nhdsWithin_iff.mpr ⟨hlim_sub, hmem_ev⟩))
+```
+`ContinuousOn.continuousWithinAt`? The artifact used `h.continuousOn_u _ hxmem` — so `ContinuousOn f s → x ∈ s → ContinuousWithinAt f s x` is applied via `h.continuousOn_u x hxmem`? Hmm: `ContinuousOn f s := ∀ x ∈ s, ContinuousWithinAt f s x`. So `h.continuousOn_u x hxmem : ContinuousWithinAt u (Icc 0 T) x`. Wait: `h.continuousOn_u` has type `ContinuousOn u (Icc 0 T)` which unfolds to `∀ x ∈ Icc 0 T, ContinuousWithinAt u (Icc 0 T) x`; so `h.continuousOn_u x hxmem` works. ✓
+
+Then `.tendsto : Tendsto u (𝓝[Icc 0 T] x) (𝓝 (u x))`. Composing with `Tendsto (fun n => s n) atTop (𝓝[Icc 0 T] x)` gives `Tendsto (fun n => u (s n)) atTop (𝓝 (u x))` ✓.
+
+`hmem_ev`: from `hev : ∀ᶠ n in atTop, s n ∈ Ioo 0 x`, mono: `fun n hn => ⟨hn.1.le, le_of_lt (lt_trans hn.2 hxT)⟩` ✓ (s n < x < T).
+
+`hg`: `((continuous_jacobiSol K).tendsto x).comp hlim_sub` — `Continuous.tendsto : Continuous f → Tendsto f (𝓝 x) (𝓝 (f x))`, applied as `(continuous_jacobiSol K).tendsto x`. ✓
+
+`hev_le`: from hev via hcompare ✓.
+
+Then `le_of_tendsto_of_tendsto' hf hg hev_le : u x ≤ jacobiSol K x`.
+
+Now `hcompare` details — I need my own `mono`:
+```lean
+  have hmono : ∀ {T' : ℝ}, T' ≤ T → JacobiSolutionOn k u du ddu 0 T' := by
+    intro T' hT'
+    exact ⟨fun _ ht => h.hasDerivAt_u ⟨ht.1, lt_of_lt_of_le ht.2 hT'⟩,
+           fun _ ht => h.hasDerivAt_du ⟨ht.1, lt_of_lt_of_le ht.2 hT'⟩,
+           fun _ ht => h.eq_secondDeriv ⟨ht.1, lt_of_lt_of_le ht.2 hT'⟩,
+           h.continuousOn_u.mono (Icc_subset_Icc_right hT'),
+           h.continuousOn_du.mono (Icc_subset_Icc_right hT')⟩
+```
+Wait, `JacobiSolutionOn` is a structure with field access via dot notation for the *witness*. Constructing: `{ hasDerivAt_u := ..., ... }`. The structure fields: `hasDerivAt_u : ∀ ⦃t⦄, t ∈ Ioo a b → HasDerivAtR u (du t) t`. With `a = 0`, `b = T'`. So:
+```lean
+    exact { hasDerivAt_u := fun _ ht => h.hasDerivAt_u ⟨ht.1, lt_of_lt_of_le ht.2 hT'⟩
+            hasDerivAt_du := fun _ ht => h.hasDerivAt_du ⟨ht.1, lt_of_lt_of_le ht.2 hT'⟩
+            eq_secondDeriv := fun _ ht => h.eq_secondDeriv ⟨ht.1, lt_of_lt_of_le ht.2 hT'⟩
+            continuousOn_u := h.continuousOn_u.mono (Icc_subset_Icc_right hT')
+            continuousOn_du := h.continuousOn_du.mono (Icc_subset_Icc_right hT') }
+```
+The implicit `t` binder: `fun _ ht => ...` might not work because the binder is implicit `⦃t⦄`. Use `fun t ht => ...` — Lean will match the explicit argument order: the field type is `∀ ⦃t⦄, t ∈ Ioo a b → ...`; writing `fun t ht => ...` elaborates with t explicit? For implicit binders, `fun t ht =>` still works (the binder becomes explicit in the lambda, which is fine for a field expecting an implicit binder? Actually the expected type has an implicit binder; providing `fun t ht =>` gives a term `fun (t) (ht) => ...` whose type is `∀ t, t ∈ ... → ...` with explicit binder. Is `∀ ⦃t⦄, P t` defeq to `∀ t, P t`? Binder info is not part of defeq (it's metadata), so yes, this typechecks. The artifact's `mono` uses exactly `fun _ ht => ...`. ✓
+
+`Icc_subset_Icc_right hT' : Icc 0 T' ⊆ Icc 0 T` ✓.
+
+Now `hBmodel''`:
+```lean
+    have hBmodel'' : (K * max (1 / Real.sqrt K) T'') * t₀ ≤ 1 / 2 := by
+      have hmax : max (1 / Real.sqrt K) T'' ≤ max (1 / Real.sqrt K) T :=
+        max_le_max le_rfl hT''T
+      have hKnn : 0 ≤ K := le_of_lt hK
+      exact le_trans (mul_le_mul_of_nonneg_right (mul_le_mul_of_nonneg_left hmax hKnn) ht₀.le) hBmodel
+```
+✓ (same as artifact).
+
+`hB` for the sub-interval: `fun s hs => hB s ⟨hs.1, lt_of_lt_of_le hs.2 hT''T⟩` ✓.
+`hdducont` mono: `hdducont.mono (Icc_subset_Icc_right hT''T)` ✓.
+`hpos` for sub-interval: `fun s hs => hpos s ⟨hs.1, le_trans hs.2 hT''T⟩` ✓.
+`hk` for sub-interval: `fun s hs => hk s ⟨hs.1, lt_of_lt_of_le hs.2 hT''T⟩` ✓.
+`hK.le` for the `0 ≤ K` argument ✓.
+
+Call: `jacobi_le_constCurvModel (T := T'') (B := B) (t₀ := t₀) (K := K) hT''pos hBnn ht₀ ht₀T'' hBt₀ (hmono hT''T) (hdducont.mono ...) (fun s hs => hB s ...) hu0 hdu0 (fun s hs => hpos s ...) hK.le (fun s hs => hk s ...) hBmodel'' (Or.inr hT''pi)`.
+
+Then apply to `t` with `⟨ht.1, htT''⟩` ✓ (need `t ∈ Ioo 0 T''`).
+
+Everything mirrors the artifact but with T'' = (max t t₀ + x)/2 and a sequence limit. Good enough as an independent re-formalization.
+
+One risk: `tendsto_one_div_add_atTop_nhds_zero_nat` needs `[ContinuousSMul ℚ≥0 ℝ]` — instance exists. The `𝕜` is inferred from the expected type; since I write `have h1 : Tendsto (fun n : ℕ => (1:ℝ)/((n:ℝ)+1)) atTop (𝓝 0) := tendsto_one_div_add_atTop_nhds_zero_nat`, 𝕜 = ℝ inferred ✓.
+
+Then:
+```lean
+    have h2 : Tendsto (fun n : ℕ => 2 * ((1:ℝ) / ((n:ℝ) + 1))) atTop (𝓝 (2 * 0)) :=
+      tendsto_const_nhds.mul h1
+    have h3 : Tendsto (fun n : ℕ => 2 / ((n:ℝ) + 1)) atTop (𝓝 0) := by
+      simpa [div_eq_mul_inv, mul_comm] using h2
+    exact tendsto_const_nhds.sub h3
+```
+`tendsto_const_nhds : Tendsto (fun _ => a) l (𝓝 a)`, `.sub h3 : Tendsto (fun n => x - 2/((n:ℝ)+1)) atTop (𝓝 (x - 0))`. The goal is `𝓝 x`, and `x - 0 = x` — `simpa using ...`.
+
+Let me write:
+```lean
+  have hlim_sub : Tendsto (fun n : ℕ => x - 2 / ((n : ℝ) + 1)) atTop (𝓝 x) := by
+    have h1 : Tendsto (fun n : ℕ => (1 : ℝ) / ((n : ℝ) + 1)) atTop (𝓝 0) :=
+      tendsto_one_div_add_atTop_nhds_zero_nat
+    have h3 : Tendsto (fun n : ℕ => 2 / ((n : ℝ) + 1)) atTop (𝓝 0) := by
+      have h2 := tendsto_const_nhds.mul h1  -- Tendsto (fun n => 2 * (1/(n+1))) atTop (𝓝 (2*0))
+      simpa [div_eq_mul_inv] using h2
+    simpa using tendsto_const_nhds.sub h3
+```
+
+Should work.
+
+Let me write the file now. I'll put a time cap of ~20 minutes of iteration.
+
+Also I should double check `absurd hfin (not_le.mpr (hpos x ⟨hxpos, hxT.le⟩))`: `hpos x ⟨hxpos, hxT.le⟩ : 0 < u x`; `not_le.mpr h : ¬ (u x ≤ 0)`; `absurd hfin this : False` — but the goal at that point is `False`? No! The overall goal is `T ≤ π/√K`; after `by_contra hcon; rw [not_le] at hcon`, the goal is `False`. Yes, `by_contra` on `T ≤ π/√K` gives `hcon : ¬ T ≤ π/√K` and goal False; `rw [not_le] at hcon` turns it into `π/√K < T` ✓. So `exact absurd hfin (...)` closes False ✓.
+
+Let me write it.
+dsh: reasoning:
+Two errors:
+1. `basePoint_lt_firstZero` is defined in `ConjugatePointEndpoint.lean`, which I'm not importing. I need to prove that locally too (it's a helper from the artifact). Let me write my own version: `inv5_basePoint_lt_firstZero`.
+2. Line 90: `mul_div_cancel₀` application type mismatch. Let me look at the exact error.
+
+Let me see the full error.
+dsh: reasoning:
+Two fixes:
+1. `basePoint_lt_firstZero` → write my own `inv5_basePoint_lt_firstZero` with an independent proof.
+2. Line 90: `isOpen_Ioo.mem_nhds ⟨hxpos, le_rfl⟩` — the `Ioo 0 x` membership at `x` requires `⟨hxpos, lt_irrefl x⟩`? No: `x ∈ Ioo 0 x` requires `0 < x` and `x < x` — false! I confused myself: `x ∈ Ioo 0 x` is false. I need a neighborhood of x contained in `Ioo 0 x`, e.g. `Ioo (x/2) (x + 1)`. Right: `Ioo 0 x ∈ 𝓝 x` is true for `0 < x` but not because x is a member. Use `Ioo_mem_nhds hxpos`? Let me check `Ioo_mem_nhds`'s signature in this mathlib: likely `theorem Ioo_mem_nhds (h : a < b) : Ioo a b ∈ 𝓝 b`? Hmm, for `Ioo 0 x ∈ 𝓝 x` we need `0 < x`. Let me grep.
+
+Actually simplest: `have hIoo_nhds : Ioo 0 x ∈ 𝓝 x := Ioo_mem_nhds hxpos le_rfl`? Let me check the signature. In mathlib: 
+```
+theorem Ioo_mem_nhds (h : a < b) : Ioo a b ∈ 𝓝 a
+theorem Ioo_mem_nhds' ...
+```
+Hmm. There are `Ioo_mem_nhds_left`, `Ioo_mem_nhds_right`. Let me grep quickly. Alternatively use `mem_nhds_iff_exists_Ioo_subset`: provide `⟨0, x, ...⟩`? The lemma `mem_nhds_iff_exists_Ioo_subset (ha : a ∈ s) : s ∈ 𝓝 a ↔ ∃ l u, l < a ∧ a < u ∧ Ioo l u ⊆ s`. Hmm, requires `a ∈ s`, which x is not in Ioo 0 x. So use `Ioo (x/2) (x+1) ⊆ Ioo 0 x` with x in the former. E.g.:
+```lean
+have hIoo_nhds : Ioo 0 x ∈ 𝓝 x := by
+  apply mem_of_superset (isOpen_Ioo.mem_nhds ?_) ?_
+  · exact ⟨by linarith, by linarith⟩   -- x ∈ Ioo (x/2) (x+1)
+  · intro t ht; exact ⟨by linarith [ht.1], ht.2⟩
+```
+where the middle point x ∈ Ioo (x/2) (x+1).
+
+Or use the existing lemma `Ioo_mem_nhds` with the right signature. Let me grep.
+dsh: reasoning:
+`Ioo_mem_nhds {a b x} (ha : a < x) (hb : x < b) : Ioo a b ∈ 𝓝 x`. There's no `b` such that `x < b` and `Ioo 0 b ⊆ Ioo 0 x` — actually with `b = x` we'd need `x < x`, false. So `Ioo 0 x ∉ 𝓝 x`! Indeed: `Ioo 0 x` doesn't contain x, but a neighborhood of x can be contained in it? No — any neighborhood of x contains x itself (in T1... actually neighborhoods need not contain the point in general topology, but in the `𝓝` filter for a `T1` space? A set in `𝓝 x` need not contain x mathematically in general (e.g., `{y | y ≠ x}` is a neighborhood of x in the cofinite topology); but in a metric space, yes: every neighborhood of x contains x). So `Ioo 0 x ∈ 𝓝 x` is FALSE. Good thing Lean caught it — I had a genuine mathematical error in my independent proof!
+
+This is exactly the subtlety the artifact handles correctly: in the artifact, `hev : ∀ᶠ t in 𝓝[<] x, u t ≤ jacobiSol K t` uses `Ioo_mem_nhdsLT hxpos : Ioo 0 x ∈ 𝓝[<] x` — for the *one-sided* filter, and there the set need not contain x, but `𝓝[<] x` is the filter generated by `Iio x ∩ 𝓝 x`, so `Ioo 0 x ∈ 𝓝[<] x` iff `Ioo 0 x ∪ {x}`... Actually for `𝓝[Iio x] x`, a set S is in it iff `S ∪ ?`... `mem_nhdsWithin_iff` says `s ∈ 𝓝[t] a ↔ ∃ u ∈ 𝓝 a, u ∩ t ⊆ s`. With `t = Iio x`, `u = Ioo 0 (x+1)`, `u ∩ Iio x = Ioo 0 x` ✓. So the artifact is right and my sequence approach must use the sequence values which are *not* x — the sequence `x - 2/(n+1)` is eventually in `Ioo 0 x`, which I need to prove differently: not via `hlim_sub.eventually hIoo_nhds` (false), but directly: `x - 2/(n+1) < x` always, and `0 < x - 2/(n+1)` eventually (for n+1 > 2/x). Use `eventually_atTop.mpr ⟨N, ...⟩` for some natural N, or via `tendsto` and `Iio x ∈ 𝓝 x`:
+- `hlim_sub.eventually (Iio_mem_nhds (le_refl x))` gives eventually `s n < x` — trivially true for all n.
+- `0 < s n` eventually: `hlim_sub.eventually (Ioi_mem_nhds hxpos)` gives eventually `0 < s n` ✓ (`Ioi 0 ∈ 𝓝 x` since `0 < x`; `Ioi_mem_nhds : a < b → Ioi a ∈ 𝓝 b`).
+Then combine with `Filter.Eventually.and`.
+
+So:
+```lean
+have hev_lt : ∀ᶠ n : ℕ in atTop, x - 2 / ((n : ℝ) + 1) < x :=
+  hlim_sub.eventually (Iio_mem_nhds le_rfl)   -- Iio x ∈ 𝓝 x
+have hev_pos : ∀ᶠ n : ℕ in atTop, 0 < x - 2 / ((n : ℝ) + 1) :=
+  hlim_sub.eventually (Ioi_mem_nhds hxpos)
+have hev : ∀ᶠ n : ℕ in atTop, x - 2 / ((n : ℝ) + 1) ∈ Ioo 0 x := hev_pos.and hev_lt
+```
+Wait: `Iio_mem_nhds : a < b → Iio a ∈ 𝓝 b`; for `Iio x ∈ 𝓝 x` need `x < x`? No: `Iio_mem_nhds (h : a < b) : Iio a ∈ 𝓝 b`. For `Iio x ∈ 𝓝 x` we'd need `x < x` false. Hmm! `Iio x` does not contain x, so again not a neighborhood of x. But `s n < x` holds for ALL n (since 2/(n+1) > 0). So prove it directly: `2/(n+1) > 0` → `x - 2/(n+1) < x` for all n. That's `Filter.Eventually.of_forall`.
+
+Similarly `0 < s n` eventually: `s n → x > 0`, so eventually positive: `hlim_sub.eventually (Ioi_mem_nhds hxpos)` where `Ioi_mem_nhds (h : a < b) : Ioi a ∈ 𝓝 b` — with `a = 0`, `b = x`, `h = hxpos` ✓. That works since `Ioi 0` contains x.
+
+So:
+```lean
+have hev_lt : ∀ᶠ n : ℕ in atTop, x - 2 / ((n : ℝ) + 1) < x :=
+  Eventually.of_forall fun n => by
+    have hpos : 0 < 2 / ((n : ℝ) + 1) := by positivity
+    linarith
+have hev_pos : ∀ᶠ n : ℕ in atTop, 0 < x - 2 / ((n : ℝ) + 1) :=
+  hlim_sub.eventually (Ioi_mem_nhds hxpos)
+have hev : ∀ᶠ n : ℕ in atTop, x - 2 / ((n : ℝ) + 1) ∈ Ioo 0 x :=
+  hev_pos.and hev_lt
+```
+
+Then `hmem_ev : ∀ᶠ n, s n ∈ Icc 0 T` from `hev` ✓ (as before).
+
+Similarly for the artifact's `hzero`/`hmem` — fine.
+
+Also the same issue in the artifact's `hev`? No, the artifact uses `Ioo_mem_nhdsLT hxpos` which is about the one-sided filter. Correct.
+
+Now fix 1: prove `inv5_basePoint_lt_firstZero` locally with an independent proof:
+```lean
+theorem inv5_basePoint_lt_firstZero {T t₀ K : ℝ} (hK : 0 < K) (ht₀ : 0 < t₀)
+    (hBmodel : (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1 / 2) :
+    t₀ < Real.pi / Real.sqrt K := by
+  have hsqrtK : 0 < Real.sqrt K := Real.sqrt_pos_of_pos hK
+  have hKnn : 0 ≤ K := le_of_lt hK
+  have hsq : Real.sqrt K * Real.sqrt K = K := by
+    simpa [sq] using Real.sq_sqrt hKnn
+  have hle : Real.sqrt K ≤ K * max (1 / Real.sqrt K) T := by
+    have h1 : Real.sqrt K = K * (1 / Real.sqrt K) := by
+      rw [mul_one_div, eq_div_iff hsqrtK.ne']
+      exact hsq
+    calc ...
+  have h2 : Real.sqrt K * t₀ ≤ 1 / 2 := ...
+  have h3 : t₀ ≤ 1 / (2 * Real.sqrt K) := ...
+  have h4 : 1 / (2 * Real.sqrt K) < Real.pi / Real.sqrt K := ...
+  linarith
+```
+This is the same math as the artifact. I could write a slightly different proof: from `hBmodel` and `K * max (1/√K) T ≥ √K` (as shown), get `√K t₀ ≤ 1/2`; then `t₀ ≤ 1/(2√K)`. And `1/(2√K) < π/√K` since `1/2 < π`. Write:
+```lean
+  have h2 : Real.sqrt K * t₀ ≤ 1 / 2 := ...
+  have h3 : t₀ * (2 * Real.sqrt K) ≤ 1 := by nlinarith [h2, hsqrtK]
+  have h4 : t₀ < Real.pi / Real.sqrt K := by
+    rw [lt_div_iff₀ hsqrtK]
+    nlinarith [h3, Real.pi_gt_three, hsqrtK, ht₀]  -- t₀ * √K < π
+```
+Hmm: from `t₀ * (2√K) ≤ 1` and `√K > 0`: `t₀√K ≤ 1/2 < π` ✓. Let me write:
+```lean
+  have h2 : Real.sqrt K * t₀ ≤ 1 / 2 := ...
+  have h3 : Real.sqrt K * t₀ < Real.pi := by nlinarith [h2, Real.pi_gt_three]
+  rw [lt_div_iff₀ hsqrtK]
+  linarith [h3]   -- goal: t₀ * √K < π
+```
+`lt_div_iff₀ hsqrtK : t₀ < π / √K ↔ t₀ * √K < π`. Note commutation: `t₀ * √K` vs `√K * t₀` — linarith handles commutativity. ✓
+
+Good. That's an independent (slightly different) proof.
+
+Let me rewrite the file with these fixes. Also `mul_div_cancel₀ Real.pi hsqrtK.ne'` — the error at line 90 was the `le_rfl` issue, not the cancel. Line 90 in the file corresponds to... let me recount: the hIoo_nhds line. Yes, the `le_rfl` error. The `mul_div_cancel₀` in hT''pi didn't error (it was in the part that elaborated before? Actually errors report all; only 2 errors: line 53 basePoint and line 90 le_rfl). So `mul_div_cancel₀` works there. 
+
+Wait, but if `basePoint_lt_firstZero` is unknown, the `ht₀x` line fails, yet elaboration continues. Fine.
+
+Let me rewrite the file.
+dsh: reasoning:
+Two issues:
+
+1. `tendsto_const_nhds.mul h1` — ambiguity in `tendsto_const_nhds`'s implicit args. Fix by writing `(tendsto_const_nhds (a := (2:ℝ)) (l := atTop)).mul h1`? The signature `tendsto_const_nhds : Tendsto (fun _ => a) l (𝓝 a)`. Use:
+```lean
+have h2 : Tendsto (fun n : ℕ => (2:ℝ) * (1 / ((n:ℝ)+1))) atTop (𝓝 (2 * 0)) :=
+  tendsto_const_nhds.mul h1
+```
+The error says it can't synthesize `a` and `f`. Probably because `2` is overloaded and the function isn't pinned. Let me write it more explicitly:
+```lean
+have h2 : Tendsto (fun n : ℕ => (2 : ℝ) * (1 / ((n : ℝ) + 1))) atTop (𝓝 ((2 : ℝ) * 0)) :=
+  (tendsto_const_nhds (x := (2 : ℝ)) (l := atTop)).mul h1
+```
+Hmm, what's the argument name for the constant? `tendsto_const_nhds {a : α} {l : Filter β} : Tendsto (fun _ => a) l (𝓝 a)` — the implicit is `a`, so `(tendsto_const_nhds (a := (2:ℝ)))`. Let me use that. Or simply use `tendsto_const_nhds.mul h1` with the goal having the explicit type annotation, which I did... The first error is at 111:17 which is `have h2 := tendsto_const_nhds.mul h1` (no type annotation!). Right — I wrote `have h2 := ...` without annotation, so `a` can't be inferred. Let me annotate:
+```lean
+have h2 : Tendsto (fun n : ℕ => (2 : ℝ) * (1 / ((n : ℝ) + 1))) atTop (𝓝 (2 * 0)) :=
+  tendsto_const_nhds.mul h1
+```
+That should pin `a = 2`.
+
+2. `le_of_tendsto_of_tendsto'` expects `∀ x, f x ≤ g x` (plain forall), not eventually. So I need `Eventually.exists`? No — I have `hev_le : ∀ᶠ n, ...`. The primed version takes a plain ∀. For eventually, use the unprimed `le_of_tendsto_of_tendsto hf hg hev_le` which takes `∀ᶠ x in l, f x ≤ g x`. Let me use that instead. The unprimed version requires `[NeBot l]` and the order topology. Since we're in ℝ with `atTop` (NeBot), fine.
+
+So: `have hfin : u x ≤ jacobiSol K x := le_of_tendsto_of_tendsto hf hg hev_le`.
+
+Actually wait: is the argument order `le_of_tendsto_of_tendsto hf hg h`? From the alias above: `le_of_tendsto_of_tendsto hf hg (Eventually.of_forall h)` — the primed version calls it with hf hg first. But the original `le_of_tendsto_of_tendsto` might have signature `(h : ∀ᶠ x in l, f x ≤ g x) (hf : Tendsto f l (𝓝 a)) (hg : Tendsto g l (𝓝 b)) : a ≤ b`? Let me check the actual signature — in the OrderClosed.lean file around line 460. Let me read it.
+
+Note: the artifact used `le_of_tendsto_of_tendsto htend_u htend_j hev` — so the order is `hf hg h`. ✓ Good, the artifact's usage confirms `hf hg hev`.
+
+Let me fix both.
+dsh: reasoning:
+The independent reproof compiles. `inv5_independent_endpoint_bound` has the exact same statement as the acceptance theorem and its own proof term, with cone exactly `[propext, Classical.choice, Quot.sound]`.
+
+Now, a strong next step: verify that this independently proved theorem is *definitionally the same statement* as the artifact's `conjugate_point_bound`. I can do this by checking that one implies the other:
+
+```lean
+example : (∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}, ... ) := inv5_independent_endpoint_bound
+```
+which is the same `inv5_HeadlineType` check. Actually, my probe's `pass` check already verifies the artifact matches `inv5_HeadlineType`. I can add one more line to the reproof file: `example : inv5_HeadlineType := inv5_independent_endpoint_bound` — but `inv5_HeadlineType` is defined in the probe file. Simpler: in a small file importing both, prove `example : ... := inv5_independent_endpoint_bound` with the type copied. Or use `#check` comparison. Actually the simplest cross-check: write a theorem `inv5_artifact_eq_independent : (statement) := conjugate_point_bound` — already done.
+
+Alternatively, I can directly show the artifact's theorem follows from my independent one by `exact inv5_independent_endpoint_bound` in a file importing both. Let me add to the reproof file:
+
+```lean
+example : ∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ},
+    (0:ℝ) < T → ... := inv5_independent_endpoint_bound
+```
+That's just restating. The defeq check between the two theorems' types can be done in a file that imports both `ConjugatePointEndpoint` and the reproof: 
+
+```lean
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+import «reproof»  -- can't import a tmp file easily
+```
+
+Not needed: both were checked against `inv5_HeadlineType` in separate compile runs, which transitively establishes defeq equality of their types (defeq is transitive). Actually, `example : inv5_HeadlineType := conjugate_point_bound` was in the probe (which imports the audit module) and `inv5_independent_endpoint_bound` has the type written out explicitly. To be rigorous, let me add the same `inv5_HeadlineType` check to the reproof file itself... but `inv5_HeadlineType` is defined in the probe file. I could define it again in the reproof file (copy-paste), then `example : inv5_HeadlineType := inv5_independent_endpoint_bound`. That pins the independent theorem's type to the same acceptance sentence. Let me do that — it's cheap and makes the independent result self-contained.
+
+Actually, better: I can make a single file that (a) imports only ConstantCurvatureRauch, (b) defines the headline type, (c) proves the independent bound, (d) checks defeq. That's what I have minus the type def. Let me add the type def and example to the reproof file. The file is already compiled; adding two definitions means recompiling (~10s). Worth it.
+
+Let me add after the reproof theorem:
+
+```lean
+/-- The acceptance sentence, restated. -/
+def inv5_HeadlineType' : Prop := ∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ}, ...
+
+example : inv5_HeadlineType' := inv5_independent_endpoint_bound
+```
+
+Note: this `example` needs the exact binder structure of my theorem, which I wrote identically. 
+
+Let me add it and recompile. Also add `#print axioms` for the example? Examples don't need auditing; the theorem itself is audited.
+
+Then, the final step: confirm that the artifact's theorem and my independent theorem have defeq types by comparing both to the same explicitly-written Prop. That's a nice "two independent elaborations agree" statement.
+
+Let me do it.
+dsh: reasoning:
+Excellent. The independent reproof compiles, and the acceptance-type defeq check passes. This is strong independent evidence: the endpoint bound was re-derived from `ConstantCurvatureRauch` alone with a different interval choice and a sequence-based limit, with no use of the artifact's endpoint module.
+
+Let me update the todo list and then write the evidence file, then update the checkpoint.
+
+Let me also gather a few more pieces of evidence:
+- The exact `#print axioms` output from the verify run (27 declarations).
+- Confirm the ledger/queue files unchanged (I haven't touched them).
+- Record git status if the worktree is a git repo (to show no unintended changes).
+
+Let me check git status and gather final hashes.
+
+Actually, one more thing worth doing: the task says "Save a compile-checked checkpoint at least every hour." My session is short (under an hour so far), and I'll save a compile-checked checkpoint now (the checkpoint.json update). The compile is already verified.
+
+Let me now do:
+1. Check git status / which files changed.
+2. Write `evidence/l4cp-reverification-inv5.md` with all commands, hashes, results.
+3. Update `checkpoint.json` (preserving all keys; add `continuation_reverification_inv5`).
+4. Update todo list.
+5. Final answer with TASK_DONE.
+
+For the checkpoint, I need to be careful to preserve the JSON structure. Let me write a Python script that loads the existing checkpoint, adds the new section, and writes it back with indent=2 (matching the existing format). Note the checkpoint file is 18KB; rewriting with json.dump might reorder keys? Python dicts preserve insertion order, so loading and dumping preserves order and adds the new key at the end. It will also normalize whitespace. The existing file appears to be indent=2. Let me verify by checking the first few lines.
+
+Also note the file permissions are `-rw-------` (600) for checkpoint.json. Writing via the write tool may change permissions; using Python `open(...,'w')` preserves the existing file's permissions. Good.
+
+Let me also decide whether to update the result card. The task says "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task." The result card is the completion artifact. Prior invocations left it unchanged. I'll leave the mathematical content unchanged; the result card is already accurate. Should I add an invocation-5 note? Changing it would change its hash, and the checkpoint records the hash. The convention from inv2-4 was to leave it unchanged and record re-verification in evidence + checkpoint. I'll follow that convention and note explicitly that the card is unchanged.
+
+Hmm, but the new independent reproof is *new evidence* not mentioned in the card. Should the card mention it? The card §8 mentions the independent review. I could add a short line to the card's evidence section about the inv5 independent reproof. But modifying the card risks perturbing a frozen artifact that has been independently reviewed. The checkpoint is the worktree's mutable record; the card is the result. Prior policy: don't change. I'll keep the card unchanged and record the new evidence in `evidence/` + checkpoint, and state this in the final answer. That preserves provenance ("Preserve queue, checkpoints and provenance").
+
+Actually, hmm. The final answer is what the controller reads; the result card is the artifact of record. Adding evidence pointers to the card without changing claims would be an improvement but breaks the "frozen reviewed revision" property. The prior invocations established the convention of not touching it. I'll keep it frozen and say so.
+
+Let me now check git status.
+dsh: reasoning:
+Not a git repo. Fine.
+
+Now let me write the evidence file `evidence/l4cp-reverification-inv5.md`. It should include:
+- What was re-verified, commands, exit codes, hashes.
+- The independent reproof result.
+- The falsification checks.
+- Statement fidelity.
+- Provenance.
+- Quota/model note.
+- Verdict.
+
+Then update checkpoint.json.
+
+Let me gather the remaining hashes I need:
+- logs/l4cp-clean-build-inv5.log: 272cb560e7271d2601b2a5a24af3ca9c891c70b7854ed694c719790bd805be9d
+- logs/l4cp-verify-inv5-final.log: fa62246b815d3c0df88128a85fb05702d9204276e02900a3937e532b69676b65
+- manifest/l4cp-verification.json: 7c91fb33122a8a117d32d77025771167818a1a4e367dd48d6f18a4350f097dc9
+- tmp/l4cp_probe_inv5.lean: 2c4ae7f890d7b3d741624a2e8a531fe579a48d0cfb9b6d563cd2291f6fb88276
+- logs/l4cp-probe-inv5.log: 17e735296c709f04819d84ab9ecb814ded53a593feef1d7bb6adf40c44018ee8
+- tmp/l4cp_independent_reproof_inv5.lean: 414795886dde5cf5e52df69dc0d72ba0cadf9d0c360463c4ccb4580cd302e349
+- logs/l4cp-independent-reproof-inv5.log: e640f54da2bf6fda85f3a57e43a0511ebb85bf59b765387887ddbfe821a5cb6f
+- tmp/l4cp_print_inv5.lean + logs/l4cp-print-inv5.log: need hashes.
+- logs/l4cp-verify-axioms.log: let me hash (should be the 0111234... one from before).
+- logs/l4cp-negative-control.log: hash.
+- logs/l4cp-verify-build.log: hash.
+
+Let me gather all remaining hashes in one command.
+dsh: reasoning:
+All evidence gathered. Axiom audit log is byte-identical to inv2/inv3/inv4 (`0111234...`), 27 declarations, 0 sorryAx.
+
+Now let me write the evidence file. Then update the checkpoint.
+
+One more sanity check I should do: confirm that the *sources on disk* still hash to the checkpoint values (done: 6b6ddac2 / de3f9489 / ea18db80 / fa4f3bcd / 6e9d0cca / 351d3ea6 — all match checkpoint).
+
+Let me write evidence/l4cp-reverification-inv5.md.
+dsh: reasoning:
+Now update checkpoint.json. I'll write a Python script that:
+1. Loads the existing checkpoint.
+2. Adds a `continuation_reverification_inv5` key at the end (preserving all existing keys and order).
+3. Updates `updated_at`, `round`, `next` to reflect invocation 5.
+4. Writes back with indent=2 (matching current formatting) preserving file mode.
+
+Let me check the current top-level key order to decide what to update:
+- task_id, worktree, updated_at, status, round, continuation_reverification, objective, semantic_class, note_on_initial_state, plan, compiled_artifacts, imported_prior_artifacts, headline_theorems, verification, blockers, next, result_card, continuation_reverification_inv3, continuation_reverification_inv4.
+
+I'll append `continuation_reverification_inv5` after inv4, and update `updated_at`, `round`, and `next`. To minimize churn, maybe leave `round` as is and just update `updated_at` and add the new section + update `next`. Actually the `round` field says "1 (final; ...; continuation invocations 2 (02:18Z), 3 (02:22Z) and 4 (02:31Z) re-verified with no source changes)". I'll update it to include invocation 5. And `next` mentions inv2/3/4 evidence; update to include inv5.
+
+Let me write the script carefully with the full new section content.
+
+Hashes to include:
+- clean rebuild: log logs/l4cp-clean-build-inv5.log, sha256 272cb560..., exit 0, wall 22.3, jobs (let me get the job count from the log).
+- verify: log fa62246b..., gates 11/11, manifest hash 7c91fb..., raw log 0111234...
+- probe: tmp/l4cp_probe_inv5.lean 2c4ae7f8..., log 17e73529..., exit 0.
+- independent reproof: tmp/l4cp_independent_reproof_inv5.lean 41479588..., log e640f54d..., exit 0.
+- proof-term print: tmp/l4cp_print_inv5.lean 14abe7f4..., log fb0ca3fd..., exit 0.
+- provenance: 11/11 byte-identical; leader ConstantCurvatureRauch hash matches.
+- quota: queue controller_note records provider recovery.
+- evidence file hash — need to compute after writing (the file itself). Let me compute it after writing, then include it in the checkpoint. I'll compute it in the Python script.
+
+Let me check the build log for job count.
+dsh: reasoning:
+2771/2771 jobs. Evidence hash: 12642b1100146d27edb8f351b9e4f30a72e93e9392911489646267314aff26a7. But wait — I want to include the evidence hash inside the evidence file? No, the checkpoint. If I later edit the evidence file, the hash changes. I won't edit it. Actually, I might want to add the evidence hash to the checkpoint only; that's fine as long as I don't modify the evidence file afterward.
+
+Hmm, but I realize I should double check one thing in the evidence file: I wrote "Performed (UTC): 2026-09-12T02:28Z–02:45Z". Let me confirm current UTC time.
+
+Let me now write the checkpoint update script.
+dsh: reasoning:
+The evidence file says "02:28Z–02:45Z" — the end time is in the future. Let me fix it to a range that's honest: the session started around 02:26Z (first bash command) and this is 02:34Z. Let me change to "02:26Z–02:34Z (invocation 5)". I need to edit the evidence file, which will change its hash — so I'll do the edit *before* finalizing the hash in the checkpoint. Let me edit now.
+dsh: reasoning:
+Note: the file permission changed from `-rw-------` to `-rw-rw-r--` because I wrote to a new file (`checkpoint.json.tmp`) and renamed it. The original was 600, and now it's 644 (with umask). Prior checkpoint files in the worktree... let me check: the artifact files have various permissions (`-rw-------` for some). Does this matter? Probably not; but to preserve the original mode I could chmod 600. The original checkpoint.json was `-rw-------`. Let me restore that mode to be safe/consistent.
+
+Actually, the `write` tool created evidence/l4cp-reverification-inv5.md — check its permissions; likely 644. The prior evidence files are `-rw-------` (600). Hmm, the harness may set 600 by default for files it creates via the write tool. Let me check.
+
+Let me chmod the checkpoint to 600 to match the original, and check the evidence file mode.
+
+Then, final checks:
+1. Verify checkpoint JSON is valid and has all the old keys (20 keys: original had 19? It had task_id, worktree, updated_at, status, round, continuation_reverification, objective, semantic_class, note_on_initial_state, plan, compiled_artifacts, imported_prior_artifacts, headline_theorems, verification, blockers, next, result_card, continuation_reverification_inv3, continuation_reverification_inv4 = 19. Now 20 with inv5. ✓)
+2. Re-verify the source hashes once more (untouched).
+3. Optionally re-run the verify script one final time to confirm the checkpoint change didn't affect anything (it can't — checkpoint.json isn't input to the build or the verify script; but a final quick run is cheap and confirms the final state). Actually the verify script rewrites manifest/l4cp-verification.json with a new timestamp; that's fine.
+
+Wait — should I re-run the verify script after modifying checkpoint.json? The checkpoint is not part of the build. The final state of the worktree has: unchanged sources, updated checkpoint.json, new evidence file, new tmp/log files. A final verification run would regenerate the manifest (new timestamp) — harmless. But it takes ~1-2 min. The instruction says "Save a compile-checked checkpoint at least every hour." The checkpoint was written after the successful compile; the compile-checked status is recorded. I think one more end-to-end run isn't necessary since nothing in the build inputs changed. But to be rigorous: the checkpoint references `manifest/l4cp-verification.json` with hash `7c91fb33...`; if I re-run the verify script, that hash changes and the checkpoint reference would become stale. So I should NOT re-run it. Good — leave as is.
+
+4. Let me double-check the checkpoint's evidence hash matches the current evidence file (2f891e43...) — yes, computed in the script after the edit.
+
+5. Verify the log files I reference exist with those hashes:
+   - logs/l4cp-clean-build-inv5.log 272cb560...
+   - logs/l4cp-verify-inv5-final.log fa62246b...
+   - manifest/l4cp-verification.json 7c91fb33...
+   - logs/l4cp-probe-inv5.log 17e735...
+   - logs/l4cp-independent-reproof-inv5.log e640f5...
+   - logs/l4cp-print-inv5.log fb0ca3...
+   Let me re-verify them all in one command.
+
+6. Also verify that the result card files are unchanged (hash match) — done earlier, but let me redo at the end.
+
+Let me also fix the permissions.
+dsh: reasoning:
+All hashes match the checkpoint entries. Permissions restored to 600 for checkpoint.json; evidence file also 600 (the write tool set it that way, consistent with prior evidence files).
+
+Final sanity: re-verify the frozen artifacts' hashes and that the queue files in the worktree (manifest/*) are untouched. Note: `manifest/l4cp-verification.json` was regenerated by my verify run — that's an evidence file, not the D6 queue records. The D6 files (`queue.updated.json`, `next-20-tasks.json`, etc.) are untouched (timestamps Sep 9).
+
+Let me do a final consistency listing and then write the final answer.
+
+One consideration: the task says "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task." I chose not to modify the result card (following the inv2-4 convention). Is that the right call? The card already ends with TASK_DONE and contains accurate claims. My invocation produced additional evidence (independent reproof) not mentioned there, but the checkpoint + evidence file carry it. Modifying the card would invalidate its hash and the independent review's frozen revision. The instruction's sentence is about *where* completion is declared, i.e., the card is the task's artifact; it's already there with TASK_DONE. I'll keep it frozen and state clearly in the final answer that the completion verdict remains in that file, unchanged and hash-verified.
+
+Hmm, but there's a subtle risk: the controller might read only the result card and not the checkpoint/evidence. The card already says TASK_DONE, so no risk of a wrong verdict. Fine.
+
+Let me do the final state check and then answer.
+dsh: reasoning:
+Everything is done. Let me write the final answer with TASK_DONE, summarizing what was verified, the new evidence, and the honest classification.
+
+The final answer should include:
+- Task id, verdict TASK_DONE.
+- What was re-verified (hashes, build, gates, audit).
+- New evidence this invocation: independent reproof, fresh witness, falsification check.
+- Honest classification: conditional analytic, not a Poincaré proof.
+- Where the evidence is.
+- No blockers; no forbidden constructs; statement unchanged.
+- Note result card frozen (hash unchanged) — the completion verdict in it stands.
+- Note quota/model: configured host model only, no external model invocation; quota recovery recorded in queue controller_note.
+
+Keep it concise but complete.
+**TASK_DONE** — L4-child-conjugate-point-bound re-verified in invocation 5; the checkpoint's endpoint bound stands, with additional independent evidence and no source change.
+
+## What this invocation did (continuation on a completed checkpoint — no restart)
+
+**Frozen artifacts unchanged** (all hashes still match `checkpoint.json`):
+`ConjugatePointEndpoint.lean` `6b6ddac2…`, `ConjugatePointAxiomAudit.lean` `de3f9489…`, `tools/l4cp_verify.py` `ea18db80…`, result card `6e9d0cca…`. D6 queue/manifest records and `input/`, `third_party/`, `docs/`, `reference/` untouched; controller `state/` read-only.
+
+**Mechanical re-verification**
+- Clean rebuild from a deleted cache (`.lake/build` removed): **exit 0**, 22.3 s, 2771/2771 jobs, 0 errors.
+- `python3 tools/l4cp_verify.py`: **exit 0**, **11/11 gates**, `failures: []`; console log byte-identical to inv3/inv4, manifest differs from inv4 only in `generated_at`.
+- Axiom audit: **27/27** declarations, every cone exactly `[propext, Classical.choice, Quot.sound]`, **0** `sorryAx`; real (`sorryAx` + declared axiom) and synthetic negative controls rejected.
+- Provenance: **11/11** imported files byte-identical (`cmp`) to canonical L1/L4-leader origins; import closure contains no `ConjugatePointBound`/`SturmZeroCount`.
+- Proof term of `conjugate_point_bound_strict` uses the endpoint-limit ingredients (`ContinuousWithinAt.mono_of_mem_nhdsWithin`, `le_of_tendsto_of_tendsto`, `jacobiSolSphere_firstZero`) and **not** the non-strict theorem → non-circular.
+
+**New evidence produced this invocation**
+1. **From-scratch independent reproof** (`tmp/l4cp_independent_reproof_inv5.lean`, imports only `ConstantCurvatureRauch`, never the artifact's endpoint module): re-derives the acceptance statement with a local restriction lemma, a local base-point bound, interval `T'' = (max t t₀ + x)/2`, and a **sequence** limit `x − 2/(n+1) → x` instead of `𝓝[<] x`. Compiles exit 0; type defeq to the restated acceptance sentence; cone exactly the allowed triple. My first draft failed on the real subtlety that `Ioo 0 x ∉ 𝓝 x`, which confirms the artifact's one-sided handling is the correct mechanism.
+2. **Fresh non-vacuous witness at new numbers**: `k ≡ 5, K = 5, T = 7/5` (within 0.005 of `π/√5 ≈ 1.40496`), `B = 7`, `t₀ = 1/14` gives `7/5 < π/√5` via `conjugate_point_bound_strict`, all 14 hypotheses discharged.
+3. **Sharpness there**: `jacobiSol 5 (π/√5) = 0` and positivity already fails at `π/√5 + 1/10`.
+4. **Hypothesis-necessity falsification**: the same sentence with `0 ≤ K` instead of `0 < K` is provably **false** (at `K = 0`, `π/√0 = 0` while `T = 1`); so `0 < K` is essential and the theorem is not a vacuous specialization.
+5. Both the headline theorem and `endpoint_bound_acceptance_lock` re-elaborated against an independently written acceptance type (hypothesis-for-hypothesis, `hzero` removed).
+
+**Model/quota**: configured host model only; no subagent, workflow, Ralph loop or external model invoked. Provider recovery is recorded in the controller's `queue.json` `controller_note` (2026-09-12T10:29:43+0800, this task named as the live probe).
+
+**Honest classification**: still *conditional analytic* scalar Jacobi/Riccati comparison — not the manifold-level conjugate-point theorem, not a Poincaré proof. No blocker; the endpoint limit is genuinely formalized, so no conditional-analytic downgrade applies.
+
+Evidence: `evidence/l4cp-reverification-inv5.md` (`2f891e43…`), recorded in `checkpoint.json` (`updated_at 2026-09-12T02:35:00Z`, status `complete`, blockers `[]`). The result card was deliberately left frozen, so its TASK_DONE verdict and reviewed hash are preserved.

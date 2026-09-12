@@ -1,0 +1,1087 @@
+dsh: reasoning:
+Let me read gate-build.log, checkpoint.json, prompt.md, and the release package.
+dsh: reasoning:
+Interesting. The checkpoint says the task was previously complete with TASK_DONE. But the gate failed because the build of the release package failed due to network: cloning mathlib failed with RPC error. So this is a repair attempt: the gate runs `lake build` in the release package (cwd release) and it failed. The gate-build.log shows:
+
+```
+info: mathlib: cloning https://github.com/leanprover-community/mathlib4
+error: RPC failed; curl 16 Error in the HTTP2 framing layer
+fatal: expected flush after ref listing
+error: external command 'git' exited with code 128
+```
+
+So the release package's `.lake/packages/mathlib` is missing (maybe the release dir lacks the packages symlinks). The original work used a private prebuild at `review/packages`. So the release package needs to reference the prebuilt packages (e.g., via a `lakefile` with a local path, or `.lake/packages` symlinks, or `LEAN_PATH` etc.). The gate compiles from the release package directory, so we need to make the release package self-sufficient: e.g., symlink `.lake/packages/mathlib` -> `/data3/.../review/packages/mathlib` (or the shared mathlib checkout), and any other dependencies.
+
+Wait — but "Fix authored source or report an infrastructure blocker." The network is unavailable presumably. The gate requires building release package. Let's look at release dir, its lakefile, .lake, etc.
+
+Let me explore the worktree in detail.
+dsh: reasoning:
+So the release's `.lake/packages` is a symlink to `/data3/.../poincare-lab/.lake/packages`. Earlier the gate failed because `.lake/packages` perhaps didn't exist or the symlink was created after the gate run? The gate ran at 00:38:12 and created `packages.transport-failure-20260912004503` at 00:45. Hmm, timestamps: release/.lake dir mtime 00:45, packages symlink at 00:45. packages.transport-failure-20260912004503 at 00:38. So during the failed gate run at 00:38, `lake` tried to clone mathlib into `.lake/packages/mathlib`, failed... Then someone (a previous repair attempt within this checkpoint?) moved the partial failure dir aside and symlinked packages to poincare-lab at 00:45.
+
+Wait, the checkpoint.json is dated Sep 12 00:35, and claim completion. The gate.json is 00:38. So the gate ran after the checkpoint was written. Then at 00:45 someone created symlink. Then heartbeat 00:59. This is repair attempt 1 and the runtime restarted. Actually the current invocation is the repair attempt. Let me check whether symlink target exists and whether the build works now.
+
+Let me check the target: /data3/guoshaoyang/workdir/lean_poincare/poincare-lab/.lake/packages.
+
+Also I need to check the gate runner to know exactly how it builds: what command, what env. Let me find the gate script in the longrun infrastructure. But first check symlink and run the build.
+
+Important: "Compile from the release package, NOT the worktree root." So the gate does `cd release && lake build` presumably. Let me try that manually, but be careful about time. First check the lakefile and lake-manifest.
+dsh: reasoning:
+Now, the critical question: the gate does a build of the release package. Does the gate build with a clean `.lake` or does it use the existing `.lake/packages` symlink? The gate ran at 00:38 and the failed clone suggests at that time `.lake/packages` was empty or nonexistent so Lake tried to fetch packages. Now at 00:45 the symlink was created (probably by the previous repair attempt). But wait, the timestamps: checkpoint.json was 00:35 (previous work claiming done). gate at 00:38 failed. Then repair attempt created symlink 00:45 and maybe that was after gate failed. Hmm, the "packages.transport-failure-20260912004503" is a directory from 00:38 that contains presumably a partial clone. Then the repair replaced `.lake/packages` with a symlink at 00:45.
+
+Actually "packages.transport-failure" rename suggests: the original `.lake/packages` contained the failed clone; the repair moved it aside and symlinked to the prebuilt packages. But then the gate.json still shows failure (gate ran before the fix). The current invocation is repair attempt 1 and we need to re-run the gate or at least verify the build now succeeds.
+
+But the gate may be strict: it might build in a *pristine* copy of the release package (a transport copy) rather than in-place. Let me find the gate runner script. The state dir has run-1789145954-1.log (347KB). Let me look at the dispatcher scripts in longrun. Search for "gate-build.log" references.
+
+Let me find the harness code.
+dsh: reasoning:
+Let me look at the dispatch_loop.py gate logic to understand exactly what will be run and whether it rebuilds in-place or makes a fresh copy.
+dsh: reasoning:
+Key facts:
+- `compile_gate` computes source_hash over `.lean` files + lakefile.toml/lake-manifest.json/lean-toolchain, excluding `.lake` and `.git`.
+- It caches gate result if version and source_sha256 match. Current gate.json has source_sha256 `75e8231d...`. If we change any .lean file content, the hash changes and it re-runs the gate. If we only fix `.lake/packages` symlink (not part of hash), the gate will still see the cached failing result and return it without rebuilding! That's crucial.
+
+Hmm: `if gate.exists(): previous ... if version == GATE_VERSION and source_sha256 == fingerprint: return previous`. So the cached failure is keyed to the source hash. To get the gate to re-run, the source hash must change — i.e., we must modify a .lean file, or lakefile/manifest/toolchain. Or the gate.json must be removed/edited. But the dispatcher manages gate.json; can we touch it? It's in the state dir, which is outside the worktree (workspace-write policy: our workspace is the worktree only). So we cannot modify state dir probably (sandbox denies). Let me check GATE_VERSION and ENV in dispatch_loop.py. Also ENV may include network-proxy settings etc.
+
+Actually, wait. The instruction says "Fix authored source or report an infrastructure blocker." The natural fix: the failure was that `.lake/packages` was missing/partial, so lake tried to clone mathlib and network failed. The repair: provide prebuilt packages (symlink). But the gate won't re-run unless source hash changes. The gate will return the cached failure. Unless the dispatcher's flow invalidates it... Let me read more of dispatch_loop.py to understand the state machine: after repair attempt, how is the gate re-run? Maybe the dispatcher deletes gate.json before re-running, or maybe the repair prompt is written and then gate is re-evaluated with a fresh fingerprint.
+
+Let me read the relevant portion of the file around tick().
+dsh: reasoning:
+Critical insight: when the worker writes its card with TASK_DONE and creates state/DONE, the dispatcher runs `compile_gate`. The cached gate.json has source_sha256 of the current sources. If our repair modifies any .lean file, the fingerprint changes → gate re-runs the build. If we don't modify .lean files, the gate will return the cached failed result (ok=false), the dispatcher will see `owned and repair_count < 2` — repair_count is now 1 (from the log we can check queue.json), so it will queue repair attempt 2, and eventually gate_failed.
+
+Also note: the current worker invocation is already repair attempt 1 (repair_count incremented to 1). The dispatcher will run gate again after we write the card and create DONE. If gate still fails and repair_count < 2, it will schedule repair 2. We want to fix this now.
+
+The root cause of the gate failure: at 00:38, the release `.lake/packages` did not have mathlib. Wait — but the transport-failure dir was moved aside at 00:45. Let's check run-1789145954-1.log (the previous worker's log) around the failure to understand what happened. Actually the more important question: why did the gate fail at 00:38 when the previous work claimed successful cold builds using review/packages?
+
+Hypothesis: `release/.lake/packages` did not exist during the gate run, so lake tried to fetch deps from the network (offline → failed). The previous worker had built using `review/packages` (via `lake env` with a custom setup?) or perhaps in a different copy. The release dir has `.lake/build`? Let's check: `release/.lake` only has packages symlink and the failure dir — no `build` dir, meaning the release package was never built in place. The gate needs to actually build the release package from scratch, which means compiling mathlib + all the release files. mathlib oleans must be present in the mathlib package (they are prebuilt in review/packages presumably). That's ~9000 jobs for the release library itself? Actually the checkpoint says "origin now builds 9208 jobs" for heat-kernel. For the release package with full mathlib dependency, `lake build` needs mathlib's oleans to be up to date. If mathlib's `.lake/build` is present in the prebuilt packages, then building the release target only compiles release .lean files (maybe hundreds to thousands).
+
+Let me check whether review/packages/mathlib has `.lake/build/lib/lean` with oleans. And check the symlink target is the same `D6_weekly_release/release/.lake/packages`.
+
+Also key: the gate runs `lake build` with defaultTargets. Which includes Poincare, Probe, Ledger, Audit, ReleaseCheck, ReleaseAudit, D6AuditReport. That's the whole package. With mathlib prebuilt, this should be feasible (previous cold builds in review/build presumably did the same).
+
+Now, the gate's build will run in `release/` with `.lake/packages` symlinked to prebuilt packages. But the gate also does `lake env lean <file>` for each source file, which is cheap if oleans are built.
+
+Potential problem: the symlink to `/data3/.../poincare-lab/.lake/packages` might be considered "outside workspace" and the sandbox may block reads? No, workspace-write allows reading anywhere presumably; it permits writes only under workspace. Actually the sandbox denied nothing so far.
+
+But there's a bigger issue: will the gate's `lake build` modify the symlinked packages (e.g., mathlib build artifacts)? It shouldn't need to if they're up to date. But if the `lake-manifest.json` revs differ from what's in the symlink target's packages, lake might try to re-fetch/re-checkout. Let's compare: the symlink target is D6_weekly_release's mathlib. Is its rev 7974e751...? Let's check `git -C ... rev-parse HEAD`. Also check that oleans exist.
+
+Wait, but there's a subtlety: the previous gate run at 00:38 was at a moment when `.lake/packages` was not the symlink yet? Then who created the symlink at 00:45? Possibly a previous repair-attempt worker (this same task, an earlier invocation) that started around 00:38-00:45 and made the symlink, then... hmm, but heartbeat says pid 1694003 at 00:59. Let me check the current worker's session log and the previous run log. The current invocation started around 00:59. The repair prompt was written at 00:38 (per gate.json checked_at 00:38:12). The state dir mtimes: prompt.md 00:59 (rewritten?), run-1789145954-1.log 00:37 (that's dispatcher run log?), last_run.json 00:37.
+
+Let me check queue.json for this task's status, repair_count, and the worker log.
+
+Actually, let me focus: my job is to make the gate pass. Concretely:
+1. Ensure `release/.lake/packages` provides mathlib and deps with correct revs and prebuilt oleans.
+2. Ensure any pre-existing build state in release (none) is fine.
+3. Modify at least one `.lean` file in the release package so the fingerprint changes and the gate re-runs. Hmm, but modifying sources to change the hash is hacky. But it's also required for the repair to take effect... Unless we can delete/rewrite state/gate.json. Let's test if state dir is writable (sandbox). The policy says workspace-write with session workspace = the worktree. State dir is outside. Probably denied. But "Some platform temporary areas may also be writable." Let me not attempt yet; first verify the build.
+
+Actually wait. There's another possibility: the fingerprint may already have changed since the gate ran, if the previous worker edited sources after the gate. Gate source hash 75e8231d... Let me compute the current source hash with the exact algorithm and compare. If it differs, the gate will re-run automatically.
+
+Let me write a small script that replicates source_hash.
+
+Also: if we do need to change the hash, adding a legitimate review file under release/ (e.g., `release/ReleaseAudit...`)? Careful: the gate defaultTargets include specific libs; adding a .lean file not in a glob won't be built but IS in source_hash (all .lean files under package). But it would also be checked by `lake env lean <file>` in the per-file gate → must compile. That's acceptable but it changes the release artifact. Better not add junk.
+
+Hmm, actually maybe I should consider: is the failure genuinely infrastructure (network offline)? The repair instruction says "Fix authored source or report an infrastructure blocker." The failure is not authored source; it's that the package lacks vendored deps and network is blocked. The proper fix is to provision `.lake/packages` from the local prebuilt cache (which the previous worker did at 00:45, after the gate ran). That's an infra fix within the worktree (allowed: we can write under the worktree, including creating symlinks). Then we must trigger a gate re-run. Modifying lakefile.toml (e.g., nothing semantic) would change the hash — but any modification to lakefile could be seen as tampering. Hmm.
+
+Alternatively, `compile_gate` returns cached result only if `previous.get("version") == GATE_VERSION and previous.get("source_sha256") == fingerprint`. The gate.json is in state dir. If the dispatcher's cached gate is stale relative to the actual sources, we can force a mismatch by legitimately editing a source file (e.g., improving a docstring/comment in a review file). But the fingerprint changes → gate rebuilds → good.
+
+Wait, actually, is the source hash even the same now? The gate ran at 00:38 with hash 75e8231d...; if the previous worker changed any source after that, the current hash differs. Let me compute.
+
+Let me also check the worker loop to see whether it re-runs the gate itself (no, dispatcher does).
+
+Plan:
+1. Compute source hash now, compare to gate.json.
+2. Check the prebuilt packages (revs + oleans).
+3. Reproduce the gate build: `cd release && lake build` (with the correct env) — this may take a long time (maybe 30-90 min). Run in background and monitor. Need to ensure it doesn't try to hit network. Use `lake build` with `--no-fetch`? lake has `--no-fetch` option? There's `lake build` no flag; `lake` may attempt to fetch missing packages. Since symlink exists with proper packages, it should not fetch. But there may be a check: lake verifies manifest revs against package git HEADs. If mismatch, it might try to fetch/checkout. Let's check revs.
+
+Let me also check `ENV` in dispatcher: `PATH` includes elan; ELAN_HOME set. `lake` resolves toolchain from lean-toolchain.
+
+Let me gather this data.
+dsh: reasoning:
+The current fingerprint equals the gate.json fingerprint `75e8231d...` — so sources unchanged. The gate will return the cached failure unless the fingerprint changes.
+
+All package revs match the manifest. mathlib build is 8.2G prebuilt. Good.
+
+So the fix must both (a) provide `.lake/packages` correctly (done via symlink at 00:45), and (b) cause gate re-run. For (b) we need a source-content change. Since the work is an independent review, there may be legitimate source files in the release package we can improve — e.g., the review's own audit files (ReleaseAudit.lean, etc.) or documentation comments. But changing any source for the sole purpose of invalidating a cache is questionable. However, the task says "Fix authored source or report an infrastructure blocker." The real problem is the missing packages; that's a workspace artifact fix but not part of the source hash. The gate caching means the fix isn't observed. Hmm.
+
+Wait — maybe I'm wrong about the timeline. Perhaps the failure at 00:38 happened because `.lake/packages` was missing. The previous worker at 00:45 created the symlink to `poincare-lab/.lake/packages`. But hold on — was the symlink perhaps created by the previous worker *before* the gate, and the gate still failed? Let's look at what `lake build` does when `.lake/packages` is a symlink. The failure log says "info: mathlib: cloning ..." which means lake did NOT find the package at `.lake/packages/mathlib`. If the symlink existed pointing to a dir containing mathlib, lake wouldn't clone. So at 00:38 the symlink did not exist or the target lacked mathlib.
+
+Actually wait: maybe at 00:38 `release/.lake/packages` was a *real directory* containing a partial clone (the clone failed leaving a partial). The dir `packages.transport-failure-20260912004503` is empty (4.0K, no entries) — it was the moved-aside empty/failed packages dir. So at 00:38, `.lake/packages` existed but was empty (or contained only partial mathlib), so lake tried to clone mathlib → network fail. Then previous repair attempt (this task, earlier invocation in the 00:38-00:59 window) moved it aside and symlinked to the prebuilt packages. That previous attempt apparently ended without writing a new card (or did it?). The state's run-1789145954-1.log mtime 00:37 is dispatcher's log? Let me check the dispatcher log tail and the task's worker log.
+
+Also note: the gate.json's fingerprint matches current sources, and gate.json is the *cached* result. Even if we fix packages, cached gate returns failure. Unless... the dispatcher deletes gate.json? No. Hmm, but note `compile_gate` is invoked only after `DONE` exists and the worker has exited. The dispatcher will submit compile_gate → returns cached failure immediately (`compile_gate` returns previous before even checking packages) → repair_count becomes 2 → Repair prompt → invocation 2. At the end of repair 2, if the fingerprint is still unchanged, cached failure again → repair_count is not < 2 → gate_failed. So we must change the fingerprint.
+
+How to change the fingerprint legitimately?
+- Option A: Fix the root cause in a source-visible way. E.g., the "release" package could pin its dependencies as local path requires? Changing lakefile.toml to use a local `require` path would alter the hash and also make the build hermetic (no network). But that changes the release artifact semantics — the release package is supposed to be a faithful transport of the D6 release. Changing `lakefile.toml` to a path requirement is an infrastructure adaptation that makes cold builds work offline. Hmm, but it changes the source hash and would be visible. Yet "Do not weaken a theorem..." — a lakefile change doesn't weaken anything. But it does change the package manifest, which is part of the reviewed artifact. Also `lake env lean` per-file checks rely on the manifest.
+
+- Option B: Edit a comment/docstring in one of the release .lean files. Then the hash changes, gate re-runs. E.g., update the review audit report file to reflect the new review (the repair). Actually there is a natural authored change: the review card should document this repair. But the release package is the *reviewed artifact*, and its .lean files include the audit reports. Modifying the reviewed artifact to fix the gate is bad practice.
+
+Hmm, wait. Let's reconsider. Maybe the gate will actually be re-run by the dispatcher because the gate.json gets deleted when the task is relaunched? In tick(), when launching a queued task, it does `(state / "DONE").unlink(missing_ok=True)` but not gate.json. When the repair prompt is written, nothing deletes gate.json. So no.
+
+But hold on: maybe there's another mechanism. Let me check `bin/worker_loop.sh` and the worker protocol: maybe the worker itself is supposed to run the gate? Let's look at what the worker does at the end (DONE creation). Also maybe there is a "gate" invocation in the prompt for build tasks. Let me read worker_loop.sh and the DONE handling.
+
+Also, maybe a cleaner approach: make `.lake/packages` a *real directory with copies/symlinks per package* rather than a symlink? Doesn't matter for the fingerprint.
+
+The fingerprint excludes `.lake`, so ANY change to fix packages doesn't change the hash. That's why the gate cache is stale. The sane infrastructure fix is to delete the stale gate.json, but that's outside the workspace... unless we can write there. Let me test writability of the state dir. The sandbox policy: workspace-write with session workspace = worktree. The state dir is at /data3/.../longrun/state — outside. Writes probably denied. But note the worktree has `longrun/results` inside, and also `longrun/` dir in the worktree. There might be a per-task state symlink? No.
+
+Actually, wait. Let me re-read the runtime context: "Any available operation enforced by the DSH file sandbox may modify files under the session workspace: /data3/.../worktrees/SEMREV-D13-cross-audit-ophis". So writing to the state dir will be denied. I could attempt it and see (a denial is safe/expected). But even if allowed, modifying the dispatcher's gate.json to remove the cached failure is a hack that modifies harness state; it's arguably legitimate ("invalidate stale cache") but risky. The instructions say "Do not edit tests or negative controls." Gate cache isn't a test.
+
+Alternatively, there's a legitimate source change available: the *review* itself. The task is SEMREV-D13-cross-audit-ophis. Its own deliverables are in `longrun/results/` (outside release) plus `review/` artifacts (outside release). The release package is the *input artifact*, not the task's output. So the release package's sources should be frozen. Hmm.
+
+But hmm, what did the parent artifact produce? The release package contains `ReleaseAudit.lean`, `D6AuditReport.lean`, etc. The task is a semantic review of the D13 cross-audit card; the release package is the D6 weekly release (the parent's input?). Let me read the README and the result card to understand the artifact relationships.
+
+Actually, the most important thing: figure out what the gate actually compiles. It compiles `release/` with 63 .lean files. The task's own outputs are in review/ and longrun/results/. The gate's requirement "compile from the release package" implies the release package must build. Since the release package is a transport/copy of the accepted parent artifact, we shouldn't alter its Lean sources except to fix genuine problems.
+
+Let me now consider that maybe the symlink to poincare-lab is NOT a good idea because poincare-lab is another worktree that may be modified concurrently. The previous worker's checkpoint says "private prebuild review/packages" symlinked to D6_weekly_release. The repair created a symlink to poincare-lab instead. Which is more stable? Let's check both targets for mathlib oleans. review/packages → D6_weekly_release/release/.lake/packages. Is that dir intact? Let me check.
+
+Then I'll reproduce `lake build` in release to see if it works with the symlink. That is the decisive test. It may take a while (63 files; but imports mathlib → the build might try to build mathlib if oleans are considered stale). Let's estimate: `lake build` with defaultTargets builds the libs. If mathlib oleans are up-to-date and trace files match, lake won't rebuild mathlib. Building 63 release files on top of mathlib may take 10-60 min. The gate allowed 3600s timeout.
+
+Key risk: the gate runs `lake build` and lake may try to *fetch* packages if it doesn't see them as up to date (e.g., because manifest `inputRev: master` differs from the checked-out rev? No, lake checks the manifest rev against the package's git HEAD and only fetches if missing). With the symlink, `lake` resolves package dirs under `.lake/packages/mathlib`. But `/data3/.../poincare-lab/.lake/packages/mathlib` — does it have `lakefile.lean`, `.lake/build`? Yes 8.2G build.
+
+One more risk: the release package build directory `.lake/build` is absent, so the release files need full compilation. Let's check if there are prebuilt oleans for the release package somewhere (e.g., in a build cache or in review/build). The checkpoint mentions review/build with 13 subdirs. Maybe the release package was previously built elsewhere with the same sources; we could copy `.lake/build` in to speed up? But the gate's build must be honest: it will build whatever is needed. Copying prebuilt artifacts from an identical build is legitimate (that's how Lake caches work) as long as they're valid. But stale/mismatched oleans would be worse. Let me first try the build.
+
+Also note: the gate runs per-file `lake env lean <relative path>` after the build. Since files are compiled by the build already, these are quick (recompiling each file individually, ~seconds each, 63 files, 4 workers).
+
+Let's plan the build. Before building, I want to check disk space, CPU, and the previous evidence (review/build) to potentially seed the release `.lake/build`.
+
+Let me look at the review dir and previous worker's logs to see how the release package was built before (maybe `review/build/release-*`). Let me list review/build.
+dsh: reasoning:
+Important: `D13-cross-audit-ophis-cards` (the parent) gate PASSED at 23:42 with 63 files. So the parent built the release package successfully at 23:42 — how? The parent's worktree is `/data3/.../worktrees/D13-cross-audit-ophis-cards`. The SEMREV task worktree probably got the release copied from the parent (a transport). The parent worktree likely has `.lake/packages` intact or built. So the fix is to point release/.lake/packages at the parent's packages (or a shared cache) — which the previous repair did via poincare-lab symlink.
+
+Wait, actually, the gate cache: the parent's gate was on the parent's own state. Our gate's fingerprint equals current sources; at 00:38 the build failed at cloning mathlib. Note `D13-heatkernel-bridge-d10-d7` PROMOTE at 00:51 with gate 326 files — so other tasks are building fine, presumably they have `.lake/packages` symlinks or local packages.
+
+Now the key problem remains: the stale cached gate.json for our task. Let me check whether there's any other SEMREV task with a repair and see how they handled the gate. SEMREV-L5-topology-audit also got a repair at 00:42; its second gate at 00:59... and "REPAIR SEMREV-L5-topology-audit attempt 2 queued" at 01:00. So that one failed again. Our task was launched at 00:59 for repair attempt 1.
+
+Let me look at the L5 semrev state to learn: did they modify sources? Check L5's gate.json + gate-build.log.
+
+Also, maybe I'm wrong that the cached gate.json can't be invalidated. Wait — maybe the state gate.json is updated by something else between attempts. Let me check `SEMREV-L5-topology-audit` state dir. Actually more usefully: check if the L5 repair attempt 1 changed the source fingerprint (gate.json source_sha256 differs from previous). If the worker modified sources to force a rebuild, then that's the established pattern... Let me inspect.
+dsh: reasoning:
+Excellent! The parent worktree `D13-cross-audit-ophis-cards/release` has:
+- `.lake/packages` symlink to poincare-lab/.lake/packages (same as the repair created for us)
+- `.lake/build` 313M — prebuilt release oleans
+
+So the parent gate passed at 23:42 using exactly this setup. The transport to our worktree apparently excluded `.lake` (or included a broken .lake). The previous repair created the packages symlink but not the build dir. I can copy the parent's `.lake/build` (313M) into our release to seed the build (identical sources → valid oleans; lake will verify hashes and only rebuild if needed). But careful: the gate's per-file `lake env lean` re-checks each file; and `lake build` with existing oleans will be fast. Copying prebuilt oleans built from the same source is legitimate (it's the same as a shared build cache), and the gate still runs `lake build` (which validates traces) plus per-file checks, and the fingerprint must match. However, there's a subtlety: our release sources are byte-identical to the parent's? Fingerprint matches gate.json of the *parent*? Let me check the parent's gate.json source_sha256. The parent's gate says 63 files. Our fingerprint is 75e8231d... which is exactly the same as... wait, the gate.json in *our* state dir has source_sha256 75e8231d..., and the L5 semrev gate.json also has 75e8231d... — that's suspicious. L5-topology-audit's release should have 464 files per the parent gate ("gate 464 files"), and its fingerprint should differ from ours. But both show 75e8231d... Hmm! That means... the L5 semrev task's `gate.json` was somehow copied? Wait, look: SEMREV-L5-topology-audit gate.json cwd is its own release, but source_sha256 equals ours = 75e8231d. That can't be a coincidence.
+
+Hold on, look at the dispatcher launch logic: for `after_terminal` dependencies, it copies files. But deps for SEMREV-L5? Let me check the queue. Hmm, but the L5 task's release is a different package (464 files). Unless... the state gate.json files got mixed up. Let me verify by computing the fingerprint of the L5 worktree release.
+
+Actually wait, maybe the SEMREV-L5 state dir was reset by a relabeling? Or maybe the `D13-heatkernel-bridge` gate.json? Let me check the actual L5 release fingerprint.
+
+Actually, this might be a red herring for our task. But it's worth understanding whether gate.json gets memoized per source hash wrongly. Let me compute fingerprints of several worktrees' release packages and compare to their state gate.json entries.
+
+More importantly: our own gate.json fingerprint equals our current release fingerprint, and the cached result is the failed build. So the gate will short-circuit.
+
+Unless... hmm, wait. Let me re-read: `if previous.get("version") == GATE_VERSION and previous.get("source_sha256") == fingerprint: return previous`. Yes, short-circuit. So to force re-run, source must change.
+
+But WAIT. Maybe the previous repair's *intent* was different: the `.lake/packages` symlink fix is enough for the *next* gate run only if fingerprint changes. So the previous repair (this task, attempt 0? no—attempt 1 is us) created the symlink and then what? The repair prompt was written at 00:38, and a worker launched at 00:59 is us. Who created the symlink at 00:45? Hmm... Let me check run-1789145954-1.log — maybe that's the supervisor log of another worker? Actually `run-1789145954-1.log` is in the state dir, 347KB. Let's look at its tail. It might be the log of a "pre-repair" attempt (maybe an agent from the previous checkpoint that noticed the gate failure and started fixing infra). Actually the checkpoint.json at 00:35 says phase complete_final, TASK_DONE. Then gate ran 00:38 and failed. Then... 00:45 symlink created and the failure dir moved aside. Something/someone did that between 00:38 and 00:59. Possibly a human/harness "infra repair" step. run-1789145954-1.log is likely the dispatcher supervisor log for this task (worker_loop output). Let's check its head/tail timestamps.
+
+Let me look at the log file and also worker_loop.sh to understand what "run-...-1.log" is.
+dsh: reasoning:
+So run-1789145954-1.log is the previous round's agent log (the completed review). It ended at 00:37:15, exit 0, and touched DONE. Then the gate ran at 00:38:12 and failed (network). Then dispatcher queued repair attempt 1. The symlink at 00:45: hmm, maybe another worker (SEMREV-L5 repair launched at 00:45:13) did the symlink? No, different worktree. Or the poincare-lab symlink was created by... Actually, maybe the previous agent created it before ending but with a later mtime? No, mtime 00:45.
+
+Hmm, maybe the infra has a "repair_cache.py" script that runs. Let me check `repair_cache.py` — maybe the dispatcher or a cron handles known transport failures by linking caches.
+
+Anyway, what matters now: gate re-run requires fingerprint change. Let me check how the L5 task fares — its gate.json fingerprint is identical to ours, which is bizarre. Let me verify L5's actual release fingerprint. If L5's release also happens to have 75e8231d... that would mean its release is the same 63-file package? But log says gate 464 files. Wait, the PROMOTE line says "gate 464 files" for L5 — that was the parent L5 gate at 23:47 on the *parent* worktree? No, "PROMOTE L5-topology-audit compiled (gate 464 files)" — L5-topology-audit is a builder task; its own release package has 464 files. The SEMREV-L5 semrev worktree's release may be a *copy* of L5's release... which should have 464 files. Let me just compute.
+
+Actually hold on. Maybe the fingerprint 75e8231d is for a package whose 63 files are identical across these SEMREV worktrees: maybe each SEMREV worktree's `release/` is a copy of the *parent card artifact's* release, and for SEMREV-L5, the release is... hmm, no.
+
+Let me compute fingerprints for the three semrev worktrees.
+dsh: reasoning:
+All three SEMREV worktrees have the *same* 63-file release package with identical content — fingerprint 75e8231d. So these SEMREV tasks all received the same release artifact (the D6 weekly release? the parent artifact of the semantic review stage). The acceptance says "compile/read all cited declarations" — the cited declarations are in the *cards*, which live in the input/ directories (from the parent artifacts), not necessarily in the release package. Wait, but the review's own evidence used trees in `review/build/*` etc.
+
+OK so what is `release/` here? It's a copy of the D6 weekly release package (63 .lean files). The gate just builds it as a sanity check. The parent gate passed at 23:42 with 63 files in the parent worktree.
+
+So the situation:
+- Gate fails only because the release package's `.lake/packages` was broken at transport time (empty dir), causing lake to attempt network fetch which fails (offline).
+- Fix: restore the same package cache as the parent (symlink to poincare-lab/.lake/packages) — already done at 00:45 by someone.
+- Remaining problem: stale gate.json cache keyed on unchanged fingerprint. The dispatcher will return the cached failure unless we change a source byte in the release package.
+
+Is changing a source byte acceptable? The release package is a transported artifact that the SEMREV task must compile. The repair instructions: "Fix authored source or report an infrastructure blocker." The failure was infra (missing package cache). We fixed the cache. The dispatcher's cache invalidation is keyed on source hash; no source change is warranted. But then the gate will never re-run...
+
+Hmm, wait. Let me look again at the exact sequence: at 00:38:12 GATE_START, gate.json written (cached failure), at 00:39:13 REPAIR queued. So the dispatcher will, at the end of *this* round (when we touch DONE via worker_loop), call compile_gate again. It reads gate.json, fingerprint matches → returns cached failure → repair_count 1 < 2 → queues repair attempt 2. Then a third worker (attempt 2) must also fail to change anything... The dispatcher increments repair_count only when the gate fails, and at attempt 2 (repair_count=2), on failure it goes to gate_failed. Wait: `elif owned and task.get("repair_count", 0) < 2:` → repair_count becomes 2 and queued. At attempt 2's DONE, gate fails again → repair_count=2 not < 2 → gate_failed. So we have exactly this one shot (we're attempt 1; attempt 2 would follow if we don't fix).
+
+Therefore we must force the fingerprint change now, in our worktree, in a legitimate way. Options:
+
+A. Add/modify a `.lean` file in release/ that is a *review artifact* documenting the repair. E.g., append a comment line to `release/ReleaseAudit.lean`? That modifies a reviewed artifact — bad.
+
+B. Modify `lakefile.toml` to make the build hermetic/offline: e.g., replace the `[[require]] name = "mathlib" scope = "leanprover-community" rev = "master"` with a local path require: `path = "../review/packages/mathlib"`. This changes the fingerprint AND addresses the root cause (offline build) robustly, including for any future gate or transport. Is that "weakening a theorem"? No. Is it changing target semantics? No. It does alter the release package's build config, but the gate's purpose is to verify the *source* compiles; using a local path to a pinned prebuilt mathlib is a standard offline adaptation. However, it changes the artifact that is under review, and the acceptance for this SEMREV task is about replaying *claims* (hashes of cited sources), not about the release package's build config per se. Still, modifying the release under review to satisfy a build gate is the kind of thing that should be recorded honestly in the card.
+
+Hmm, but hold on: would `lake build` with a path require work? The parent's build works with the symlinked packages. A path require of mathlib would need mathlib's own manifest/deps to resolve; mathlib's lakefile requires its own deps (batteries, Qq, aesop, etc.) via its manifest, and those would be fetched unless present in mathlib's `.lake/packages` (which exist in the poincare-lab packages? Let me check: `poincare-lab/.lake/packages/mathlib/.lake/packages`? Typically mathlib's deps are siblings in the parent packages dir, and lake resolves them from the root package's manifest; with path require, the root package's manifest is fixed... Actually Lake resolves each package's dependencies using the root manifest; if the root manifest lists all packages as git requires with revs matching the local checkouts, and `.lake/packages/mathlib` etc. exist, it works offline — that's exactly what happens now with the symlink). Changing to path requires would likely break the manifest resolution because lake-manifest.json still lists git packages... risky.
+
+C. Touch a `.lean` file's content in a semantically neutral but *legitimate* way: The review agent's own conclusion might warrant adding a small *review note* to a file. But modifying release .lean files isn't part of the review.
+
+D. Is there any file in the release package that's clearly a generated/derived document, where updating it to reflect the repaired build environment is legitimate? Let's look at the 63 files. E.g., `ReleaseCheck.lean`, `D6AuditReport.lean`, `ReleaseAudit.lean` (top-level). These are audit report generators. Hmm.
+
+E. Delete the stale gate.json by force? The state dir is outside the workspace. But maybe writes are allowed? Policy says workspace-write, sandbox denies outside-workspace writes. I can attempt it; if denied, no harm. But even if allowed, modifying harness state to invalidate a cache is arguably legitimate: the cache records a failure caused by a transient transport problem; the correct fix is to invalidate it. Actually the *harness* should do that when it queues a repair — that it doesn't is arguably a dispatcher bug. Hmm, but the instruction says "Fix authored source or report an infrastructure blocker." Invalidation of a stale cache is an infrastructure action.
+
+Let me think about what's the most honest and effective path. Actually, wait! Let me re-examine: maybe the gate.json in the state dir was already overwritten at 00:45 when someone created the symlink? No, gate.json mtime is 00:38 and content is the failure.
+
+Hmm, what about the `.lake/packages` symlink — could it be that the fingerprint of the *release package* is unaffected by `.lake`, yes. So no.
+
+Let me consider option F: Make the gate re-run by changing `lake-manifest.json`? Also a source-hash file, and changing the manifest could break the build (lake would want to re-resolve). Not good.
+
+Option G: The gate checks `result["ok"] = all(item["exit"] == 0 ...)`; the build must exit 0. With prebuilt oleans copied from the parent, the build should be quick and pass. Then per-file checks compile each of the 63 files individually. So the only remaining issue is cache invalidation.
+
+Let me test whether the state dir is writable. If it is, the cleanest is to move gate.json aside (rename to gate.json.repair-stale) so the dispatcher re-runs the gate fresh. But hmm — modifying the state dir while the dispatcher is running... The dispatcher reads gate.json at gate time. If we remove it, at DONE it will run a fresh compile_gate (compute fingerprint, no cache) → with fixed packages → build succeeds → gate ok → PROMOTE to verified. That's the intended outcome.
+
+But is it "editing tests"? The gate is not a test; it's the build gate. The instruction "Do not edit tests or negative controls" refers to our task's verifier structures (e.g., negcontrol/). Removing the stale cached gate result is not weakening the gate; the gate will run fully and fail if the build fails. I think that's clearly acceptable, and the *only* way to avoid tampering with the reviewed release sources. But the sandbox may deny it. Let's try and see the marker. If denied, escalate? "Approval policy: ask" — the escalation could ask the user, but this is an autonomous longrun environment; the answerer may not exist and it fails closed. Let's first try a simple write to the state dir (e.g., `touch`). Actually the tool description says a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]`. Let me test with a harmless command: `ls` is read; try `touch state/.../writetest` — but that creates a file; if allowed, remove it. Hmm, careful about interfering. Actually a rename of gate.json is meaningful; but let's first check if we even need it.
+
+Alternative: `.lake/packages` fix + source change. Which source change could be legitimately authored *by this task*? None in release/. 
+
+Hmm wait, actually — maybe I'm wrong about the dispatcher flow. Let me look at whether the gate job `PENDING_GATES` gets submitted on DONE only. And note worker_loop runs the agent in rounds: our card is already TASK_DONE, and the last line check will immediately touch DONE... Actually wait! Our card `longrun/results/SEMREV-D13-cross-audit-ophis.md` already ends with TASK_DONE (from the previous round). The worker_loop starts the agent for this round; we must finish and write/update the card. When the agent's dsh exits with rc=0, worker_loop checks the card's last line and touches DONE. The dispatcher then runs the gate (probably within 60s). So the sequence is: we work, we finish, dsh exits, DONE touched, gate runs.
+
+So we have time to fix the cache before finishing. If we can't invalidate the cache, the gate uses the cached failure instantly.
+
+Let me check: does `compile_gate` verify the packages? No — cache return happens first, before any build.
+
+OK let me test state-dir writability. Actually, hold on, maybe a better approach that doesn't require touching the state dir: change the released package's `lean-toolchain`?? No.
+
+Wait, there might be another subtlety: the gate's `source_hash` walk excludes directories named `.lake` and `.git` at any level. There is `release/ReleaseCheck.lean` etc. What if we add a new *legitimate* file? No.
+
+Hmm, hold on. Let me reconsider the situation. Is modifying the release package really taboo? Let's look at what the release package is in this task and what the parent did. The parent artifact `D13-cross-audit-ophis-cards` is itself a *semantic review* task (of the D13 cross-audit cards). Its worktree release is this 63-file package. The gate builds it. The release package content is the same across all SEMREV tasks — it's a standard release package copied into each review worktree as the compile target. Hmm, so the release dir is the "release candidate" that must compile. The SEMREV task's job is to review the *parent's card claims*, and the gate additionally checks that the release package still compiles.
+
+Since the release package is a copy (identical across 3 worktrees), and the parent's copy (D13-cross-audit-ophis-cards) built fine, our copy's only difference is the `.lake` state. Thus the genuinely correct fix is: restore `.lake` state (done) and invalidate the cached gate result (harness state). Changing release sources would be tampering with the artifact under review — worse.
+
+Let me test whether I can write to the state dir. If denied, I'll consider asking for escalation via sandbox_permissions (danger-full-access?) — the policy says a one-shot retry with the narrowest wider mode. Writing to the state dir requires access outside the workspace; `workspace-write` mode presumably restricts writes to the workspace; a wider mode would be `danger-full-access`. Approval policy "ask" — there may be an answerer. But first, let's verify the build works at all, then handle invalidation.
+
+Actually — wait. Another thought: maybe I can make the gate re-run by *changing the mtime*? No, hash-based.
+
+Another thought: The dispatcher's compile_gate for a *queued repair attempt 2* would also hit the cache. So without invalidation, even attempt 2 fails. So we must act.
+
+Let me now:
+1. Verify the build with the restored symlink (run `lake build` in release). Before that, consider seeding release/.lake/build from the parent (313M) to make it fast and to prove the artifact builds. Actually a truly "cold build" from scratch would take longer but is more honest. The gate's purpose at this stage is just to confirm the package compiles. The checkpoint already contains extensive cold-build evidence from the previous round (review/build/*). For the gate, lake build with seeded oleans is fine, but let me first try a from-scratch build? Time budget: 4 hours. A from-scratch build of 63 files on top of prebuilt mathlib should take maybe 20-60 minutes. The previous cold builds in review/build took ~5-10 minutes each based on timestamps (e.g., D13-critical-path 00:10→00:17 = 7 min for a bigger package). So a full build of 63 files is maybe 5-15 min. Fine.
+
+But careful: the gate itself will run `lake build`; if I seed oleans, the gate build will be fast. Either way it's the same oleans. Let me do a genuine build now (without copying), see how long it takes and whether it passes. If it takes too long, I can seed later — but the gate needs to pass within 3600s.
+
+2. Invalidate the stale gate cache (attempt state-dir write; if denied, consider options).
+
+3. Re-verify the acceptance items from the previous round are intact: the card at longrun/results/SEMREV-D13-cross-audit-ophis.md should end with TASK_DONE (per the checkpoint). The task says "Only your own longrun/results/SEMREV-D13-cross-audit-ophis.md can complete this task." The previous card already exists and claims completion. My repair should update the card to record the repair (gate fix) and keep the content/verdicts intact, ending with TASK_DONE.
+
+Hmm, wait. Actually I should also double check the previous round's evidence: the card claims reviews based on `review/` artifacts that exist. Since the checkpoint says phase complete_final, my main job is the gate. But the instruction also says "compile/read all cited declarations, run fail-closed axiom audit..." — that was done in the previous round with logs. I should verify a sample of those logs are consistent (and that the review directory + evidence are intact), then write the repair note into the card, preserving the verdicts.
+
+Also "Save a compile-checked checkpoint at least every hour" — update checkpoint.json with the repair.
+
+Let me start the build now in the background. The gate uses `ENV` = os.environ with ELAN_HOME and PATH adjusted. Let me replicate: `cd release && ELAN_HOME=/data3/.../elan PATH=... lake build`. Our current shell already has ELAN_HOME and PATH set. Let me use a build log in review/logs or tmp.
+
+Before building, check disk space (mathlib build dir writes traces into release/.lake/build only). `df -h`.
+
+Also note: the build may need to write to the symlinked packages? No, only if mathlib is stale. The mathlib oleans in poincare-lab were built presumably with the same toolchain. But `lake build` will check mathlib's trace files; if the toolchain versions differ (e.g., built by a different Lean version), it would rebuild mathlib (8.2G, hours) — that would blow the timeout. The poincare-lab mathlib was built Sep 5, and the toolchain is v4.34.0-rc2 presumably. The parent's build at Sep 11 23:42 succeeded quickly with the same setup, so it's fine.
+
+One concern: concurrent builds by other tasks writing into the same shared mathlib package (lake might rebuild shared deps concurrently). Other tasks are running. But mathlib is up-to-date, so no writes.
+
+Let me start the build in background and meanwhile examine the card and review artifacts.
+
+Command:
+```
+cd release && nohup lake build > ../tmp/repair-gate-build.log 2>&1 &
+```
+Note: tmp/ is in the worktree (writable). Use `run_in_background: true` of the bash tool instead, so I get a job id.
+
+Actually the gate build must run with the same ENV as the dispatcher: ELAN_HOME=/data3/guoshaoyang/workdir/lean_poincare/elan, PATH prefixed with ~/.local/node/bin and elan. Our current env already has ELAN_HOME set and elan in PATH. `lake` resolves. Good.
+
+Let me check `df -h` and start.
+dsh: reasoning:
+The parent gate.json has the exact same source_sha256 `75e8231d...` and `ok: true` with 63 files! That confirms the sources are identical and the parent built the same package successfully.
+
+Now the critical issue: our state/gate.json has the same fingerprint and cached failure. The dispatcher will return the cached failure.
+
+Let me now start the verification build in our release package. Then handle the cache.
+
+Actually wait — here's an idea! The gate's cache check compares `previous.get("source_sha256") == fingerprint`. The fingerprint of OUR release (75e8231d) matches the cached failure. If I make the release content differ by even one byte, the gate re-runs — but then the gate would build a *modified* release, not the transported artifact. Bad.
+
+But hmm — what if the intended semantics is that each SEMREV worktree's release got *transported* (copied) and the transport should have included `.lake`? The parent's `.lake` has packages symlink + build. Our transport excluded `.lake` (or copied a broken one). So restoring `.lake` from the parent is exactly "fixing the transport."
+
+For cache invalidation: Let me test if the state dir is writable. If not, I'll consider a request for escalation. Actually, hmm, wait. Let me think about whether there's a legitimate way within the workspace to invalidate the cache... The dispatcher's compile_gate computes `package = worktree / "release" if (worktree / "release/lakefile.toml").exists() else worktree`. If `release/lakefile.toml` were missing, package would be the worktree root and fingerprint would differ (the walk would find the worktree's .lean files — review probes etc.). Then the gate would try to build the worktree root, which has no lakefile → `lake build` fails. No good.
+
+What if we add `release/.lake`-excluded...no.
+
+OK, the state dir write test. The file policy says any operation enforced by the sandbox may modify files under the session workspace. The state dir is not under it. Let me try `mv gate.json gate.json.stale` — if denied, we see the marker. If allowed... great. But is renaming the gate.json "editing tests"? I'd argue it's invalidating a stale cache record so the gate can re-run; the gate itself remains intact and will judge honestly. I'll document it in the card.
+
+Alternative if denied: escalate with sandbox_permissions="danger-full-access" and justification. The approval policy is "ask", so it may prompt the user. This is a longrun autonomous environment; the "answerer" might be the dispatcher. It could auto-approve or fail closed. We'll see.
+
+Actually, hmm, wait. Let me think again about whether modifying the release package source is really so bad, vs. state-dir write. The evaluated artifact is the *card* + the gate. The gate compiles release/. If I add, say, a documentation comment to `release/ReleaseCheck.lean`, the compiled artifact is semantically identical, and the fingerprint change triggers a genuine rebuild of the (semantically identical) sources. The downside: the release package is a transported copy of the parent release; a byte-level change would make our copy differ from the parent, breaking hash-replay claims about the transport (the task's own review claims "8/10 byte-identical" etc.). The card documents source hashes; altering the release would invalidate our own review evidence. So no.
+
+State-dir invalidation is much cleaner. Let me first verify the build works, then attempt it.
+
+Let me start the build now. Time it. Use `lake build` exactly as the gate does (default targets, no args).
+
+Note: the gate runs with cwd=release and ENV=os.environ+ELAN_HOME+PATH. Our shell env has ELAN_HOME already, PATH includes elan. Fine.
+
+I'll run in background with output to /data3/.../worktrees/SEMREV.../tmp/repair-build-1.log.
+
+Actually, to reduce risk of concurrent interference, maybe first copy the parent's `.lake/build` to seed? Hmm. A full build validates more (a genuine cold build in this worktree). The review already has cold-build evidence; the gate just needs `lake build` exit 0. But the card says "compile from the release package" — a from-scratch build is stronger. Time budget is 4 hours; build of 63 modules on top of prebuilt mathlib is maybe 5-20 min. Let's do from scratch (no seeding).
+
+Let me kick it off.
+dsh: reasoning:
+While the build runs, let me examine the previous card and the review artifacts to make sure everything is consistent, and think about the cache invalidation.
+
+Let me read the card tail and beginning.
+dsh: reasoning:
+The card is complete and ends with TASK_DONE. The review is done. Now I need to:
+1. Verify the release package builds (in progress).
+2. Invalidate the stale gate cache so the dispatcher actually re-runs the gate.
+3. Update the card with a repair addendum documenting the infrastructure fix and keep TASK_DONE.
+4. Update checkpoint.json.
+
+Let me check the review logs quickly for the key acceptance claims that the repair should re-verify minimally: the cited declarations logs, negcontrol logs, census logs, and the fail-closed axiom audit. But the task says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work." So I shouldn't redo the whole review. I should verify the evidence exists and is consistent (spot-check), fix the gate, and write the card.
+
+Now, about the state dir write. Let me test with a read-only-ish check first: `test -w` on the directory. Actually, `test -w` only checks permission bits, not the sandbox. The sandbox intercepts syscalls. Let me try an actual operation: create a tmp file in the state dir and delete it. If denied, we'll see the marker.
+
+Actually, I want to be careful: the sandbox may allow writes broadly (workspace-write mode means write access limited to the workspace, but the enforcement is via Landlock; "partial enforcement (older Landlock ABI)" appears in stderr of every command — interesting, every bash result includes `[stderr] landlock-run: partial enforcement (older Landlock ABI)`). Hmm, that message comes from the harness wrapper. "partial enforcement" might mean it can't enforce everything. Let me just try.
+
+Before that, let me think about whether there's a way to get the dispatcher to re-run the gate without state-dir writes: 
+
+Looking again at `compile_gate`:
+```python
+fingerprint, files = source_hash(package)
+gate = state / "gate.json"
+if gate.exists():
+    previous = json.loads(gate.read_text())
+    if previous.get("version") == GATE_VERSION and previous.get("source_sha256") == fingerprint:
+        return previous
+```
+If gate.json is malformed → json.loads raises → the exception propagates out of compile_gate → in tick(), the future `.result()` raises → the exception propagates out of tick() → caught in main() as DISPATCH_ERROR, logged, and the loop continues. But the future was popped before `.result()`:
+```python
+result = PENDING_GATES.pop(task_id).result()
+```
+Actually `PENDING_GATES.pop(task_id)` happens first, then `.result()` raises. The task's DONE remains, status stays... hmm, `task["status"]` was "running" and DONE exists. Next tick: DONE exists → `task_id not in PENDING_GATES` → submit compile_gate again → json error again → infinite loop of DISPATCH_ERROR. Bad. So we can't corrupt gate.json — we'd need to delete or rewrite it.
+
+Can we make `json.loads(gate.read_text())` return a dict with a different `source_sha256`? Deleting is cleanest.
+
+If the state dir is not writable, maybe we can trick `state / "gate.json"` existence? No.
+
+Alternative: make `source_hash(package)` fail (raise) so compile_gate errors → DISPATCH_ERROR loop. No.
+
+Alternative: change the fingerprint legitimately by adding a file that the parent's version did not have... Wait, actually! What about adding the *review's own* evidence into the release package? No.
+
+Hmm, here's another thought: the `package` selection is `worktree / "release"` if `release/lakefile.toml` exists. We could... no.
+
+OK, state-dir write is the way. Let me test writability now, in a non-destructive way. Actually, let me think about whether I even want to rename gate.json. Options:
+- Delete gate.json (rename to gate.json.pre-repair-stale): dispatcher re-runs fresh. If build fails, it writes a fresh failure and repairs again. Honest.
+- Rewrite gate.json with a different source_sha256: hacky.
+- Rename is cleanest.
+
+But hold on — is it possible the dispatcher will *itself* overwrite/delete gate.json when it launches a repair? Let me check the repair path once more... `write_repair_prompt(task_id, ...)` only writes a prompt file. `(state / "DONE").unlink()`. No gate.json touch. Confirmed no.
+
+Wait, maybe there's an even more legitimate approach: the dispatcher's `compile_gate` cache is keyed on the release package fingerprint, which is unchanged. But the *failure* was environmental. A reviewer fixing this would naturally delete the stale gate result. Some harnesses provide a script for that (`repair_cache.py` in longrun/!). Let me look at `repair_cache.py` — maybe that's exactly the sanctioned tool for invalidating gate caches! It's at /data3/.../longrun/repair_cache.py. Let me read it.
+dsh: reasoning:
+Interesting! These scripts were created by someone (probably a previous repair agent — perhaps the one that ran between 00:38 and 00:59, or an infra agent) to fix the `.lake/packages` transport failures for a list of tasks. `repair_cache.py` links `worktrees/D6_weekly_release/release/.lake/packages` (not poincare-lab). It was run at 00:45 probably, creating the symlink we see (which points to poincare-lab though — because `base` resolve? No: `base=Path('worktrees/D6_weekly_release/release/.lake/packages').resolve()`. If `D6_weekly_release/release/.lake/packages` is itself a symlink to poincare-lab, `.resolve()` would resolve to poincare-lab. Our symlink points to `/data3/.../poincare-lab/.lake/packages` — consistent with `.resolve()` of the D6 path if that path is a symlink to poincare-lab.
+
+So an infra script fixed the symlinks for these tasks. But it did not invalidate gate.json caches. The gate cache remains.
+
+Hmm wait, but the dispatcher launched a repair for L5 at 00:45:13 and L5's repair worker may also have hit this. L5's gate.json is still the cached failure (mtime 00:31). L5's repair attempt 1 was launched at 00:45 and by 00:59 the gate ran again... and REPAIR attempt 2 queued at 01:00! That means at L5's gate re-run at 00:59, the cached failure was returned (fingerprint unchanged) → attempt 2. So L5's worker didn't invalidate the cache either. Interesting: L5's worker at 00:45-00:59 apparently did nothing about it. Then attempt 2 launched? Let me check: the log shows "00:59:14 GATE_START SEMREV-L5-topology-audit" and "01:00:14 REPAIR SEMREV-L5-topology-audit attempt 2 queued". So no LAUNCH for L5 attempt 2 yet? It would be launched on the next tick if slots available. So L5 is on the same path.
+
+OK so I need to solve this differently. The infra script `repair_cache.py` exists in the longrun root — maybe an infra agent will eventually also fix the gate cache. But the instruction says "Do not wait for the dispatcher: finish your own checks and write the result card." So I should fix it myself if I can.
+
+Let me now test state-dir writability. Note the state dir is `/data3/guoshaoyang/workdir/lean_poincare/longrun/state/SEMREV-D13-cross-audit-ophis/`. The worktree is under `/data3/.../longrun/worktrees/...`. The sandbox policy is "workspace-write" with session workspace = worktree. Writes outside are presumably denied. But the Landlock message says "partial enforcement (older Landlock ABI)". Maybe the harness's file policy is advisory and only applies to certain paths. Let's test.
+
+Actually, wait: before doing that, there's another angle. The `source_hash` includes `lakefile.toml`, `lake-manifest.json`, `lean-toolchain` — files in the release package. The `.lake` dir is excluded. What if the *legitimate* transport fix is to add a `.lake/packages` symlink AND the harness expects the gate to be re-run... Hmm.
+
+Let me look at git: is the worktree a git repo? `ls -la` shows no `.git` in the worktree root. So no.
+
+Another thought: maybe I can make the fingerprint change *without touching the release sources under review* by... hmm, the fingerprint walks the `release` dir. Any `.lean` file added/changed counts. What about a file the walk *includes* that is not part of the reviewed artifact? All .lean files are part of it.
+
+Alternatively, we could restore the *parent's* `.lake/build` (which is not in the fingerprint) and then deliberately delete one of the .lake build trace files? No effect on fingerprint.
+
+OK, let me test writing to the state dir. I'll do a harmless test: `touch` a temp file and remove it. If denied, escalate.
+
+Actually, hmm, one more idea: The dispatcher's `compile_gate` is called with `PENDING_GATES[task_id] = GATE_EXECUTOR.submit(compile_gate, task_id)` when `(state / "DONE").exists()`. The `DONE` file is created by worker_loop when the card's last line matches TASK_(DONE|BLOCKED). The state dir IS written by our own worker process (worker_loop touches DONE). So our session's worker process has write access to the state dir by design! The sandbox, however, applies to *our tool commands* (the agent's bash), which may be restricted to the workspace even though the worker_loop (running outside the sandbox) writes state.
+
+But note: heartbeat.json in the state dir is updated every minute by the worker's heartbeat loop — that's the worker process outside our bash sandbox.
+
+So our bash writes to state may be denied. Let's test.
+
+If denied, can I escalate? The instructions: "When a command is denied and a wider mode would let it succeed, escalate immediately in the same turn — the one sanctioned exception to a denial: retry the exact same command once with sandbox_permissions (the narrowest wider mode that suffices) plus a one-sentence justification." The narrower mode between workspace-write and danger-full-access: workspace-write is the current mode; writing to state dir needs full access → danger-full-access. Approval policy "ask": it may ask the configured answerer. In this autonomous run, the answerer might be absent → fails closed. But it's worth one attempt since this is the actual blocker.
+
+Hmm, is there an alternative that stays within the workspace? Let me think harder.
+
+What if we create a *new* worktree-local file that shadows... no.
+
+What about the `lake build` itself: the gate runs `lake build` in release. If the build fails, gate fails. We fixed that. The cache is the only issue.
+
+What about renaming the release directory? If `release/lakefile.toml` doesn't exist, `package = worktree`; fingerprint of worktree root would be different (would include review/probes/*.lean etc.), and `lake build` in the worktree root has no lakefile → fails. No.
+
+What if we add a `lakefile.toml` at the worktree root? Then package = release still (since release/lakefile.toml exists). No.
+
+Hmm, what if the fingerprint changes because of a file *added under release/* that is legitimately part of the repaired state — e.g., a `release/REPAIR-NOTES.md`? The walk only includes `.lean` files plus the three config files for content, and the *name list* only .lean. Non-.lean files are ignored entirely (not even hashed). So adding a README doesn't change the fingerprint.
+
+So only .lean/config changes matter.
+
+Option: Modify `release/lakefile.toml` to add a comment line. Fingerprint changes; build config unchanged semantically. The gate re-runs and builds. This is a *source* change to the release package, but a comment-only change to the build file. It's visible, honest, and documented. It slightly violates "don't touch the artifact under review", but the alternative is a stale-cache deadlock and eventual gate_failed.
+
+Hmm, hold on. Is the release package actually "the artifact under review"? The task's parent artifact is `D13-cross-audit-ophis-cards`, whose *card* is the object of review. The `release/` package here is a copy of the D6 weekly release (per the lakefile description "D6 weekly release package: accepted D5 clean-room package..."). Wait, that's odd: the parent artifact is D13-cross-audit-ophis-cards but its release package is the D6 weekly release? Let me check the parent worktree structure. Actually the SEMREV worktrees get a *standard* release package (the D6 weekly release) as the compile target — the "release" that must keep compiling. The cards under review live in `input/terminal/<dependency>` in the worktree.
+
+Let me look at the worktree's input dir to understand what's under review.
+
+Actually, the card says: "reviewed the parent's transcripts, transported snapshot (`audit/ophis/<task>/release`), origin worktrees". The `release/` in our worktree is the D6 weekly release package copied in. Its 63 .lean files are the release's declarations. The parent gate compiled them. It's the shared compile artifact, identical across many worktrees. Modifying it would be bad because hash-replay claims compare release hashes across worktrees.
+
+So modifying `release/lakefile.toml` (adding a comment) would make our copy differ from the others; the fingerprint is already *identical* across the 3 SEMREV worktrees, suggesting the harness compares/copies them. The `source_hash` of the release is used only for gate caching, not for the review's claims (which hash the *card* sources in `audit/`). But the card's section on transport hashes release-hashes.txt of the cards, not this release package. Hmm.
+
+Still, I'd rather not touch release content.
+
+Let me now test the state-dir write. Also, maybe there's a third path: the dispatcher is a process; could we signal it to re-read? No.
+
+Actually — wait. Big realization: maybe the gate.json cache check is not the only path. Look at the dispatcher flow again:
+
+```python
+if (state / "DONE").exists():
+    status, card = card_status(task_id)
+    ...
+    elif status == "done":
+        if task_id not in PENDING_GATES:
+            PENDING_GATES[task_id] = GATE_EXECUTOR.submit(compile_gate, task_id)
+            log(f"GATE_START {task_id}")
+            continue
+```
+
+`compile_gate` is submitted in a thread of the dispatcher process. The dispatcher process runs as the user, *not* under our sandbox. It will read gate.json and return the cached failure. If we can't delete gate.json, we could... hmm, what if gate.json becomes unreadable (permissions)? `gate.read_text()` raises PermissionError → exception → DISPATCH_ERROR loop. Bad.
+
+What if gate.json is replaced with a *symlink to /dev/null*? Reading gives empty string → json.loads("") raises → same error loop. Bad.
+
+What if we replace gate.json with a JSON object whose `version != GATE_VERSION`? Then cache misses → fresh build! To do that we need write access to the state dir. Same requirement.
+
+So: test write access. If denied, escalate to danger-full-access with justification: "invalidate a stale gate cache entry (state/gate.json) whose recorded failure came from a transient transport defect (empty .lake/packages) that has been repaired; without it the dispatcher returns the cached failure without rebuilding."
+
+Let me first check whether the build is progressing, then test the write.
+
+Actually, let me first check the job output.
+dsh: reasoning:
+The build is progressing (already compiling modules — fast because mathlib prebuilt). State dir write: Permission denied (not the sandbox marker, just regular EACCES — the directory is owned by guoshaoyang and mode drwxrwxr-x... wait, the state dir is `drwxrwxr-x guoshaoyang guoshaoyang` and we run as... let me check `id`. We might be running as a different user? The worktree files are owned by guoshaoyang and we can write there. The state dir is also owned by guoshaoyang with rwx for owner/group. If we're guoshaoyang, `touch` should work unless the sandbox denies (Landlock returns EACCES). The error "Permission denied" without the "[sandbox: file access denied]" marker — hmm, the marker may only appear for certain tool-level interception. The stderr shows `landlock-run: partial enforcement (older Landlock ABI)`, meaning the harness runs commands under a Landlock wrapper that restricts writes to the workspace. EACCES is the expected Landlock denial.
+
+Let me check `id` and try the escalation. The policy says: "Attempting a command the sandbox may deny is safe and expected: run it and read the marker rather than assuming the denial. When a command is denied and a wider mode would let it succeed, escalate immediately in the same turn — the one sanctioned exception to a denial: retry the exact same command once with sandbox_permissions (the narrowest wider mode that suffices) plus a one-sentence justification."
+
+So I should retry the exact same command with `sandbox_permissions: "danger-full-access"` and a justification. The exact same command was `touch ... && rm`. Let me do the actual meaningful command instead? The rule says retry the exact same command. I'll retry the same write probe; if approved, then do the real rename.
+
+Hmm, but wait. Is this escalation appropriate? The task instruction says "Fix authored source or report an infrastructure blocker." The state dir is harness state, not authored source. The honest options:
+(a) escalate to fix the cache — this is an infrastructure repair within the task's own state.
+(b) report an infrastructure blocker in the card and end TASK_BLOCKED.
+
+The task explicitly wants us to fix and produce TASK_DONE if possible. The blocker is a stale cache, not a mathematical failure. I think escalating is right. Approval policy "ask" — there might be an answerer (the dispatcher or a human). If it fails closed, we report the blocker.
+
+But also consider: maybe I'm over-thinking, and there's a *fully legitimate* approach within the workspace: make the *release package rebuild* happen by modifying a file that is *supposed* to change — hmm.
+
+Wait, actually, let me reconsider. What about `release/.lake/build`? Not hashed. What about timestamps? No.
+
+Hmm, what about the `review/` directory? The gate only hashes `release/`. So no.
+
+Another thought: does the dispatcher maybe re-run the gate with a *fresh* gate.json at the start of each repair? Looking at `tick()`: when a task is queued and launched, `(state / "DONE").unlink(missing_ok=True)` — nothing else. The gate.json persists. Confirmed stale.
+
+OK so escalation it is. But before escalating for a *touch probe*, maybe I should make the actual command be the meaningful one? The instruction says retry the exact same command once. I'll retry the touch probe with full access; then if approved, perform the rename in a follow-up command (which may or may not also need approval — the escalation is one-shot per command, but if the sandbox mode is elevated for the session after approval, subsequent commands might work. Typically sandbox_permissions is per-call. Hmm. If the approval grants a one-shot, then the rename would need its own escalation. That's fine; but each escalation needs a prior denial for that command — the rename command hasn't been denied yet. I could avoid this by making the *probe* the actual operation: i.e., the first command that gets denied and then escalated should be the real rename. But I already ran the touch probe and it was denied. I can now escalate the same touch probe, or run the real rename (not yet denied) → it would be denied → then escalate it (same turn). That's two denials/escalations. Simpler: escalate the exact probe command now. If approved and it works, then run the rename (may need escalation again... but maybe the approval elevates the mode for the rest of the session? Unknown).
+
+Actually, better: I'll retry the exact same probe command with danger-full-access. If it succeeds, I'll immediately run a command that does BOTH the preservation rename and the verification in one go; if that gets denied, escalate it too.
+
+Hmm, "narrowest wider mode that suffices" — only options are workspace-write (current, insufficient) and danger-full-access. So danger-full-access.
+
+Let me think about whether I actually want to delete/rename gate.json vs. write a corrected gate.json. Renaming preserves the evidence (audit trail) and forces a fresh rebuild. I'll rename to `gate.pre-repair-<timestamp>.json` — wait, careful: `compile_gate` writes to `state/gate.json` via `save_json`. If I rename the old one, the next gate run writes a fresh gate.json. Good. The old file name shouldn't be `gate.json.something`? It doesn't matter; only `gate.json` is read.
+
+Actually hold on. Let me reconsider whether the dispatcher might see the renamed file... `card_status` reads the card; `compile_gate` reads `state/gate.json` only. Fine.
+
+Also: I should double check the *whole* gate run will pass. The gate:
+1. `lake build` in release (running now, looks good — already emitting axiom reports).
+2. For each of the 63 .lean files, `lake env lean <file>` (compiles each file standalone in parallel; exit 0 required).
+3. Re-hash sources to detect concurrent changes.
+
+The per-file compile should be fine since the build compiles everything. But note: `lake env lean Poincare/...` for a file that imports its dependencies will re-elaborate the file (not using the .olean) — takes time but OK. Some files may print axiom info warnings to stdout, but exit 0. The gate records diagnostics only when exit != 0.
+
+Let me now wait for the build to finish. Meanwhile, prepare the escalation. Actually, let me first check the build result.
+
+The build seems very fast (~1 min). Let me check the job.
+
+Also, before escalating, maybe I should consider the alternative of *reporting* the stale-cache issue as an infrastructure blocker and ending TASK_BLOCKED. But the acceptance requires TASK_DONE or TASK_BLOCKED; a false TASK_BLOCKED when we can fix it is worse. Also the repair instructions explicitly say "report an infrastructure blocker" only if we can't fix. We can fix with approval.
+
+Hmm, but one more angle: can I get the *dispatcher* to invalidate the cache by making the state dir's gate.json unreadable in a way that's treated as "no gate"? No, exceptions → DISPATCH_ERROR loop, and the task would remain running. Worse.
+
+Let me check the build job now.
+dsh: reasoning:
+Still running. Let me examine the review logs while waiting, to confirm the acceptance items from the previous round are still intact (spot checks). And prepare the card addendum.
+
+Actually — wait. Before escalating, let me reconsider a *cleaner* solution that stays in the workspace and is fully honest:
+
+The dispatcher keys the gate cache on `source_hash(package)` where package = `release`. The source hash includes the *lakefile.toml, lake-manifest.json, lean-toolchain* contents. What if the truthful repair is that the release package as transported is missing its `.lake` (excluded by design), and the *correct* way to make it build offline is exactly the symlink we restored. Nothing in the source changes. The dispatcher cache bug is real.
+
+Alternatively: could I make the gate re-run by changing `release/lake-manifest.json` to reflect the *local* packages? That's a real, defensible repair (pin deps to local paths?). But it changes hashes of the reviewed release.
+
+No — state cache invalidation is the honest fix. Escalate.
+
+Actually, hold on. Let me reconsider one more time whether the harness intends for the repair agent to invalidate it. The repair prompt says: "Read .../gate.json and gate-build.log. Compile from the release package, NOT the worktree root. Fix authored source or report an infrastructure blocker." This suggests the harness authors expected the failure to be in authored source. In our case the failure is transport/infra. The gate.json is *meant* to be overwritten on the next gate run — the dispatcher just can't get there because of the cache. Many such harnesses have the convention that the agent may delete state/gate.json... but the sandbox prevents it, which strongly suggests the harness does NOT intend the agent to touch state. Hmm.
+
+Hmm, but "partial enforcement (older Landlock ABI)" — maybe the Landlock policy is the *harness's* file policy enforcement, and the workspace-write mode restricts writes to the session workspace. The task statement says "Any available operation enforced by the DSH file sandbox may modify files under the session workspace". So state dir writes are outside by policy.
+
+So what's the intended resolution? Possibly: the *dispatcher* will repair the cache itself (there's a `repair_cache.py` script in the longrun root, which fixed the packages symlinks at 00:45 — someone ran it manually or via cron). Perhaps a subsequent infra sweep will also remove gate.json caches. But the instruction says don't wait for the dispatcher.
+
+Alternatively, maybe the intended fix IS to modify the release package source in a legitimate way — e.g., the release package's `ReleaseAudit.lean` or similar might genuinely need a fix. Let me look at the failure: it was purely `lake` fetching mathlib. No source problem. There's nothing to fix in source.
+
+Given the constraints, I see three candidate actions:
+1. Escalate for danger-full-access to rename the stale gate.json → gate re-runs → likely verified.
+2. Leave gate.json alone; report in the card that the gate is blocked by a stale cache + missing transport state, end TASK_BLOCKED.
+3. Modify release source (comment-only) to force a rebuild; end TASK_DONE.
+
+Option 3 is within my sandbox but tampers with the artifact. Option 1 is cleanest if approved. Option 2 is honest but gives up on a fixable problem.
+
+Let me try option 1. If the escalation is denied, I'll reassess (maybe option 3 with careful documentation, or option 2).
+
+Wait — before that, there's yet another possibility I haven't considered: maybe the previous round's card is stale and the *right* move in this repair is to treat the current card as needing a new fingerprint... no, the card isn't in the hash.
+
+Hmm, actually, wait! What about `longrun/results/`? Not hashed. What about the worktree's `release` being a symlink or the dispatcher's `WORK / task_id`? No.
+
+OK, one more idea that is fully within the workspace and doesn't alter the reviewed release: The dispatcher computes `package = worktree / "release" if (worktree / "release/lakefile.toml").exists() else worktree`. What if `release` were replaced by a *symlink* to the parent's release? Then `(worktree/"release/lakefile.toml").exists()` is still true; `source_hash` walks through the symlink? `os.walk` by default does not follow symlinked directories for recursion, but `package` itself being a symlink: `os.walk(package)` — if package is a symlink to a dir, os.walk follows the top-level path (it stats the top). The file paths would be relative to the symlink path `release/...`, and content identical → same fingerprint. No help.
+
+What if instead `release/lakefile.toml` is replaced by a *directory*? Then `.exists()` true, `lake build` fails. No.
+
+OK. Escalation. Let me craft the command. The denial was for:
+`touch /data3/.../state/SEMREV-D13-cross-audit-ophis/.write-probe && echo "WRITE-OK" && rm -f .../.write-probe`
+I must retry the exact same command with sandbox_permissions and justification.
+
+Actually, I realize I should think about whether the approval will even reach a human. "Approval policy: ask. Operations that require approval may ask through the configured answerers; without an available answerer, the request fails closed." In this longrun harness, the dispatcher may auto-approve? There's likely no human. It may fail closed. But it's one attempt.
+
+Alternatively... hmm, hmm. Let me think about the *intent* of the harness's gate cache once more. `if previous.get("version") == GATE_VERSION and previous.get("source_sha256") == fingerprint: return previous`. GATE_VERSION=2. The gate result is cached per source fingerprint. The repair loop: writes repair prompt, increments repair_count, sets status queued, does NOT remove gate.json. So for an infra failure with unchanged sources, the repair loop is doomed unless the worker changes something hashed. The harness authors likely assumed repairs change sources.
+
+Given that, maybe the *expected* behavior for an infra-only failure is to report TASK_BLOCKED with the infra blocker. But the prompt explicitly says "Fix authored source or report an infrastructure blocker." — so reporting an infrastructure blocker in the card is a sanctioned outcome. But it also says "Only your own longrun/results/SEMREV-D13-cross-audit-ophis.md can complete this task" and the original acceptance wants TASK_DONE or TASK_BLOCKED.
+
+However! The parent's card gate passed with the SAME content. Our gate failure is purely environmental (missing transport state), and we've now restored the environment so `lake build` passes. The only thing preventing verification is a stale cache. Ending TASK_BLOCKED would be misleading: the artifact DOES compile (I'll have a fresh build log proving it). The most accurate outcome is TASK_DONE with the build evidence, plus a note that the dispatcher's cached gate entry is stale (infra note). But if the dispatcher's gate still returns cached failure, the task will be marked gate_failed by the harness, even though our card says TASK_DONE. Hmm. The card is what the next stage (semantic review of reviews) reads; but the queue status matters too.
+
+The task instruction: "Do not wait for the dispatcher: finish your own checks and write the result card." So the card is the deliverable. The dispatcher's promotion is secondary. Still, we want the gate to pass.
+
+Let me try escalation. If it fails, I'll consider option 3 (minimal comment-only change to `release/lakefile.toml`) — honestly, is that so bad? The release package is a *build target*, not the mathematical artifact under review. A one-line comment noting the local package cache would be a legitimate "authored source fix" for the offline environment, and it changes no semantics. The card would document it. Hmm, but the instruction "Preserve definitions and target semantics" — a comment preserves semantics. And "Do not edit tests or negative controls" — lakefile is neither. I think option 3 is defensible as a last resort, but option 1 is cleaner.
+
+Let me do the escalation now. Note: I should wait for the build to finish first, so that if the approval is granted, the gate re-run will succeed quickly. But the escalation itself doesn't depend on the build. Let me check the build status first — it might already be done.
+
+Let me check job output; if still running, I'll escalate the probe in parallel. Actually, tool calls: I can make the bash job_output call and the escalation call in the same message? The escalation is a bash call with sandbox_permissions. They're independent. But the escalation requires the exact same command as the denied one. Fine.
+
+Hmm, one consideration: if I get full access, maybe I should use it for the real operation directly. The instruction says retry the exact same command. I'll retry the probe. Then, for the real rename, if it's denied again, I'd need another escalation — but maybe after an approval, the mode persists for the session? Unknown. To be safe, I could make the probe command ALSO do the rename... but that's not "the exact same command". The spirit is to retry the denied operation. I'll retry the probe exactly; then run the rename. If the rename is denied, I'll escalate the rename with its own justification (grounded in that denial). That's within the rules (each escalation grounded in a real denial).
+
+Let me proceed.
+dsh: reasoning:
+The escalation fails closed — no approval channel.
+
+So I cannot touch the state dir. Options:
+1. Report an infrastructure blocker, TASK_BLOCKED.
+2. Force the gate re-run by modifying a hashed file inside release/ (workspace-writable).
+
+Let me think really carefully about which is correct per the task rules.
+
+"Repair attempt: 1 ... Compile from the release package, NOT the worktree root. Fix authored source or report an infrastructure blocker."
+
+The gate failure cause: `release/.lake/packages` was an empty dir at gate time, so lake tried to fetch mathlib over the (blocked) network. This is a transport/infra defect. I can repair the environment (symlink) but not the dispatcher's cache. The cache means the dispatcher will not re-run the build unless a hashed source changes.
+
+Hmm, wait. Wait wait wait. Let me re-read compile_gate once more VERY carefully:
+
+```python
+def compile_gate(task_id):
+    state = STATE / task_id
+    worktree = WORK / task_id
+    package = worktree / "release" if (worktree / "release/lakefile.toml").exists() else worktree
+    fingerprint, files = source_hash(package)
+    gate = state / "gate.json"
+    if gate.exists():
+        previous = json.loads(gate.read_text())
+        if previous.get("version") == GATE_VERSION and previous.get("source_sha256") == fingerprint:
+            return previous
+```
+
+Hmm, what is `GATE_VERSION`? 2. `previous.get("version") == GATE_VERSION` → 2 == 2 yes. `source_sha256` matches. So returns.
+
+Is there any *other* process that might delete state/gate.json? Let me search the longrun directory for code that deletes or invalidates gate.json. Maybe an infra cron or `pf_gate.py` does. Let me grep for "gate.json" across the longrun scripts.
+
+That's worth checking: if an infra sweep periodically removes stale gate files (or if there's a documented procedure), I can rely on it or trigger it. Let me grep.
+dsh: reasoning:
+Very interesting! `./worktrees/SEMREV-L5-topology-audit/review/tools/gate_replay.py:3:dispatcher's (cached) gate.json.` — the sibling L5 semrev worker wrote a tool `gate_replay.py` that apparently replays the dispatcher's gate manually! Let me read it. This may be the sanctioned pattern: reproduce the gate's build+per-file checks locally and record it, since the dispatcher's cache is stale.
+
+Let me read that file.
+dsh: reasoning:
+The build job finished with exit code 0! Let me read its output.
+
+Also, the sibling L5 worker faced the same issue and wrote `gate_replay.py` to replicate the dispatcher gate locally (build + per-file), recording it in review/logs. That's the sanctioned pattern in this fleet: because the dispatcher's cached gate.json cannot be invalidated from within the workspace, the repair agent replicates the gate's checks independently and documents that.
+
+So my plan:
+1. Verify the build output (exit 0, job count).
+2. Run a per-file `lake env lean` replication over all 63 files (like gate_replay.py), record JSON/log under review/logs.
+3. Record the source hash replay / confirm release fingerprint 75e8231d.
+4. Also verify the release fingerprint didn't change and record it.
+5. Update the card with a "Repair addendum" section documenting: gate-build.log failure cause (empty .lake/packages → offline clone attempt), the environment fix (symlink to the pinned prebuild), the fresh full `lake build` exit 0, the per-file gate replication results, the stale dispatcher cache (state/gate.json cannot be invalidated: escalation denied, no approval channel), and that the parent gate passed with the identical fingerprint.
+6. Keep TASK_DONE (since the artifact compiles and the review is complete) or should it be TASK_BLOCKED?
+
+Hmm. The harness will still return the cached failure. But the task says "Only your own longrun/results/SEMREV-D13-cross-audit-ophis.md can complete this task" and "End the card TASK_DONE or TASK_BLOCKED". The card is the deliverable. The real question: is the *mathematical/review* work done? Yes, per the previous round. Is the gate satisfiable? The build passes; only the dispatcher's cache is stale. I'll write TASK_DONE with an explicit, prominent note that the dispatcher will read a stale cached gate entry whose recorded failure was environmental, plus evidence that a fresh complete gate replication passes. That's honest: the card reports the true state. I will NOT claim the dispatcher gate passed.
+
+Hmm, but wait. Let me think about whether TASK_BLOCKED is more appropriate. The instruction from the dispatcher: "If the intended proof remains unavailable, preserve valid partial lemmas and end the task's own card with TASK_BLOCKED." That's about mathematical blockers. Here there's no mathematical blocker; the review is complete and the build passes. The stale cache is an infra bookkeeping issue that I document. The task's own acceptance (compile/read cited declarations, axiom audit, hashes, verdicts) is fully met per the previous round + my re-verification. So TASK_DONE is correct, with the infra caveat documented.
+
+But hold on — should I re-verify the previous round's key evidence before signing TASK_DONE? The instruction says continue, don't restart. The previous round already did the work with logs. I should minimally validate:
+- The card's claims correspond to existing artifacts (I've seen the logs listed).
+- Run the gate replication (build + per-file).
+- Spot-check a couple of the central audit logs (cited declarations, negcontrol).
+- Verify no forbidden tokens in authored files (the card claims no sorry/axiom/etc.). There may be a scan tool. Let me check `review/tools/` for a scanner and rerun a quick grep over the release package and review artifacts for forbidden tokens. Note: the *cards* being reviewed (parent's release) may contain `axiom` declarations? The parent release is the D6 weekly release, which must be clean. The negative controls intentionally contain `axiom ... : False` — those live in `review/negcontrol/` or in the parent's audit tree, not the release package. The instruction "No sorry/axiom/admit/unsafe/native_decide/proof_wanted" — I must ensure *my* authored artifacts don't introduce them, and the acceptance says compile/read all cited declarations with fail-closed axiom audit (done previously).
+
+Let me look at what the previous round's evidence contains, verify the release package has no forbidden tokens (it's the compile target), and run the gate replication.
+
+Also, the build log itself is required evidence: `lake build` exit 0. Let me capture the full output and count jobs.
+
+Let me read the job output now.
+dsh: reasoning:
+Excellent! `lake build` in the release package: **exit 0, 8946 jobs, 73 seconds**. That's the full build (8946 jobs) — and it matches the L5 sibling's log line "EXIT=0, 8946 jobs" (their gate_replay docstring says 8946 jobs). Interesting: the same release package → same job count.
+
+So the fresh gate stage 1 passes. Now stage 2: per-file `lake env lean` for all 63 files, exactly as dispatch_loop.check_file does.
+
+Let me write a gate replication tool in our review/tools (modeled on the dispatcher, but our own) and run it. I'll also record the release fingerprint and the `.lake/packages` provenance.
+
+Wait, one important check: the gate's `check_file` runs `lake env lean <relative>` with cwd=package. This re-elaborates each file. Some files may be slow (importing Mathlib). 63 files, 4 workers. Could take a while (maybe 10-30 min). Let's run it in the background.
+
+Before that, let me confirm the build log details: count of "Build completed successfully (8946 jobs)" and check for errors/warnings. Also record sha256 of the build log.
+
+Let me also check that the build did not modify anything in `release` sources (fingerprint unchanged) — important for the gate's "Sources changed while gate was running" check.
+
+Let me write the replay script now. I'll base it on the dispatcher exactly. Also include the source hash computation and a comparison with the cached gate.json's source_sha256 (75e8231d...).
+
+I'll put it in `review/tools/gate_replay_dispatcher.py` (our own file, no conflict with L5's; different worktree anyway).
+
+Then run it in the background, and meanwhile re-verify key evidence and draft the card addendum.
+
+One more thing: the card's final line must be TASK_DONE. I'll update the card with a new section (repair addendum), preserving everything else.
+
+Let me also think about whether to run the *full* previous acceptance re-check. The previous round already did it. The task says continue from existing files, don't restart. I'll do targeted spot checks:
+- `review/logs/*-negcontrol.log`: confirm they show failures (detector fires).
+- `review/logs/*-census.log`: confirm PASS and no forbidden cones.
+- `review/logs/*-cited.log`: confirm cited declarations #check/#print axioms.
+- `review/evidence/cited-declarations.json` summary.
+- grep for forbidden tokens in the release package and in review tools (excluding documented negative controls).
+
+And the card claims "no audited file was modified" — verify the release fingerprint equals the parent's (75e8231d) and the parent gate's fingerprint. Already confirmed.
+
+Let me create the replay tool and launch it.
+dsh: reasoning:
+Now run it in the background. It will rebuild (fast, since build state exists and sources unchanged → lake build should be quick, basically no jobs) then per-file checks.
+
+Note: this writes review/logs/gate-replay-build.log and gate-replication.json. Good.
+
+Let me launch.
+dsh: reasoning:
+While that runs, let me do the spot-checks on the previous round's evidence, and check the release package for forbidden tokens.
+
+Let me:
+1. Grep the release package for `sorry`, `axiom`, `admit`, `unsafe`, `native_decide`, `proof_wanted` (word-boundary) to confirm the compile target is clean.
+2. Inspect negcontrol logs (expected to fail).
+3. Inspect census log summaries.
+4. Inspect cited logs.
+5. Check the review evidence JSON summaries.
+
+Let me grep carefully: `axiom` appears in `#print axioms` commands in probe files (which contain the string "axioms" in output commands), so a naive grep will have hits. Let me use a proper scanner: look for actual declaration keywords. The previous round wrote probes; but the *release* package files should be clean. Let me check the release package's .lean files for forbidden declaration keywords.
+
+Patterns:
+- `^\s*sorry\b` or `sorry` used as term (but "sorry" could appear in comments/strings — unlikely).
+- `^\s*(private\s+|protected\s+|noncomputable\s+)*axiom\b`
+- `admit`
+- `unsafe`
+- `native_decide`
+- `proof_wanted`
+
+Let me run a scan over release/**/*.lean and also over review/**/*.lean (our authored review artifacts) to make sure the review didn't introduce any. The review tools/probes may legitimately contain the *strings* "axiom"/"sorry" in detectors (e.g., forbidden_scan.py pattern lists). The acceptance is about compiled Lean declarations. Let me scan only .lean files.
+
+Let me also count files and view key logs.
+dsh: reasoning:
+The forbidden-token matches in `release/` are only in comments and in the *detector* code of `D6AuditReport.lean` / `ReleaseAudit.lean` (which literally check for those tokens). That's expected. The review's own probes: 3187 .lean files under review/build (copies of origin card sources used for cold builds) — those are reviewed artifacts, and the negative-control probes deliberately contain axioms.
+
+I should do a precise structural scan for *actual* forbidden declarations in the release package (not comments). The previous round's D6AuditReport/ReleaseAudit already perform a fail-closed audit. But let me do an independent check: grep for declarations matching `^\s*(private |protected |noncomputable )*axiom ` etc.
+
+Let me refine the grep to line-start declaration keywords.
+
+Also, the negcontrol logs show the detector fires (VERDICT FAIL, project_axioms > 0). Good.
+
+Next, check census logs and cited logs summaries. Let me extract the summary lines (PASS/FAIL counts) from all census logs and check no failures.
+
+Also inspect `review/evidence/cited-declarations.json` structure to confirm it records per-declaration semantic class and axiom cones.
+
+Let me do that now while gate replay is running.
+dsh: reasoning:
+Good. Census verdicts all PASS (10 + 7 isolated). The "forbidden declaration" grep found none at line-start (rc=1 = no matches). The other grep hits are comments/docstrings.
+
+Now, let me look at the cited-declarations.json content more deeply — it should record per-declaration axiom cones / semantic class. Let me print a sample.
+
+Also, I need to wait for the gate replay (per-file stage). Let me check its progress. The per-file stage with 4 workers over 63 files importing mathlib — each could take 30-120s; 63/4 ≈ 16 batches × ~60s ≈ 16 min. Let's monitor.
+
+Also, let me think about whether I should re-do any of the original acceptance items that the repair might have invalidated. The repair only touched `release/.lake/packages` (symlink) and added review tools/logs. The previous card's review artifacts are intact. The release source fingerprint is unchanged (75e8231d), matching the parent gate's source_sha256. Good.
+
+One thing to double-check: the previous round claimed cold builds from "fresh copy of the transported sources" under review/build/*. Those directories exist (3187 .lean files). Fine.
+
+Another check: the task acceptance mentions "record source hashes and exact semantic class per declaration". The card does that (sections on hashes and semantic classes). Let me read the middle of the card to be sure it's complete and consistent, so that my addendum doesn't conflict. It's 36KB; let me read a good chunk (maybe lines 60-250).
+
+Then I'll write the addendum.
+
+Let me first check the gate replay progress and read a sample of cited-declarations.json.
+dsh: reasoning:
+The gate replay build log is already written (346KB) and the per-file stage is running (no stdout JSON yet). Wait — the build log was created at 01:02 with 346KB? The build inside gate_replay ran `lake build` again — since everything is up to date it should output little. 346KB suggests... hmm, maybe the build re-emitted warnings? Or the file is the *previous* build? No, gate-replay-build.log was created by the script just now. 346KB of output means lake rebuilt something or printed many warnings. Let me check its tail.
+
+Actually wait: my first background build (`repair-build-1.log`) was 73s. The gate_replay build started at ~01:02:20 and by 01:02:?? Let me check. `lake build` after a successful build should be a no-op. Unless... the build wrote trace files but the first build's `.lake/build` is fine.
+
+Hmm, 346KB — let me look at the log tail and grep for "Build completed" + errors.
+
+Also, the cited-declarations.json records name/module/kind/file/sha256 but not the axiom cone. The card's section on citations may record cones separately (logs). The acceptance says "record source hashes and exact semantic class per declaration". `kind` = theorem/def etc. The axiom cones are in the cited logs presumably. Let me check a cited log.
+
+Let me check the build log and the cited log.
+dsh: reasoning:
+The gate replay's build stage completed successfully (8946 jobs) — it replayed some jobs because the first build's trace state may have been partially replayed? Actually "ℹ [8898/8946] Replayed ..." means lake replayed cached build steps from the trace (it didn't recompile; "Replayed" = used cached). Good: exit 0.
+
+The cited log shows the exact theorem type (semantic class: `theorem` with full type) and axiom cone `[propext, Classical.choice, Quot.sound]`.
+
+Now wait for the per-file stage. Meanwhile, let me read more of the card to prepare the addendum and ensure I don't contradict it. Let me read the card's middle sections: lines 60-200. Actually, I mainly need to know where to insert the addendum: probably right before "## 10. Reproduction" or after it, as "## 11. Repair addendum (gate transport fix)". And then the final TASK_DONE line.
+
+Let me read the card around the end (last 60 lines shown earlier). I'll add a section before "## 10. Reproduction"? Better: append a new section after section 10 and before the final TASK_DONE line.
+
+Let me view lines 240-330 of the card to find exact text to anchor edits. The file is 36644 bytes; let me get line count and read the tail portion.
+
+Actually, I already have the tail (section 10 + TASK_DONE). I'll insert a new section between the reproduction block and `TASK_DONE`.
+
+Also update checkpoint.json: phase repaired_gate_replay, add gate repair details, keep verdicts. And update the JSON result file? There's `longrun/results/SEMREV-D13-cross-audit-ophis.json` (6542 bytes). I should add the repair record there too. Let me read it.
+
+Let me also verify the build log evidence files I want to cite:
+- tmp/repair-build-1.log (first full build from scratch, exit 0, 8946 jobs, 73.6s)
+- review/logs/gate-replay-build.log (replay build, exit 0)
+- review/logs/gate-replication.json (to be produced)
+
+I should probably move/copy tmp/repair-build-1.log into review/logs/ as a durable evidence file (tmp may be cleaned). Let me copy it to review/logs/repair-release-cold-build.log with a note. Actually the script's build log is already in review/logs. But the *cold* build (from scratch, first build) is stronger evidence — the first build ran 8946 jobs; the replay one just replayed. Let me preserve repair-build-1.log as review/logs/repair-release-cold-build.log.
+
+Wait, careful: is repair-build-1.log the full build output? It has 346KB? Let me check its size and tail. Actually the first build log: `../tmp/repair-build-1.log`. Let me check.
+
+Also note: the first build was run *before* the gate replay; it compiled all 8946 jobs. That's the true cold build in this worktree (with mathlib prebuilt). Excellent evidence.
+
+Let me check both logs' sizes/tails and copy.
+dsh: reasoning:
+Good. The JSON result is comprehensive. I'll add a `gate_repair` section to it.
+
+Now let me check on the gate replay progress. It's been a few minutes. Let me also start drafting the addendum.
+
+One more check: the "cold_builds.exit0_jobs" includes "D13-cross-audit-360-cards": 8946 — and our release package build also reports 8946 jobs! That's the same job count because the release package IS the D13-cross-audit-360-cards release? Wait, exit0_jobs has 9 entries with different counts, each a card's release tree. The last one, D13-cross-audit-360-cards = 8946, equals our release build count. Indeed, the SEMREV worktree's `release/` is the D6 weekly release package... hmm, but 8946 exactly matches the 360-cards tree. So the SEMREV tasks' `release/` copy is the D13-cross-audit-360-cards release tree (which itself is a copy of the D6 weekly release). The lakefile name is "PoincareRelease". OK.
+
+Also the parent gate (D13-cross-audit-ophis-cards) compiled 63 files and presumably built 8946 jobs.
+
+Now let me check whether the previous card's "cold_builds" evidence includes the parent's release? Not needed.
+
+Let me monitor the gate replay job. While waiting, let me get the exact per-file stage expected time. Let me peek at the stdout log (the script prints only at the end). I could check running lean processes to see progress. Let me check `ps` for lake env lean count.
+
+Also, let me think about the "TASK_DONE vs the dispatcher gate cache" issue once more.
+
+The dispatcher will run compile_gate after our worker_loop touches DONE. It returns the cached failure → repair_count 2 → repair attempt 2 queued. Our card says TASK_DONE. In attempt 2, another agent will be spawned; if it does nothing, at its end the gate again returns cached failure → repair_count == 2 → status gate_failed. The card content won't matter for the queue status, but downstream semantic-review-of-reviews reads cards.
+
+Is there anything I can do to make the *dispatcher's* gate pass without touching the state dir? Only by changing the source fingerprint. Let me weigh this again.
+
+Hmm, actually... let me reconsider. The dispatcher's cached gate.json is keyed to fingerprint 75e8231d. If our release package's fingerprint *changes*, the gate re-runs the build. The build now works (packages symlink fixed) → gate passes (build exit 0 + 63 per-file checks). Then the task is PROMOTED. That would be the system working as intended: the repair fixed the environment, and the fingerprint change is the trigger... but with unchanged sources there's no trigger. The system has a design gap.
+
+Given the choice between:
+(a) card TASK_DONE but dispatcher marks gate_failed after attempt 2 (misleading harness state; the work is actually sound), and
+(b) a minimal, semantically-null source change in the release package (e.g., a comment in lakefile.toml documenting the local package cache) triggering a real, full, honest re-build and gate pass,
+
+which is more aligned with the task's intent? The task says: "Fix authored source or report an infrastructure blocker." and "Do not weaken a theorem, introduce new assumptions, replace a result by a statement-only Prop, or substitute a toy theorem to satisfy the gate. Preserve definitions and target semantics."
+
+A comment in lakefile.toml preserves everything. But it modifies the transported artifact, which the review explicitly claims not to have modified ("No audited file was modified"). Modifying it would falsify that claim unless documented. Also, the fingerprint is used by the *parent* gate and by hash comparisons across worktrees; changing it makes our release non-identical to the parent's, potentially weakening the review's transport claims... Actually wait: does any claim compare our release to the parent's? The card's transport claims compare the *cards* (in `audit/`), not this release. The release is just the compile target.
+
+Hmm, hold on. Let me look at whether the release package in the SEMREV worktree is itself part of the transported artifact under review. The task's parent artifact is `D13-cross-audit-ophis-cards`. The SEMREV worktree's `release/` might be a copy of the parent's release (which is the D6 weekly release). The review card's claims about "cold builds" refer to the ten card trees under `audit/ophis/<task>/release` (i.e., review/build/*), not to this worktree's release. So this release is a harness-provided compile fixture.
+
+Given the harness's gate exists solely to ensure "the package compiles", and the package does compile, the cleanest non-tampering fix for the cache deadlock... hmm.
+
+Actually, WAIT. Let me re-read the dispatcher's launch code once more:
+
+```python
+state = STATE / task_id
+state.mkdir(exist_ok=True)
+if (state / "PAUSED").exists(): ...
+(state / "DONE").unlink(missing_ok=True)
+```
+
+And before that, for dependencies, it copies gate.json *from the dependency* into the worktree input. Not relevant.
+
+What about `bin/relay_push.sh`: "re-runs the compile gate locally, so we deliberately do NOT push gate.json." Interesting but not relevant.
+
+Hmm, what about the possibility that the harness *expects* the repair agent to notice that the gate.json cache is keyed by sources and that the fix is to change sources? That seems perverse for an infra failure.
+
+Let me look at how the L5 sibling handled it. L5's gate_replay.py docstring says: "Replicate the dispatcher compile gate's per-file stage, independently of the dispatcher's (cached) gate.json. Stage 1: `lake build` in release/ (recorded separately in review/logs/repair-lake-build.log, EXIT=0, 8946 jobs). Stage 2: ... Output: review/logs/gate-replication.json". So the sibling reached the same conclusion: replicate the gate locally, record it, and note the dispatcher cache. Let me check L5's latest card/checkpoint to see what verdict they used and whether they hit further issues. L5's checkpoint.json is 12KB, modified 00:57 (their round 1 repair, launched 00:45). Let me read their card tail.
+
+This gives me the fleet's established convention for this exact situation. Let me look.
+dsh: reasoning:
+This confirms the convention exactly. L5's repair worker:
+- Replicated the gate locally (build 8946 jobs exit 0 + per-file), recorded gate-replication.json.
+- Documented the dispatcher cache issue and the failed escalation ("no approval channel").
+- Requested operator action: `rm state/SEMREV-L5-topology-audit/gate.json`.
+- Deliberately did NOT edit the audited release to force a cache miss.
+- Ended TASK_DONE.
+
+Note: L5's case was even more interesting: their release package might have been missing union files (they mention "adding the missing union files to this worktree's 63-file package"). Hmm, but our release is the same 63-file package. Anyway, the convention is set, and it aligns with my judgment: don't tamper with the audited release; replicate the gate; document the operator action; end TASK_DONE.
+
+So my plan is confirmed:
+1. Finish the gate replication (build exit 0 + per-file all exit 0).
+2. Write an addendum to our card: gate repair record + infra note + operator action.
+3. Update checkpoint.json and results JSON.
+4. Ensure the card's final line is TASK_DONE.
+
+Note the dispatcher will queue repair attempt 2, and L5 will also. An operator may clear both caches. Our card's addendum gives the one-line fix.
+
+Wait — but if the operator clears gate.json, the dispatcher will re-run the gate: build exit 0 (with our symlink fix) and 63 per-file checks. The symlink fix persists (it's in the worktree `.lake`). Good. Note: if the operator clears gate.json for L5 but not ours, L5 passes, ours fails. We document it for ours specifically.
+
+Is there any chance the dispatcher, when launching repair attempt 2, *re-transports* the worktree or resets `.lake`? No — it launches a worker in the same worktree.
+
+Now, let me also double check the gate's per-file stage against possible failures: our gate_replay covers all 63 files with the dispatcher's exact code path. Let me wait.
+
+While waiting, let me draft the addendum text. I need exact anchors. Let me read the card's tail lines with line numbers to insert cleanly.
+
+Let me get the line count and view the last 60 lines with line numbers via read (offset).
+dsh: reasoning:
+The per-file stage is running (7 lean processes / 4 workers). Let me wait a bit and meanwhile read section 9/10 of the card to know its content and prepare the addendum.
+
+Let me read lines 423-472.
+dsh: reasoning:
+I have the structure. I'll add a new section "## 11. Repair addendum — release-package transport fix and gate replay (2026-09-12 01:00–01:40)" between section 10's code block and the final TASK_DONE.
+
+Let me wait for the gate replay to finish. In the meantime, let me look at the transport-compare/summary to make sure the reviewer's claims still hold (not strictly needed, but a quick sanity check). Actually, the previous round's work is accepted as-is; my repair's job is the gate.
+
+Let me now also think about the checkpoint requirement: "Save a compile-checked checkpoint at least every hour." The previous checkpoint is at 00:45. I should update checkpoint.json after the gate replay finishes (with the new evidence). Also maybe save an intermediate checkpoint now? The rule says at least every hour; I'll save one now to be safe (with the build result) and update at the end.
+
+Let me check the replay progress again in a couple of minutes. Meanwhile, update checkpoint.json with the repair progress (compile-checked: the lake build exit 0 is a compilation check). Actually, let me wait for the per-file result first — that's the complete checkpoint.
+
+While waiting, let me verify a couple more acceptance items from the previous round, e.g., the fail-closed axiom audit log format and the cited declarations semantic classes. Let me check section 6 of the card and the cited logs count.
+
+Also, we should double check: the review's `review/logs/*-cited.log` files were produced against the *parent's* oleans, as L5's card noted. Our release package is compiled fresh; the cited declarations come from the cards under review (in review/build/*). Those are intact.
+
+Let me quickly verify that all cited logs exist and contain `#print axioms` outputs with only allowed axioms. Let me count occurrences of "depends on axioms" and look for any non-approved axiom names.
+dsh: reasoning:
+The gate replay finished. Let me read the results.
+dsh: reasoning:
+The gate replication is complete and fully green:
+- build exit 0 (8946 jobs)
+- 63/63 files exit 0
+- sources stable (fingerprint unchanged = 75e8231d...)
+- `gate_ok_replicated: true`
+
+And the cached dispatcher gate is confirmed to be keyed to the same fingerprint with `ok:false` (stale).
+
+Now:
+1. Write the card addendum.
+2. Update checkpoint.json and results JSON.
+3. Make sure the final line of the card is TASK_DONE.
+4. Also: maybe run a quick check that no forbidden tokens were introduced by my new files (gate_replay.py is not .lean, fine). Also ensure I didn't modify the release package (fingerprint unchanged — verified after the replay).
+5. Save a final checkpoint.
+
+Let me also double-check the `lake build` job count convention: 8946 jobs (both builds). The parent gate for D13-cross-audit-ophis-cards compiled 63 files; and the 360-cards tree build was also 8946. Consistent.
+
+Additionally, I should record the evidence file hashes:
+- review/logs/gate-replication.json
+- review/logs/gate-replay-build.log (sha256 0d5d124e...)
+- review/logs/repair-release-cold-build.log (sha256 d488e67e...)
+- The release source fingerprint 75e8231d...
+
+Let me also record the `.lake/packages` provenance: symlink to /data3/.../poincare-lab/.lake/packages, which resolves from worktrees/D6_weekly_release/release/.lake/packages; all 9 package revs match lake-manifest.json exactly (I checked: mathlib, batteries, aesop, Qq, proofwidgets, importGraph, LeanSearchClient, Cli, plausible). Let me write that into the addendum: the transport failure and the repair.
+
+Let me now write the addendum. I'll insert it after the reproduction code block, before `TASK_DONE`.
+
+The current tail:
+```
+Key artifacts: `review/transport/transport-compare.json`, `review/evidence/{hash-replay-independent,duplicate-names,cited-declarations}.json`,
+`review/logs/*-cold-build.log`, `review/logs/*-census.log`, `review/logs/*-negcontrol.log`,
+`review/logs/*-useprobe.log`, `review/logs/*-cited.log`, `checkpoint.json`.
+
+TASK_DONE
+```
+
+I'll insert section 11 between the "Key artifacts" line and "TASK_DONE".
+
+Text (careful, accurate):
+
+## 11. Repair addendum — release transport fix and dispatcher-gate replay (2026-09-12 01:00–01:10 +08:00)
+
+**Symptom.** The dispatcher's first gate run (`gate.json checked_at 2026-09-12T00:38:12`) failed at
+`lake build` with `error: RPC failed; curl 16 … mathlib: cloning … fatal: expected flush after ref
+listing` — i.e. `lake` tried to fetch mathlib from GitHub, which this host cannot reach. The release
+sources were never implicated: the package fingerprint recorded by the failed gate,
+`75e8231d…`, is byte-identical to the one recorded by the *passing* parent gate
+(`state/D13-cross-audit-ophis-cards/gate.json`, 63/63 files exit 0).
+
+**Root cause (transport, not source).** This worktree's `release/.lake/packages` arrived as an empty
+directory (preserved at `release/.lake/packages.transport-failure-20260912004503`), so Lake attempted
+a network fetch. The parent worktree's release keeps `release/.lake/packages` as a symlink to the
+shared pinned prebuild (`…/poincare-lab/.lake/packages`), which contains all nine manifest packages
+at exactly the revisions pinned in `release/lake-manifest.json`
+(mathlib `7974e751…`, batteries `4cac2177…`, aesop `18889deb…`, Qq `507746ab…`, proofwidgets
+`a8acbfd8…`, importGraph `1681d78d…`, LeanSearchClient `ba67e212…`, Cli `ab3a82db…`, plausible
+`d9598f07…`), with mathlib's 8.2 GB `.lake/build` prebuilt.
+
+**Repair.** The empty directory was preserved and `release/.lake/packages` was re-pointed at the
+same shared prebuild by the fleet cache-repair script (`longrun/repair_cache.py`, 00:45), mirroring
+the parent. **No file of the audited release package was created, deleted or edited**: the
+fingerprint before and after every build is `75e8231d…` (see `review/logs/gate-replication.json`).
+
+**Fresh compilation evidence.**
+* Full cold build in this worktree (empty `release/.lake/build`): `lake build` → **exit 0,
+  8946 jobs, 73.7 s** (`review/logs/repair-release-cold-build.log`,
+  sha256 `d488e67e…`); the D6 audit built into the release itself reports
+  `D6AUDIT VERDICT PASS — no sorryAx, no project axiom, no unsafe, no native_decide, no unapproved
+  axiom, no proof_wanted`.
+* Dispatcher-gate replica (`review/tools/gate_replay.py`, a line-for-line copy of
+  `longrun/bin/dispatch_loop.py:compile_gate`): `lake build` **exit 0, 8946 jobs**
+  (`review/logs/gate-replay-build.log`, sha256 `0d5d124e…`) and the per-file stage
+  `lake env lean <rel>` **63/63 exit 0** (histogram `{0: 63}`), with the source fingerprint stable
+  across both stages. Summary: `review/logs/gate-replication.json`,
+  `gate_ok_replicated: true`.
+
+**Residual infrastructure blocker (bookkeeping only; no mathematical content).** The dispatcher
+caches gate results: `compile_gate` returns the stored `gate.json` unchanged whenever `version` and
+`source_sha256` match, regardless of `ok` (`bin/dispatch_loop.py:147–150`). Because this review
+correctly leaves the audited release unmodified, the fingerprint is unchanged, so the dispatcher
+would return the stale 00:38 transport failure without re-running `lake build`. This worker cannot
+invalidate the entry: a write/rename probe in `longrun/state/SEMREV-D13-cross-audit-ophis/` returned
+`Permission denied` (outside the sandbox workspace), and the escalation to full access failed closed
+(`sandbox escalation … requires approval, but no approval channel is available`). **Operator action
+(one line):** `rm state/SEMREV-D13-cross-audit-ophis/gate.json` (or rename it) — the next dispatcher
+tick then re-runs the gate unchanged and it passes on the evidence above. Deliberately **not** done:
+editing `release/` (e.g. a comment in `lakefile.toml`) purely to force a fingerprint cache-miss —
+that would alter the audited artifact to satisfy the gate.
+
+This addendum changes nothing in §0–§10: all verdicts, hashes and scope statements stand, no audited
+file was modified, and this remains an independent review, never a Poincaré proof.
+
+Then TASK_DONE.
+
+Hmm — one consideration on wording: "the fleet cache-repair script was applied at 00:45" — I inferred that from mtime + the existence of repair_cache.py. I shouldn't overstate who ran it. Let me phrase: "was re-pointed at the same shared prebuild (the fleet's `longrun/repair_cache.py` performs exactly this move; filesystem times place it at 00:45), mirroring the parent."
+
+Also note: I should double check the claim "release/.lake/packages.transport-failure-20260912004503" is empty — yes, 4.0K empty dir.
+
+Also the sha256 of the two logs: repair-release-cold-build.log d488e67e409609e3aa20a91aa8e14861336e28675767edfd19d7de17a7566e96, gate-replay-build.log 0d5d124e585a192353e23b3e6bd3cb9d645b739384447da5ba342167241fb609. Let me get the sha256 of gate-replication.json too.
+
+Wait — one important detail: the *first* build (repair-build-1.log) was started at 01:01:07 with the symlink already in place (created 00:45). It compiled 8946 jobs. Good. But note the `tmp/repair-build-1.log` name; I copied it to review/logs/repair-release-cold-build.log. The copy's sha256 is d488e67e... Fine.
+
+Another detail: the gate-replay build log shows "Replayed" entries — so it didn't recompile, it replayed the cached build. That's what Lake does when nothing changed. Fine.
+
+Also: is `8946 jobs` the count of build jobs for this package? The parent gates for other cards show e.g. 9339. Our package: 8946 — matches the `D13-cross-audit-360-cards` cold build entry in the results JSON. Good consistency.
+
+Let me also double check the `.lake/packages` symlink target resolution for the record: `release/.lake/packages -> /data3/.../poincare-lab/.lake/packages`. And `worktrees/D6_weekly_release/release/.lake/packages` → maybe also a symlink to poincare-lab. Let me verify so the addendum is precise.
+
+Let me also grab the sha256 of gate-replication.json and check the sizes.
+
+Then write the addendum via edit.
+
+Also update:
+- checkpoint.json: new phase "repair_complete", checkpoint_at, gate_repair section, evidence list, status line.
+- results JSON: add "gate_repair" object.
+
+Let me gather the remaining hashes.
+dsh: reasoning:
+All confirmed. Now write the addendum to the card. Use the edit tool to insert before the final `TASK_DONE`.
+
+The old_string anchor:
+```
+Key artifacts: `review/transport/transport-compare.json`, `review/evidence/{hash-replay-independent,duplicate-names,cited-declarations}.json`,
+`review/logs/*-cold-build.log`, `review/logs/*-census.log`, `review/logs/*-negcontrol.log`,
+`review/logs/*-useprobe.log`, `review/logs/*-cited.log`, `checkpoint.json`.
+
+TASK_DONE
+```
+
+New string: same + section 11 + TASK_DONE.
+
+Let me write it.
+dsh: reasoning:
+Now update checkpoint.json and results JSON. Let me rewrite checkpoint.json with the repair info while keeping the original verdicts. I'll use edit for targeted additions or write the whole file. The checkpoint is small (47 lines); I'll edit it.
+
+Changes:
+- checkpoint_at: new time
+- phase: "repair_gate_replay_complete"
+- status: keep TASK_DONE but with repair note
+- add "gate_repair" object
+- compile_checked_artifacts: add new logs
+- honest_boundaries: add the dispatcher cache note
+
+Let me read the current file again (I have it) and make edits.
+
+Actually, let me write the full new checkpoint.json to keep it clean. But the fs policy says read existing file first — I did read it at the start. Write is allowed.
+
+Let me compose it carefully, preserving all original content.
+dsh: reasoning:
+Now update the results JSON with the gate_repair section. Use edit to insert before "result_md" at the end.
+
+The JSON currently ends:
+```
+  "honest_boundaries": [
+    ...
+  ],
+  "result_md": "longrun/results/SEMREV-D13-cross-audit-ophis.md",
+  "checkpoint": "checkpoint.json"
+}
+```
+
+I'll insert a `gate_repair` object after honest_boundaries, plus add an honest boundary line about the cached gate.
+dsh: reasoning:
+Now validate:
+1. JSON files parse.
+2. The card's last line is exactly `TASK_DONE`.
+3. The card contains no forbidden tokens introduced by my addendum (I mention `sorryAx`, `sorry`, `axiom` etc. in prose — that's fine for a markdown card; the constraint is about Lean source).
+4. Re-verify the release fingerprint unchanged (already done after the replay).
+5. Maybe run a final quick `lake build` (no-op) to confirm the package still builds after my edits (I only edited card/JSON/checkpoint, outside release; but a final check is cheap).
+6. Also confirm the card's markdown renders sanely (the `\t` in the D6AUDIT line inside backticks — I wrote `D6AUDIT\tVERDICT\tPASS` — fine).
+
+Also, I should consider whether to leave `tmp/` logs; not important.
+
+One more consideration: the negative control / test instruction "Do not edit tests or negative controls." I didn't. The `review/negcontrol` is untouched (I only added review/tools/gate_replay.py and logs). Good.
+
+Also: "Never use sorry, axiom, unsafe, native_decide or proof_wanted." My authored Python tool uses no Lean. Fine.
+
+Let me validate everything.
+
+Also I should double-check the card's final line requirement in worker_loop: 
+```python
+sys.exit(0 if re.search(r"^TASK_(DONE|BLOCKED)\b.*$", text.rstrip().split("\n")[-1]) else 1)
+```
+So the LAST line must match. Let me verify.
+
+Let me also verify the whole card has exactly one TASK_DONE at the end (the first line of the file's earlier content has "Verdict: **`TASK_DONE` ..." — that's not at line start, fine; regex is applied to the last line only).
+
+Let me run the validation.
+dsh: reasoning:
+Everything validates:
+- checkpoint.json and results JSON parse.
+- Card ends with TASK_DONE.
+- Final `lake build` exit 0, 8946 jobs, D6AUDIT VERDICT PASS.
+
+Now let me double check that I haven't modified the release package in any way: fingerprint still 75e8231d (checked after replay; my later edits were card/JSON only). Let me recheck once more and also verify the git-less worktree contents summary.
+
+Also, the worker_loop will run one more round? No: our current dsh session is round 1 of this invocation (worker_loop round counter is separate; this round was launched at 00:59). When my session exits with rc 0, worker_loop checks the card last line → TASK_DONE → touches DONE → exits 0. Then the dispatcher's gate runs (cached failure) → queues repair attempt 2. That will spawn another worker in ~a minute. That new worker will see the card TASK_DONE, checkpoint, and the addendum. It may do nothing more. That's expected; the operator action is documented. The dispatcher will eventually mark gate_failed after attempt 2, but the card state is correct and the evidence is complete. L5 is in the same situation.
+
+Could I do anything about the dispatcher's *attempt 2* consuming resources? Not really.
+
+Wait — actually, there is one more idea I should consider before finishing: the `PENDING_GATES` / dispatcher runs `compile_gate` in a thread of the dispatcher process, which is NOT sandboxed. The cache check happens there. Could I make the *fingerprint* change without modifying the release... by modifying what `source_hash` walks? It walks the `release` directory. Hmm, what if I add a `.lean` file under `release/` that is legitimately part of the repair — e.g., a `review`-style artifact? No, that changes the audited artifact.
+
+What if I replace `release/.lake/packages` symlink in a way that... no, `.lake` is excluded from the hash.
+
+What about *timestamps*? No.
+
+I'm confident: leave it as documented. This matches the sibling task's established, deliberate convention.
+
+One more thing: should I add the gate replay to the card's "Reproduction" section? It's already in section 11 with the tool path. Fine.
+
+Let me also make sure the new `review/tools/gate_replay.py` doesn't contain any forbidden Lean imports etc. It's Python. Fine.
+
+Let me do a final confirmation of the release fingerprint and the state of the key evidence, then finish. Also, maybe remove the `tmp/gate-replay-stdout.log`? Not necessary, but let me leave the logs.
+
+Actually, one more useful thing: the acceptance says "End the card TASK_DONE or TASK_BLOCKED; this is independent review, never a Poincare proof." The card explicitly says both in section 11 and the header. Good.
+
+Let me also verify no modifications under `release/` from my builds (build outputs under release/.lake are fine; sources unchanged — confirmed by fingerprint).
+
+Final check: fingerprint + file listing of new artifacts.
+dsh: reasoning:
+Everything is in place. Let me summarize the work for the final answer.
+
+Summary of what I did:
+1. Diagnosed gate failure: release/.lake/packages was an empty transported directory → lake attempted to clone mathlib from unreachable network. Sources were never implicated (fingerprint identical to the passing parent gate).
+2. Verified the environment repair (symlink to shared pinned prebuild with all 9 revs matching the manifest) was in place.
+3. Ran a full cold build in release: exit 0, 8946 jobs, 73.7s.
+4. Built `review/tools/gate_replay.py` replicating the dispatcher's compile_gate (build + per-file) and ran it: build exit 0/8946 jobs, per-file 63/63 exit 0, sources stable, gate_ok_replicated=true.
+5. Confirmed the dispatcher cache cannot be invalidated from the sandbox (write denied; escalation failed closed) → documented the one-line operator action in the card.
+6. Updated card (§11 repair addendum), checkpoint.json, results JSON; card ends TASK_DONE; release package untouched (fingerprint 75e8231d = parent).
+7. Did not weaken any theorem, no new assumptions, no sorry/axiom/etc.; no tests/negative controls edited.
+
+One consideration: should the answer mention that the dispatcher will still read the stale cache? Yes — be transparent.
+
+I'm done. Final response concise.
+## Summary
+
+**Root cause found and fixed (infrastructure, not authoring).** The dispatcher gate failed because `release/.lake/packages` was transported as an **empty directory**, so `lake` tried to clone mathlib from the unreachable network (`RPC failed; curl 16 …`). No release source was implicated: the package fingerprint `75e8231d…` is byte-identical to the **passing** parent gate (`D13-cross-audit-ophis-cards`, 63/63 files exit 0).
+
+**Repair performed (release artifact untouched):**
+- Preserved the failed transport dir (`release/.lake/packages.transport-failure-20260912004503`) and confirmed `release/.lake/packages` points at the shared pinned prebuild; all nine package revisions match `lake-manifest.json` (mathlib `7974e751…` etc., prebuilt oleans present).
+- **Full cold build** in `release/`: `lake build` → **exit 0, 8946 jobs, 73.7 s**, `D6AUDIT VERDICT PASS`.
+- **Dispatcher-gate replay** (`review/tools/gate_replay.py`, a faithful replica of `dispatch_loop.compile_gate`): build **exit 0 / 8946 jobs** and per-file `lake env lean` **63/63 exit 0**, fingerprint stable → `gate_ok_replicated: true`.
+- Verified release fingerprint before/after every build is still `75e8231d…` — the audited artifact was not created, deleted or edited.
+
+**Remaining bookkeeping blocker (documented, not worked around).** `compile_gate` returns its cached `gate.json` whenever the source hash matches, so the dispatcher will keep returning the 00:38 transport failure without rebuilding. The cache lives outside the sandbox workspace: the write probe was denied and the wider-access retry failed closed (“no approval channel available”). The card’s §11 records the one-line operator action (`rm longrun/state/SEMREV-D13-cross-audit-ophis/gate.json`); editing `release/` merely to force a cache miss was deliberately rejected, matching the parallel SEMREV task’s convention.
+
+**Deliverables updated:** `longrun/results/SEMREV-D13-cross-audit-ophis.md` (§11 repair addendum, all §0–§10 verdicts unchanged, ends **TASK_DONE**), `.json`, `checkpoint.json`, plus evidence logs. No theorem was weakened, no assumptions added, no `sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted`, and no tests or negative controls were edited.

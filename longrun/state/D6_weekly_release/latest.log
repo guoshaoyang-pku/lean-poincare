@@ -1,0 +1,2068 @@
+dsh: reasoning:
+Let me start by understanding the environment and what's available.
+
+The task: I'm the integrator for a one-week release. Worktree given as /data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D6_release but current workspace is /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D6_weekly_release. Let me explore.
+
+I need to consume only accepted D5 artifacts. Produce:
+- weekly release manifest
+- theorem/dependency ledger
+- list of verified Lean declarations
+- list of explicit blockers for full Perelman proof
+- next 20 queued builder tasks
+- release result card
+
+Every claimed theorem must point to a compiling .lean file and axiom report. Don't claim Poincare, Ricci flow existence, Perelman monotonicity, or surgery proved unless kernel and clean-room verifier demonstrate.
+
+Let me look at the filesystem first.
+dsh: reasoning:
+The workspace is /data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D6_weekly_release (note: /data3 and /data/home appear to be the same path, likely symlinked). The task mentions D6_release but the actual directory is D6_weekly_release. The D5_clean_rebuild worktree exists — that's the accepted D5 artifacts I need to consume.
+
+Let me explore D5_clean_rebuild and the other directories to understand the structure.
+dsh: reasoning:
+Let me read the longrun README, queue.json, and the D5 manifests to understand the release state. Also look at D5's results and release card.
+dsh: reasoning:
+Now let me read the D5 result card and its manifests. That's the key input. Also the D6 prompt.
+dsh: reasoning:
+Now I understand the setup. I'm the D6 integrator. My workspace is `/data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D6_weekly_release` (the prompt says D6_release but the actual runtime is D6_weekly_release).
+
+I need to:
+1. Consume only accepted D5 artifacts — the D5 clean rebuild worktree.
+2. Produce:
+   - weekly release manifest
+   - theorem/dependency ledger
+   - list of verified Lean declarations
+   - list of explicit blockers for the full Perelman proof
+   - next 20 queued builder tasks
+   - release result card
+
+Every claimed theorem must point to a compiling `.lean` file and axiom report. Don't overclaim.
+
+Key question: should I independently verify? The D5 card says it did a clean rebuild with gates. As integrator, I should at minimum:
+- Verify the D5 artifacts exist and are hash-consistent
+- Ideally re-run the build/gate myself in the D6 worktree to independently confirm (since I must not claim things unless kernel + clean-room verifier demonstrate). D5 is the clean-room verifier. But an integrator should verify the D5 artifacts are present and reproducible.
+
+Given the task says "Consume only accepted D5 artifacts", I should:
+1. Copy the D5 release package into D6 worktree (or verify in place).
+2. Re-run the gates to confirm (independent reproduction) — this is good practice and within the spirit.
+3. Extract verified declarations from the axiom audit output.
+4. Build the manifest/ledger/blockers/next-20-tasks.
+
+Let me first inspect the D5 manifest files to understand their schema, then look at the release package structure, tools, and logs.
+
+Let me read:
+- D5 manifest/build-manifest.json
+- D5 manifest/gate-results.json
+- D5 manifest/forbidden-scan.json
+- D5 manifest/claims.json
+- D5 manifest/card-blockers.json
+- D5 manifest/provenance.json
+- D5 manifest/source-integrity.json
+
+Let me also check the D5 release directory structure fully.
+
+Given large files, let me be smart. Let me look at sizes first.
+dsh: reasoning:
+This is a rich setup. My job as D6 integrator:
+
+1. Consume only accepted D5 artifacts (the D5 clean rebuild package and manifests).
+2. Produce:
+   - weekly release manifest
+   - theorem/dependency ledger
+   - list of verified Lean declarations
+   - list of explicit blockers for the full Perelman proof
+   - next 20 queued builder tasks
+3. Every claimed theorem must point to a compiling .lean file and axiom report.
+4. Write a release result card.
+
+Key considerations:
+- The D5 manifest says `forbidden_dependency_audit` has `summary` with 11 keys. I need the exact per-declaration axiom cones. The ReleaseAudit.lean output presumably lists all declarations and their axiom cones. Let me look at the audit output log (04_release_audit.log or 10_final_release_audit.log) to extract the verified declaration list.
+
+- I should independently re-verify: run the build and audit in my D6 worktree (copy D5 release package + tools). This is the integrator's independent reproduction. That's important because the task says "Every claimed theorem must point to a compiling `.lean` file and axiom report" and "unless the kernel and clean-room verifier demonstrate it". D5 is the clean-room verifier; but as integrator I should verify the D5 artifact hashes and re-run gates in my own workspace. That would make the D6 release independently verified.
+
+Let me check the environment: Lean toolchain available? The D5 worktree has `.lake/packages` with mathlib prebuilt. Copying that may be expensive (8.2 GB). Alternatively, I can reference the D5 release package's build artifacts directly? But my sandbox is workspace-write on D6_weekly_release only. Reading D5 is fine. But can I write only in D6? Let me check whether the sandbox allows reading D5 (yes, we read files). Writing to D5 would be denied.
+
+Option: Create my own `release/` in D6 by copying D5's `release` source files (not .lake) plus tools, and reuse mathlib via a `lakefile.toml` that points to the shared mathlib cache. Actually D5's release/.lake/packages contains mathlib prebuilt. Copying 8.2GB could be expensive/slow. Alternative: set up the D6 release with `require mathlib from ...` pointing at the shared prebuilt mathlib path (e.g., /data/home/.../poincare-lab/.lake/packages/mathlib or D5's .lake/packages/mathlib). Let me check the lakefile and lake-manifest of D5.
+
+Let me look at D5's lakefile.toml, lean-toolchain, and check the sizes.
+
+Also, importantly: the workspace is on /data3 which is the same as /data/home (symlink?). Let me verify: `pwd` gave /data/home/... while `$DSH_SESSION_JSONL` says /data3/... So they're likely the same filesystem via bind mount or symlink. Let me check `readlink -f`.
+
+Plan:
+1. Inventory D5 accepted artifacts: verify hashes of the D5 release sources against provenance.json.
+2. Set up D6 worktree: copy D5 release sources + tools + manifests into D6 (as the consumed input), possibly under `input/D5/` for provenance, and build a D6 `release/` package that reuses mathlib.
+3. Run `lake build`, `lake env lean ReleaseCheck.lean`, `lake env lean ReleaseAudit.lean`, `lake env lean ReleaseClaims.lean` to independently reproduce.
+4. Extract verified declarations + axiom cones from ReleaseAudit output → verified declarations list + axiom report.
+5. Build theorem/dependency ledger from the D1-D4 result cards (D1-perelman-ledger.json has the Perelman lemma ledger; card-blockers).
+6. Weekly release manifest JSON+MD.
+7. Blockers list for full Perelman proof.
+8. Next 20 queued builder tasks.
+9. Release result card (D6-weekly-release.md/json) and update queue.json? The queue.json is the integrator's formal acceptance record. As integrator I should update it: mark D5 verified, D6 done, and append next 20 tasks. But queue.json is at /data/home/guoshaoyang/workdir/lean_poincare/longrun/queue.json — is that within my sandbox? My workspace is D6_weekly_release. The sandbox is workspace-write limited to the session workspace, which is the D6 worktree. Writing to longrun/queue.json may be denied. Let me check: the file policy says "Any available operation enforced by the DSH file sandbox may modify files under the session workspace". So writing outside may be denied. I'll attempt it later; if denied, I'll mirror inside the worktree and note the delivery pattern (same as D5 did).
+
+Wait — actually the D5 worktree's longrun/results mirror exists. And the shared longrun/results/D5-clean-rebuild.md exists with size 24736 at Sep 9 11:47. Let me check whether the shared copy is the same as the mirrored one. The D5 card said promotion was denied, but the shared results dir shows D5-clean-rebuild.md with mtime 11:47 and the D5 worktree's mirror... let me compare. Actually the earlier listing of results/ showed `-rw-rw-r-- 1 ... 24736 Sep 9 11:47 D5-clean-rebuild.json` and `18525 ... D5-clean-rebuild.md`. Hmm, and D5 worktree longrun/results should have the same. So maybe the supervisor promoted them, or the sandbox changed. Let me check.
+
+Actually the prompt says "Worktree: /data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D6_release" but actual is D6_weekly_release. The D5 result card we read was at shared longrun/results — it exists. So someone promoted it (maybe supervisor). Good.
+
+Let me check the D5 worktree's own longrun/results to compare, and check timestamps.
+
+Let me also check available disk space and whether lake/lean work.
+
+Let me be systematic. First, a batch of inspection commands.
+dsh: reasoning:
+Lean requires ELAN toolchain resolution. The D5 release has a lean-toolchain file; lake should pick it up via elan. But `lean --version` outside a project says no default toolchain. Let me test inside the D5 release dir. Also check elan toolchains installed.
+
+The D5 release/.lake is 289M — mathlib packages probably symlinks or hardlinks? Let me check `release/.lake/packages`. Earlier D5 manifest said mathlib is a shared prebuilt read-only package cache. Let me check if `.lake/packages/mathlib` is a symlink.
+
+Plan: In my D6 worktree, create:
+- `release/` — copy of D5 release sources (Lean files, lakefile, manifest, toolchain), with `.lake/packages` symlinked or configured to the shared mathlib cache.
+- Then run build to independently reproduce.
+
+Let me check D5 release/.lake/packages layout.
+dsh: reasoning:
+The D5 release uses a symlinked `.lake/packages` to the shared mathlib prebuilt cache. That means I can do the same in D6: copy the release sources and symlink `.lake/packages` to the shared cache. The build should be fast (~82 seconds per D5's gate).
+
+Now, my plan as D6 integrator:
+
+**Phase 1: Independent verification (consume only accepted D5 artifacts)**
+1. Copy D5 accepted artifacts into D6 workspace: `input/D5/` (release sources + manifests + result card), hash-verify against provenance.
+2. Create D6's own `release/` package from those sources (byte-identical), symlink `.lake/packages` to the shared mathlib cache, and run:
+   - `lake build`
+   - `lake env lean ReleaseCheck.lean`
+   - `lake env lean ReleaseAudit.lean`
+   - `lake env lean ReleaseClaims.lean`
+   - per-file checks
+   - forbidden source scan
+3. Extract all declarations + axiom cones. The ReleaseAudit.lean currently only prints summary. I need a per-declaration axiom report for the verified declarations list. Let me check ReleaseAudit.lean source to see if it can emit per-declaration data (maybe an env var or a JSON output). Let me read it.
+
+**Phase 2: Artifact production**
+- `manifest/weekly-release-manifest.json` (+ .md)
+- `manifest/theorem-ledger.json` (theorem/dependency ledger)
+- `manifest/verified-declarations.json` (list of verified Lean declarations w/ file + axiom cone)
+- `manifest/blockers.json` (+ .md)
+- `manifest/next-20-tasks.json` (+ .md) and update queue if possible
+- `longrun/results/D6-weekly-release.md` + `.json` release result card
+
+Let me look at ReleaseAudit.lean, ReleaseCheck.lean, ReleaseClaims.lean, and the tools to reuse their logic. Also the D5 tools.
+
+Let me also look at D1-perelman-ledger.json (the Perelman lemma ledger) and card-blockers.json items for the blockers list. And the D4 audit for A1.
+
+Let me read the key sources.
+dsh: reasoning:
+The ReleaseAudit only prints summary. For a per-declaration axiom report, I need to extend it in my D6 release package (a D6 audit driver) that emits per-declaration data, ideally to a JSON or a machine-parsable log. I can write a new `ReleaseAuditReport.lean` in D6 that:
+- walks project constants
+- collects axioms per declaration
+- prints `D6DECL|name|kind|file?|cone` lines
+- maybe also emits module name for each declaration (env.getModuleIdxFor? gives module idx; can get module name).
+
+Since `run_cmd` logInfo goes to stdout, I can parse it. I can also write a file from Lean using IO.FS, but in `run_cmd` I have IO access. Better: emit structured lines to stdout and capture to log, then convert to JSON with Python.
+
+Additionally, I want to identify "theorem/lemma" declarations specifically (theoremInfo/opaqueInfo?) and their source file/module. The `ConstantInfo` has `.thmInfo` for theorems. I can record kind: axiom/def/thm/opaque/ctor/rec/induct.
+
+Also each declaration's module → file mapping. The module name maps to a file path (replace `.` with `/` + `.lean`). Good enough.
+
+Plan for D6 release package:
+- Copy D5's `release/` Lean sources and configs byte-identically into `D6_weekly_release/release/`.
+- Add D6-specific drivers:
+  - `ReleaseAuditReport.lean`: per-declaration axiom report (structured output), imports ReleaseCheck.
+  - Maybe `D6ReleaseCheck.lean` that imports ReleaseCheck + the D6 drivers. But modifying ReleaseCheck would change hashes. Better to add separate files and keep promoted files byte-identical.
+- The `lakefile.toml` needs a lean_lib for the new drivers. I can add `[[lean_lib]] name = "ReleaseAuditReport"` and a `D6Manifest` lib. Actually `lake env lean file.lean` works without declaring a lean_lib? In D5, they ran `lake env lean ReleaseCheck.lean` and ReleaseCheck/ReleaseAudit are declared as lean_libs. For `lake build` defaultTargets include them. I can create a new lakefile with an added `[[lean_lib]] name = "ReleaseAuditReport"` and `[[lean_lib]] name = "D6ReleaseCheck"`. But careful: `defaultTargets` etc. Since I'm copying the release dir, I can extend the lakefile.
+
+Wait — do I even need `lake build` of the whole project? The D5 release/.lake/build has build artifacts. If I copy the source files, the build will need to recompile everything (82s per D5, acceptable). But I need `.lake/packages` symlink to shared mathlib. Also `.lake/config` etc. Let me just create the D6 release dir with sources + symlink `.lake/packages` → shared cache, then `lake build`.
+
+Important: sandbox. Can I create symlinks? `ln -s` should be allowed within workspace. The symlink target is outside the workspace (read-only access presumably allowed). Lake may try to write into `.lake/packages/mathlib/.lake/build`? Since mathlib is prebuilt, it shouldn't rebuild. But lake might try to fetch/update packages if the manifest is missing. I'll copy `lake-manifest.json` too. D5 did exactly this (symlink) and it worked, so it should work for me.
+
+Let me first check what `.lake/packages` symlink resolves to and whether it's read-only. It's a normal directory owned by guoshaoyang. We can read. If lake tries to write there and it's outside sandbox → denied. D5's run worked within its sandbox (workspace D5), and the symlink target was outside. So reads through symlink were allowed, writes presumably not attempted. Good.
+
+Now, before heavy work, let me set up the todo list and then do the copy + build in the background while I analyze the result cards.
+
+Let me also check whether there's a supervisor heartbeat process running that might interfere. Also check queue status. And check whether I should update the shared queue.json (outside workspace). I'll try; if denied, mirror.
+
+Let me look at the D1 perelman ledger JSON and the D5 unresolved blockers (full), plus card-blockers. These feed the theorem ledger and blocker list.
+
+Let me plan the deliverables structure in D6 worktree:
+
+```
+D6_weekly_release/
+  README.md                      (release overview)
+  manifest/
+    weekly-release-manifest.json
+    weekly-release-manifest.md
+    theorem-dependency-ledger.json
+    theorem-dependency-ledger.md
+    verified-declarations.json
+    verified-declarations.md
+    blockers.json
+    blockers.md
+    next-20-tasks.json
+    next-20-tasks.md
+    verification.json          (D6 independent verification results)
+    provenance.json            (D5 input hashes consumed)
+  release/                     (D6 clean package, copied from D5 accepted artifacts + D6 drivers)
+  logs/
+  tools/
+  longrun/results/D6-weekly-release.md/.json
+  queue/queue.next.json        (proposed updated queue, mirrored)
+```
+
+Also produce `release-notes.md`? The "release result card" is longrun/results/D6-weekly-release.md. Good.
+
+Let me get going. First the todo list.
+
+Then:
+1. Copy D5 accepted artifacts → D6 `input/D5/` (or directly release/).
+2. Verify hashes against provenance.json.
+3. Build + audit.
+
+Let me read the D5 provenance.json fully to get file hashes, and the D5 unresolved_blockers list. Also card-blockers. Let me use Python to dump selected info.
+dsh: reasoning:
+Good. Now let me set up the D6 release package. Steps:
+
+1. Create D6 dirs.
+2. Copy D5 release Lean sources + configs into `D6_weekly_release/release/` (excluding `.lake`).
+3. Symlink `.lake/packages` to the shared prebuilt mathlib.
+4. Add D6 audit report driver and D6 check root.
+5. Run `lake build` and audits.
+
+Actually, to keep promoted sources byte-identical and the D5 provenance valid, I'll put D6-specific drivers in the release package but not modify any promoted file. I need to extend the lakefile for new lean_libs. Modifying lakefile.toml is fine (it's D6 infrastructure, not a promoted mathematical artifact).
+
+Let me check D5's tools for collect_release.py etc. to reuse patterns. Actually, let me write my own D6 tools:
+- `tools/d6_verify.py` — orchestrates verification, parses audit output, writes verification.json
+- `tools/d6_extract_decls.py` — parse ReleaseAuditReport output into verified-declarations.json
+- `tools/d6_build_ledger.py` — build theorem ledger from D5 cards + per-decl data
+- `tools/d6_manifest.py` — assemble weekly manifest, blockers, next tasks, result card
+
+But first, let's get the build going since it takes time. Let me copy and build in the background.
+
+Wait: the workspace path in `pwd` was `/data/home/...` while the session workspace is `/data3/...`. They resolve to the same real path (`readlink -f` gave /data3/... for the D6 dir even when addressed via /data/home). Good.
+
+Let me copy files. Use `cp -a` preserving content. I'll copy only Lean sources + lakefile.toml + lake-manifest.json + lean-toolchain. Then create the symlink.
+
+Note: `lake-manifest.json` paths reference `.lake/packages`. With the symlink it should be fine.
+
+Let me also copy the D5 tools and negcontrol for provenance/reuse (maybe just tools). Actually my D6 should have its own tools; I'll copy D5's tools as `input/d5-tools/` for audit trail, and write D6 tools fresh.
+
+Let me do the setup.
+dsh: reasoning:
+The `.lake` dir doesn't exist after copy since tar excluded it. Need `mkdir -p "$D6/release/.lake"` first.
+dsh: reasoning:
+Now, hash-verify the copied sources against D5 provenance before building. Let me write a verification script. But first, kick off the build in the background since it takes ~80s+.
+
+Actually, I need the D6 audit report driver before `lake build` includes it. But I can start with building the copied package as-is (proves byte-identical sources compile), then add drivers. Better: add drivers first, then a single build. The drivers are quick to write.
+
+Let me write:
+1. `release/D6AuditReport.lean` — imports ReleaseCheck, walks project constants, emits structured per-declaration lines:
+   `D6DECL|<name>|<kind>|<module>|<cone>` where cone is `;`-separated.
+   Also emit summary. And still enforce pass/fail.
+   
+   For kind, I can pattern match on ConstantInfo:
+   - .axiomInfo _ => "axiom"
+   - .defnInfo v => "def"/"theorem"? In Lean 4, theorems are `.thmInfo`. Definitions `.defnInfo`, with value. There's also `.opaqueInfo`, `.quotInfo`, `.inductInfo`, `.ctorInfo`, `.recInfo`.
+   
+   Kind string: match ci with
+   | .axiomInfo _ => "axiom"
+   | .defnInfo _ => "def"
+   | .thmInfo _ => "theorem"
+   | .opaqueInfo _ => "opaque"
+   | .quotInfo _ => "quot"
+   | .inductInfo _ => "induct"
+   | .ctorInfo _ => "ctor"
+   | .recInfo _ => "rec"
+   
+   Module: `env.header.moduleNames.getD midx .anonymous` — but I need per-constant module. Use `env.getModuleIdxFor? n`.
+   
+   Also record whether it's a theorem (thmInfo). Also record safety for defn.
+   
+   Emit JSON-ish? Simplest: tab-separated lines with a prefix. Use `logInfo m!"D6DECL\t{name}\t{kind}\t{module}\t{cone}"`. Lean's logInfo prints "D6DECL\t..." — m!"..." may escape. Let me use `IO.println` instead in run_cmd to write directly to stdout. In `run_cmd do`, I have `do` in CommandElabM which is IO-based; `IO.println` works. Let me use that for clean output.
+
+   Careful: `run_cmd` with `IO.println` writes to stdout. Good.
+
+2. `release/D6ReleaseCheck.lean` — imports ReleaseCheck + D6AuditReport? No — D6AuditReport imports ReleaseCheck and runs the audit at elaboration; importing it re-runs? No: run_cmd runs when the module is elaborated. If D6ReleaseCheck imports it, the audit runs during build of D6AuditReport, and importing doesn't re-run. That's fine.
+
+   Actually simpler: just build D6AuditReport separately. But for `lake build` to include it, add a lean_lib.
+
+3. Extend lakefile.toml with `[[lean_lib]] name = "D6AuditReport"`.
+
+Wait, but modifying lakefile.toml means the package config differs from D5. That's fine; it's a D6 addition. But `defaultTargets` should include D6AuditReport.
+
+Hmm, one concern: the D6 audit report must be part of "compiling .lean file and axiom report" evidence. The per-declaration report is the axiom report. Good.
+
+Also I want a `D6NegativeControl` to re-run the negative control in D6 (proving the audit predicate catches sorry/native_decide). The D5 NegativeControl.lean exists at negcontrol/. Let me look at it and see how it was run (log 09). It's probably compiled with `lake env lean` against the release package. Let me read it.
+
+Let me read NegativeControl.lean and check the log.
+dsh: reasoning:
+Now let me write the D6 audit report driver. I'll write it in the release package.
+
+Design of `D6AuditReport.lean`:
+
+```lean
+/-
+D6-weekly-release — per-declaration axiom report.
+...
+-/
+import ReleaseCheck
+import Lean.Util.CollectAxioms
+
+open Lean Elab Command
+
+namespace D6AuditReport
+
+def approvedAxioms : List Name := ["propext".toName, "Classical.choice".toName, "Quot.sound".toName]
+def sorryAxiom : Name := "sorryAx".toName
+def nativeAxioms : List Name := ["ofReduceBool".toName, "Lean.ofReduceBool".toName]
+def projectModuleRoots : List Name := ["Poincare".toName, "Probe".toName, "Ledger".toName, "Audit".toName, "ReleaseCheck".toName, "ReleaseAudit".toName, "D6AuditReport".toName]
+
+def isProjectModule (m : Name) : Bool := projectModuleRoots.any (fun r => r.isPrefixOf m)
+
+def projectConstants (env : Environment) : Array (Name × ConstantInfo × Name) :=
+  let mods := env.header.moduleNames
+  env.constants.fold (fun acc n ci =>
+    match env.getModuleIdxFor? n with
+    | some midx =>
+        let m := mods.getD midx .anonymous
+        if isProjectModule m then acc.push (n, ci, m) else acc
+    | none => acc) #[]
+
+def kindOf : ConstantInfo → String
+  | .axiomInfo _ => "axiom"
+  | .defnInfo v => match v.safety with | .unsafe => "unsafe_def" | .partial => "partial_def" | .safe => "def"
+  | .thmInfo _ => "theorem"
+  | .opaqueInfo _ => "opaque"
+  | .quotInfo _ => "quot"
+  | .inductInfo _ => "induct"
+  | .ctorInfo _ => "ctor"
+  | .recInfo _ => "rec"
+
+end D6AuditReport
+
+open D6AuditReport in
+run_cmd do
+  let env ← getEnv
+  let cs := projectConstants env
+  ...
+  for (n, ci, m) in cs do
+    let axs ← Lean.collectAxioms n
+    IO.println s!"D6DECL\t{n}\t{kindOf ci}\t{m}\t{";".intercalate (axs.toList.map Name.toString)}"
+  ...
+  IO.println s!"D6AUDIT\tdeclarations\t{cs.size}"
+  ...
+```
+
+But careful: `IO.println` in run_cmd — is IO available? `run_cmd` runs in `CommandElabM` which is `CoreM`-based with IO. Yes, `IO.println` should work since CoreM has IO. Actually in Lean 4, `CommandElabM` extends `CoreM` extends `IO`. Yes.
+
+Sorting: `env.constants.fold` gives some order (NameMap order, not sorted). For deterministic output, collect then sort by name. Array.qsort requires Ord Name or a comparator. `Name` has `Ord`? There's `compare` on Name maybe. I can use `cs.qsort (fun a b => a.1.toString < b.1.toString)`. String comparison with `<` is fine (decidable). qsort signature: `Array.qsort (xs : Array α) (lt : α → α → Bool) : Array α`. Yes.
+
+Now, the axiom report must include the file for each declaration. Module name → file path mapping: module `Poincare.Longrun.Geometry` → `Poincare/Longrun/Geometry.lean`. For declarations in `ReleaseAudit.lean` etc. Fine. But note: D5's projectConstants includes modules whose root is a prefix: `Poincare`, `Probe`, `Ledger`, `Audit`, `ReleaseCheck`, `ReleaseAudit`. The `Poincare` root also matches `Poincare` base skeleton modules (Poincare.Basic etc.). Good.
+
+Important: for a per-declaration axiom report, I should also flag whether each declaration is a "verified theorem" (thmInfo) vs def. The verified declarations list can include both, but the theorem ledger focuses on theorems/lemmas.
+
+Also for the release, I want to count: theorems, defs, etc.
+
+One more thing: the D6 audit should also include `D6AuditReport` in projectModuleRoots (its own declarations) — but its declarations are mostly helper defs. That's fine.
+
+Now the lakefile: add
+```
+[[lean_lib]]
+name = "D6AuditReport"
+```
+And defaultTargets append "D6AuditReport".
+
+But hold on: if I add D6AuditReport to the package and run `lake env lean D6AuditReport.lean`, it elaborates and prints the report. When `lake build` runs, D6AuditReport gets built too (if in defaultTargets), printing the report to the build log.
+
+Let me also create a D6 claim resolution that extends D5's ReleaseClaims (which #checks 193 names). I can just reuse ReleaseClaims.lean. And a D6 check root `D6ReleaseCheck.lean` that imports ReleaseCheck and asserts the marker. Actually ReleaseCheck already does that. For D6, I'll add a file `D6ReleaseCheck.lean` that imports ReleaseCheck, D6AuditReport? No, importing D6AuditReport would re-run the audit as part of elaboration of that import when building D6ReleaseCheck — actually the audit output happens when D6AuditReport module is elaborated (built), which happens once. If D6ReleaseCheck imports it, lake builds D6AuditReport first (running the audit), then D6ReleaseCheck. Fine, but no need. I'll keep them separate.
+
+Now, the D6 independent verification must include:
+- `lake build` (builds all promoted libs + drivers)
+- `lake env lean ReleaseCheck.lean` (already built, instant)
+- `lake env lean ReleaseAudit.lean` (D5 driver, re-run in D6)
+- `lake env lean D6AuditReport.lean` (per-declaration report)
+- `lake env lean ReleaseClaims.lean` (193 claims)
+- per-file checks on all 61 promoted files
+- forbidden source scan (reuse D5 tool but root = D6 release)
+- negative control (from D6 release dir: `lake env lean ../negcontrol/NegativeControl.lean`)
+- hash verification of D6 release sources vs D5 provenance
+
+Note the D5 `ReleaseAudit.lean` and `ReleaseCheck.lean` were D5-branded; D6 re-runs them as-is (they're accepted D5 artifacts). The D6 per-decl report is new.
+
+Let me now write D6AuditReport.lean and update lakefile.toml. Then run the build.
+
+Also note: the `release/ReleaseClaims.lean` — let me check what it does and whether its output can be captured.
+
+Let me check ReleaseClaims quickly and the lakefile modification.
+dsh: reasoning:
+Now update the lakefile to add D6AuditReport. I'll edit:
+- defaultTargets add "D6AuditReport"
+- description mention D6
+- add lean_lib D6AuditReport.
+
+Then run the build. Let me do it.
+dsh: reasoning:
+Now run the build in the background. The build should compile ~61 files; D5 said 82s for lake build. But since I copied sources without .lake/build, everything recompiles. Let me run `lake build` in the background and capture the log.
+
+Actually wait: the D5 release/.lake/build exists but I excluded it. Fresh build is what I want (independent). Let me run.
+
+Command:
+```
+export ELAN_HOME=/data3/guoshaoyang/workdir/lean_poincare/elan
+export PATH="$ELAN_HOME/bin:$PATH"
+cd $D6/release
+lake build 2>&1 | tee ../logs/01_lake_build.log
+```
+
+Potential issue: `lake build` may try to update mathlib or write to `.lake/packages` (symlink to outside workspace) — e.g., `lake` may check git status of packages, or try `lake update` if manifest mismatch. D5 used `lake build` with the same setup, and it worked (with cwd in D5 workspace; the symlink target was outside too). So it should work.
+
+But one difference: D5's release/.lake/config existed (lake configuration with package dirs). I didn't copy `.lake/config` because I excluded all of `.lake`. Lake will regenerate config. That should be fine.
+
+Let me run in background with a generous timeout. Actually background jobs have no timeout. Good. Let me start it.
+
+Also, in parallel, I can analyze the D5 result cards for the ledger. Let me start the build first.
+dsh: reasoning:
+Now I need to extract theorem/dependency information from the D1–D4 cards. Let me dig into the key ones:
+
+1. D1-perelman-ledger.json — nodes/edges/perelman_steps: the Perelman lemma ledger with hypotheses, dependencies, blockers. This is central to the theorem/dependency ledger and blockers.
+2. D2-geometry-foundation.json — proved_theorems, blocked_interfaces, principal_declarations, axiom_sets.
+3. D2-ricci-ode-cluster.json — deliverables, axiom_audit.
+4. D3-entropy-interface.json — axiom_report, blockers, honesty_boundary.
+5. D3-kappa-ledger.json — checked_consequences, interfaces, missing_theorems.
+6. D3-surgery-ledger.json — axioms, interface, missing, toy_relation.
+7. D4-evolution-theorem.json — main_theorem, boundaries, hygiene.
+8. D4-counterexample-audit.json — findings, corrected_theorems, boundaries.
+9. D2-pde-foundation.json — axiom_audit, artifacts, blockers.
+10. D1-mathlib-geometry-map.json — declarations, axiom_audit, blockers.
+
+Let me dump these in a structured way. Start with D1-perelman-ledger (the key theorem ledger).
+dsh: reasoning:
+The D1-perelman-ledger.json has the full dependency ledger (43 nodes, 60 edges, 11 Perelman steps). This is the core "theorem/dependency ledger" input.
+
+Now let me dump all 11 perelman_steps and all nodes compactly, plus the D5 unresolved_blockers full list. Let me also check the build job status.
+
+Let me create a Python analysis that dumps:
+- perelman steps summary
+- node statuses count
+- blockers summary
+
+And the D5 blockers. Let me do that.
+dsh: reasoning:
+Excellent. Now I have the full blocker list. Let me check the build job progress and meanwhile extract the proved theorem declarations from each card to build the theorem ledger.
+
+I need to identify the actual theorems (kernel-checked) and their dependencies. The D6AuditReport will give me the per-declaration axiom report. But the "theorem/dependency ledger" should map mathematical claims → Lean declarations → dependencies → status (proved/interface/blocked).
+
+Inputs:
+- D1-perelman-ledger nodes/edges (Perelman interface ledger)
+- D2-geometry-foundation proved_theorems, blocked_interfaces, principal_declarations
+- D2-pde-foundation artifacts, axiom_audit
+- D2-ricci-ode-cluster deliverables
+- D3-entropy-interface axiom_report, blockers
+- D3-kappa-ledger checked_consequences, interfaces, missing_theorems
+- D3-surgery-ledger axioms, interface, missing, toy_relation
+- D4-evolution-theorem main_theorem, files, boundaries
+- D4-counterexample-audit findings, corrected_theorems
+
+Let me dump these in a compact way. First check build job.
+dsh: reasoning:
+Build is still running. Let me continue extracting cards. I'll write a Python script to extract a normalized "cluster claims" structure from all cards. But first let me look at the remaining cards' relevant fields.
+
+Let me dump D2-pde, D2-ricci-ode, D3-entropy, D3-kappa, D3-surgery, D4-evolution, D4-counterexample in one go, focusing on theorem declarations.
+dsh: reasoning:
+Let me continue with D3 and D4 cards. Also check the build.
+dsh: reasoning:
+I have a good picture now. Let me check the build status and then create the verification tooling.
+
+Let me think about the structure of the D6 deliverables:
+
+### 1. Weekly release manifest (`manifest/weekly-release-manifest.json`)
+Contains:
+- schema, task id, generated_at, integrator worktree
+- consumed input: D5-clean-rebuild card + manifests, with sha256
+- acceptance decision: D5 accepted (queue status + independent D6 verification)
+- toolchain pins
+- release package inventory: 61 promoted modules + D6 audit driver, sha256 of every file
+- gate results (D6 independent): build, ReleaseCheck, ReleaseAudit, D6AuditReport, ReleaseClaims, per-file, forbidden scan, negative control
+- counts: declarations audited, theorems, defs, cones
+- claims resolution
+- verdict
+
+### 2. Theorem/dependency ledger (`manifest/theorem-dependency-ledger.json`)
+A unified ledger with:
+- nodes: mathematical claims (Perelman steps, cluster theorems, interfaces) each with: id, name, kind (checked-theorem / checked-lemma / interface / blocked / planned), lean declaration, file, depends_on, status, evidence (compile log + axiom cone), blockers
+- edges: dependency relations
+
+I should build this from:
+- D1-perelman-ledger nodes/edges (43 nodes, 60 edges) — canonical interface ledger
+- Per-cluster principal declarations/theorems from D2/D3/D4 cards
+- D6 per-declaration audit data (to confirm each declaration exists, compiles, axiom cone)
+- D4 counterexample audit corrections
+
+Key design decision: the ledger must be honest. Every "checked" node must have:
+- `lean_declaration` that resolves in D6 package (verified by ReleaseClaims #check? Actually ReleaseClaims checks 193 names from result cards. I can extend to check every declaration in my ledger.)
+- `file` (module → .lean)
+- `axiom_cone` from D6AuditReport
+- `compile_evidence`: per-file check exit 0
+
+I should write a D6 claim-resolution file that #checks every declaration in my ledger. That's stronger: "every claimed theorem points to a compiling .lean file and axiom report". Let me generate `release/D6LedgerProbe.lean` containing `#check @<name>` for all ledger declarations and compile it. That gives direct evidence.
+
+Hmm, but generating a Lean file with #check of names — need exact names. Some cards give unqualified names (e.g., D2 proved_theorems list has short names like "curvature_skew"). The principal_declarations have full names. For D3 kappa checked_consequences, names are short (e.g. "CompactThreeManifold.toSigmaCompactSpace") but the namespace is probably `Poincare.Longrun.Topology`. The D5 claims.json has 193 fully-qualified names from cards. Let me check how D5 resolved claims: `ReleaseClaims.lean` #checks 193 names. Let me read claims.json names and ReleaseClaims.lean.
+
+I'll use D5's claims.json as the base for "declarations claimed by cards", and cross-reference with D6AuditReport's declaration list to confirm each resolves and get axiom cone + kind + module. Then the verified declarations list = intersection of claims and audit.
+
+But the "verified Lean declarations" list should probably be broader: all 1619 project declarations audited? That's huge. Better: the release's *verified declaration inventory* = all project declarations with their kind/module/cone (machine-readable), and a *verified theorem list* = the theorem/lemma subset that the release claims as checked mathematical content, each with file + axiom report pointer. I'll include both:
+- `verified-declarations.json`: full per-declaration inventory (name, kind, module, file, cone) — all declarations from D6AuditReport.
+- `verified-theorems.json` / part of ledger: the curated list of mathematical theorems with evidence.
+
+### 3. Blockers list (`manifest/blockers.json`)
+The D5 29 blockers, re-adjudicated by D6:
+- 23 open → carried forward
+- P1 (stale queue) → resolved by D6 (I update queue)
+- P2/P3 → environment limits, documented
+- A1 → next task (restate)
+- Plus new D6 blockers if any (e.g., D6 worktree name mismatch P3-like).
+Each blocker: id, class, status, statement, why it blocks Perelman, what would unblock, owner/task mapping to next 20 tasks.
+
+### 4. Next 20 queued builder tasks (`manifest/next-20-tasks.json`)
+Each: id, stage (D7+), lane, title, objective, inputs (accepted artifacts), acceptance criteria (compile-first, axiom report), dependencies, blockers addressed, estimated effort. Must be grounded in actual gaps. 20 tasks.
+
+Ordering: highest-leverage foundational gaps first:
+1. Riemann curvature tensor from a connection (mathlib contribution or local definition) — but builders shouldn't edit mathlib? They can create a local `Poincare.Longrun.Geometry.CurvatureTensor` module. Actually U1/U2. The task should be "local Riemann/Ricci tensor algebra from CovariantDerivative with explicit hypotheses".
+2. Ricci/scalar curvature from that tensor + check consistency with existing ScalarCurvatureData interface.
+3. Riemannian volume form/measure + divergence theorem interface (with explicit hypotheses), IBP.
+4. Bochner formula (conditional statement + algebraic proof skeleton).
+5. Heat kernel / conjugate heat equation interface (statement-only + discrete analogs).
+6. Hamilton short-time existence interface.
+7. Reduced length/volume definitions + toy monotonicity.
+8. Gromov-Hausdorff compactness interface.
+9. Canonical neighborhood interface.
+10. Surgery algorithm discrete model.
+11. Extinction/topology bridge.
+12. Restate A1 corrected theorems upstream (D4 fix).
+13. Adversarial counterexample audit for D2/D3 clusters (A3).
+14. etc.
+
+I must respect "next 20 queued builder tasks" — they are *builder* tasks, so Lean-producing. Each needs compile-first acceptance criteria.
+
+### 5. Release result card (`longrun/results/D6-weekly-release.md/.json`)
+Summary of all.
+
+Also update `longrun/queue.json`: mark D5 verified, D6 in progress/done, append 20 tasks with status "queued". Since queue.json is outside my workspace, attempt and mirror if denied.
+
+Now, a critical piece: the D6 independent verification. Let me check on the build.
+
+Let me also read ReleaseClaims.lean and claims.json to understand claim names.
+dsh: reasoning:
+The build is still running (no output yet). Let me wait a bit but continue working. I'll write the D6 verification runner script now, which I'll use once the build finishes.
+
+Actually, the build might take a few minutes since it's compiling 62 modules from scratch (D5 said 82.2s for `lake build`, but that included .lake/build for... no, D5 wiped .lake/build before building, so 82s is a from-scratch build with all deps). Hmm, but D5's `.lake/build` was wiped only for the project, mathlib prebuilt. 82s. Mine should be similar. It's been ~2 min. Let me check again shortly.
+
+Meanwhile, let me plan the tools and write them.
+
+**Tool 1: `tools/d6_verify.py`** — runs the full D6 gate:
+- Step 0: hash-verify D6 release sources against D5 provenance (promoted files only, plus base deps)
+- Step 1: `lake build`
+- Step 2: `lake env lean ReleaseCheck.lean`
+- Step 3: `lake env lean ReleaseAudit.lean` (accepted D5 audit)
+- Step 4: `lake env lean D6AuditReport.lean` (per-declaration report) → parse into `manifest/verified-declarations.json`
+- Step 5: `lake env lean ReleaseClaims.lean` (193 claims)
+- Step 6: per-file `lake env lean <file>` for all promoted files (61)
+- Step 7: forbidden token scan (reuse D5 scan tool logic; write D6 version or import)
+- Step 8: negative control
+- Step 9: mathlib pin check
+- Output `manifest/verification.json`
+
+Since `lake build` is already running, I'll have d6_verify.py use `--skip-build` or record the build separately. Actually better: let the background build finish, then run the remaining steps via the script. The script can accept `--no-build` and record the existing build log. Or I can just re-run `lake build` (it'll be a no-op, fast). Simpler: script always runs `lake build` (incremental after the background one finishes).
+
+Let me write d6_verify.py to be self-contained and idempotent.
+
+**Parsing D6AuditReport output**: lines `D6DECL\tname\tkind\tmodule\tcone`. Note: Lean's `IO.println` outputs raw tabs. Good.
+
+For per-file checks, exclude the release drivers (ReleaseCheck, ReleaseAudit, ReleaseClaims, D6AuditReport) and check the 61 promoted files (53 promoted + 5 base + 3? Let me count: D5 said 58 release modules for per-file checks (53 promoted + 5 base). Plus ReleaseCheck/ReleaseAudit/ReleaseClaims = 61 total. The D5 per_file dict had 58 entries. So promoted+base = 58. My copy has 61 .lean including the 3 drivers; plus D6AuditReport = 62 now. So per-file checks = 58 files (excluding the 4 drivers).
+
+Wait: D5 release tree listing showed 61 .lean: 58 + ReleaseCheck + ReleaseAudit + ReleaseClaims = 61. Yes.
+
+**Tool 2: `tools/d6_build_artifacts.py`** — builds the ledger/manifest/blockers/tasks from:
+- D5 manifests (provenance, build-manifest, claims, card-blockers)
+- D1–D4 result cards
+- D6 verification output
+- D6 verified declarations
+Outputs all the manifest JSONs + MDs.
+
+**Tool 3: `tools/d6_result_card.py`** — generates result card MD/JSON.
+
+Maybe combine 2+3.
+
+Let me also generate a `D6LedgerProbe.lean` with `#check @name` for every declaration in the theorem ledger, to have direct evidence. I'll generate it after the ledger is built, then compile it. Actually I can make it part of d6_verify.py step: generate `release/D6LedgerProbe.lean` from ledger JSON, then `lake env lean` it. But then the build order matters. Alternatively, since ReleaseClaims already checks 193 card-claimed names, and D6AuditReport covers ALL project declarations with axiom cones, the ledger probe is somewhat redundant but valuable: it ties ledger entries to compiling declarations. Let me do it as a post-step.
+
+Hmm, one important check: D6AuditReport walks all project constants; every ledger declaration will appear there if it exists. If a claimed name doesn't exist in the environment, it won't appear — I can detect missing claims by set difference. That's a claim resolution equivalent. But #check also verifies the name parses. Since I get names from cards, and D5 already resolved all 193, the set-difference approach on the full declaration list is sound.
+
+Let me now write the verification script. First, check build.
+
+Actually, let me write the script while waiting. I'll write `tools/d6_verify.py`.
+
+Key details:
+- ROOT paths: D6 worktree, D5 worktree, mathlib, elan.
+- Logs into `logs/`.
+- Steps recorded with exit codes, durations, log paths, tails.
+- Hash verification: read D5 provenance.json; for each cluster file, find the copy in D6 release; compare sha256. Also base_dependencies. Report changed/missing/extra.
+- The release package has D6 additions: D6AuditReport.lean, modified lakefile.toml. Those are expected; note them.
+
+Let me write it.
+dsh: reasoning:
+There's a bug in my `forbidden_in_decl_report` logic: `len(audit.get("sorry_declarations", ["0"]))` — audit values are lists of strings from D6AUDIT lines; `sorry_declarations` line has value "0", so the list is ["0"], len 1, which is wrong. I should parse int. Let me fix that to use int conversion.
+
+Also `per_file` files: `rel_files(RELEASE)` returns .lean files relative to release; excluding DRIVERS gives 58. Good.
+
+Let me fix the audit counts parsing:
+```python
+def _int(vals):
+    try: return int(vals[0])
+    except: return None
+```
+Then:
+```python
+report["gates"]["forbidden_in_decl_report"] = {
+  "sorry_declarations": _int(audit.get("sorry_declarations")),
+  ...
+}
+```
+
+Also note the D6AUDIT summary line format: `D6AUDIT\tproject_declarations\t1619`. So k="project_declarations", v=["1619"]. For cone lines: `D6AUDIT\tcone\t4\t[...]` → k="cone", v=["4", "[...]"]. Fine.
+
+Let me fix.
+dsh: reasoning:
+The build is taking a while. Let me check the log directly to see progress.
+dsh: reasoning:
+Build is at 8929/8946 — almost done. The `#print axioms` output lines are appearing (Audit/CurvatureODEAudit.lean etc.), that's from the promoted audit files themselves. Good.
+
+While waiting, let me now design and write the artifact builder. This is the big piece. Let me carefully structure the theorem/dependency ledger.
+
+### Theorem/dependency ledger design
+
+The ledger should unify:
+1. **Perelman program steps** (P-F-MONO ... P-EXT) — from D1-perelman-ledger.json, statuses blocked/planned. These are the top-level claims toward the Poincaré conjecture.
+2. **Perelman interface nodes** (43 nodes from D1) — definitions/structures/lemmas with status checked/interface.
+3. **Cluster theorem inventory** — the checked theorems/lemmas per cluster from D2/D3/D4 cards, each mapped to Lean declarations, file, axiom cone from D6 audit.
+4. **Missing/blocked interfaces** (from D2/D3/D4 cards).
+5. **Audit corrections** (A1 corrected theorems).
+
+For each ledger entry:
+```json
+{
+  "id": "...",
+  "kind": "program-step" | "checked-theorem" | "checked-lemma" | "checked-definition" | "interface-structure" | "unproved-prop" | "missing-theorem",
+  "claim": "...",
+  "lean_declarations": ["..."],
+  "files": ["..."],
+  "axiom_cone": [...] or null,
+  "compile": {"file": "...", "exit_code": 0, "log": "..."},
+  "depends_on": [...],
+  "status": "checked" | "interface" | "blocked" | "planned",
+  "blockers": [...],
+  "evidence": "..."
+}
+```
+
+I'll build the ledger programmatically from:
+- D1-perelman-ledger.json nodes/edges (base)
+- D5 claims.json (193 claimed names → resolved in D6 audit)
+- D6 verified-declarations.json (per-decl data)
+- Card fields listing theorem names:
+  - D2-geometry: proved_theorems (short names) + principal_declarations (full names). The proved_theorems short names need namespace resolution — I can resolve by suffix match against the verified declarations list. E.g., "curvature_skew" → `Poincare.Longrun.Geometry.AbstractConnection.curvature_skew`. Suffix matching on `.` + short name should work uniquely.
+  - D2-pde: need declaration list. The card has `checked_declarations`? For D1-pde yes. D2-pde has `artifacts`, `checks`, `axiom_audit` with declarations_audited 34 but maybe no names. Let me check D2-pde for a names field. There's `lean_files`, `requirements`. Hmm. The 193 claims include Probe.PdeApi names (D1) and maybe D2 PDE names. Let me check claims.json for D2-pde card names.
+  - D2-ricci-ode: deliverables lists names (full-ish, e.g. "Poincare.Longrun.CurvatureODE.component_monotone").
+  - D3-entropy: `authored_files`, `axiom_report` (no names?), `blockers`. Check for a names list.
+  - D3-kappa: checked_consequences (short names).
+  - D3-surgery: toy_relation.checked, interface lists, missing conditional_consequences.
+  - D4-evolution: main_theorem, d3_consumption, d2_consumption.
+  - D4-audit: corrected_theorems, findings.
+
+Given the D5 claims.json aggregates 193 names per card, I can use that as the authoritative "declarations named by cards" mapping. Let me analyze claims.json by card to see which declarations come from which card. Then the ledger's checked-theorem set = claims with kind theorem/lemma from D6 audit. Plus the full declaration inventory is separate.
+
+Actually, the cleanest approach for the "theorem/dependency ledger":
+
+**Level A: Program ledger** — the 11 Perelman steps (P-*), with their D1 dependencies and blockers. Status blocked/planned. Explicitly not proved.
+
+**Level B: Interface ledger** — the 43 D1 nodes (definitions/structures/lemmas), status checked/interface, each with Lean declaration + file + axiom cone (from D6 audit). This is the checked interface layer.
+
+**Level C: Cluster theorem ledger** — checked mathematical results delivered by D2/D3/D4 clusters:
+  - D2 geometry: 17 proved theorems + principal declarations
+  - D2 PDE: discrete maximum principle, energy, heat grid lemmas (names from claims.json for that card)
+  - D2 ODE: invariant region, scalar monotonicity theorems
+  - D3 entropy: checked algebraic consequences
+  - D3 kappa: 29 checked consequences
+  - D3 surgery: toy chain lemmas
+  - D4 evolution: perelmanF_antitone + discrete analogue + dissipation identity
+  - D4 audit: corrected theorems + counterexamples (negative controls)
+Each entry: lean declaration(s), file, kind (theorem/lemma/def), axiom cone, compile evidence, dependencies (from card text where available), status.
+
+**Level D: Blocked/missing layer** — unproved Props, missing theorems (K1-K7, S1-S5), program blockers U1-U12/I1-I8.
+
+Edges: from D1 ledger edges + card dependency mentions. I'll include a `edges` list with relation types (depends_on, implements, blocked_by, corrects).
+
+I'll generate the ledger by merging D1 nodes/edges + a curated cluster mapping. To keep it honest and manageable, I'll build the cluster part from explicit name lists extracted from the cards (with suffix resolution to full names via the verified declarations list), and mark any name that fails to resolve as `unresolved` (should be zero).
+
+Let me check claims.json card mapping and D2-pde/D3-entropy names.
+dsh: reasoning:
+D3-entropy-interface has no name list in the card (only 1 claim? Actually D3-entropy isn't in the bycard list — let me check; cards list shows D3-kappa with 1 claim only. D3-entropy-interface has 0 claims in claims.json!). Hmm, claims.json has 193 names from cards; D3-entropy-interface may have names only in nested fields not scanned by D5's gen_claims. The D6 audit will still cover all its declarations.
+
+So for the ledger I'll use:
+- D5 claims.json (193 names) as card-claimed declarations, tagged by card.
+- Plus D1-perelman-ledger nodes (39 claims there).
+- Plus cluster-specific explicit lists I extract from cards.
+
+Now, rather than over-engineering, the theorem/dependency ledger can be built as:
+
+**Part 1 — Program steps (11)**: from D1 perelman_steps.
+
+**Part 2 — Interface graph (43 nodes + 60 edges)**: from D1 nodes/edges; each node enriched with D6 audit data (kind, module, file, cone) where a `lean_name` maps. The `lean_name` field sometimes lists multiple declarations (e.g., "Perelman.FMonotonicity.apply, ..."). I'll parse comma-separated names.
+
+**Part 3 — Checked cluster theorems (curated)**: for each cluster, a list of entries with:
+   - claim description (from card)
+   - lean declarations
+   - file
+   - status: checked
+   - axiom cone
+   - evidence: D6 per-file log + D6 decl report
+   I'll curate from card lists:
+   - D2-geometry: proved_theorems (17) + principal_declarations
+   - D2-pde: names from claims bycard (24) filtered to theorem/lemma kinds; plus discrete max principle theorems
+   - D2-ricci-ode: deliverables (invariant + scalar monotonicity theorem lists)
+   - D3-entropy: checked algebraic consequences — need to find them. Let me grep the D3 entropy card for a names list. It had `axiom_report.audited_declarations: 66` but no names. I can take all theorem/lemma declarations in the Entropy modules from the D6 audit as the checked inventory (that's honest: "all declarations in the entropy interface cluster are checked; the following are theorems/lemmas"). For the ledger, I'll group by module.
+   - D3-kappa: checked_consequences (29 names)
+   - D3-surgery: toy_relation.checked (13) + interface (certificate constructors, chain composition)
+   - D4-evolution: main_theorem + discrete analogue + certificate theorems + corrected theorems from D4Audit
+   - D4-audit: corrected_theorems (3) + counterexample theorems (negative controls)
+
+For entries where I have short names, resolve via suffix matching against verified declarations.
+
+**Part 4 — Interfaces/blocked**: D2 blocked_interfaces, D3 unproved Props, D3 kappa missing K1-K7/S1-S5, D3 surgery NeckAnalysis/ExtinctionTheorem, D4 boundaries, plus program steps blocked.
+
+Edges: dependency edges from D1 (60) + explicit "depends_on" from cluster entries where derivable. To keep it manageable, I'll include:
+- D1 edges (60)
+- For each Perelman step, its depends_on edges
+- Corrected-theorem → original-theorem edges (A1)
+- Interface → implementation edges
+
+That's a solid dependency ledger.
+
+Now let me check the build. Then run verification.
+
+Actually, an important question: should I trust the D5 `axiom_cone` or recompute? D6 recomputes via D6AuditReport — independent. Good.
+
+Let me check the build again.
+dsh: reasoning:
+It's at 8932/8946; 14 to go, including ReleaseAudit and D6AuditReport. Let me wait for the job to finish with job_output wait.
+
+Actually, while it's finishing, let me write the artifact builder. But it's complex; let me first wait for the build so I know the audit output format works. Let me wait with a timeout.
+dsh: reasoning:
+The build completed in 78 seconds with exit 0. Let me check the D6AuditReport output in the build log, then run the full verification script.
+dsh: reasoning:
+Interesting: D6DECL count is 1618 but project_declarations is 1619. Why the discrepancy? The D6AuditReport loop prints one line per (n, ci, m) in cs. But cs.size = 1619. Yet grep -c gives 1618. Possibly one declaration name contains a newline? Or one line got mangled? Let me check: maybe a declaration name contains a tab? Unlikely. Or one declaration's module is anonymous and... no, it would still print.
+
+Wait — `grep -cE '^D6DECL'` counts lines starting with D6DECL. Maybe one line has a leading space? Or one declaration printed a name containing a newline. Let me investigate: parse the log and compare count with D6AUDIT project_declarations. Let me find the missing one. Actually, there may be a name that contains a newline character in its pretty-printed form? Names can contain weird characters. Let me check by looking for lines that contain 'D6DECL' but don't start with it.
+
+Also duplicate sample lines above: `D4Audit.NoSignEvolution.continuous` appears twice in my `head -5` of theorem lines because I ran two greps (first 5 overall and first 5 theorems). Not a duplication issue.
+
+Let me count unique names and find the anomaly. Also the D6DECL lines in the build log were emitted during `lake build`; when I re-run `lake env lean D6AuditReport.lean`, it will emit again. The verification script parses the fresh log. Good.
+
+Let me check the discrepancy.
+dsh: reasoning:
+The discrepancy: one line got prefixed with `info: D6AuditReport.lean:78:0: ` because in `run_cmd`, `IO.println` output gets captured by the info prefix for the first print? Actually the log shows one line prefixed by `info: D6AuditReport.lean:78:0: `. This is because Lean's `run_cmd` elaboration wraps IO output? It seems only one line got the prefix (probably the first line after a log boundary or the last one flushed differently). This means my parser might miss `D4Audit.NoSignEvolution` (the induct declaration).
+
+I need a robust parse: match `D6DECL\t...` anywhere in the line, not just at start. Let me update the regex to search anywhere. But then the `info:` prefix line would parse. Good.
+
+Actually the issue: `IO.println` in a `run_cmd` gets routed through the command log; occasionally Lean prefixes it with position info. To be safe, parse with `re.search(r"D6DECL\t...")` and similarly for D6AUDIT.
+
+Let me update d6_verify.py: `DECL_RE = re.compile(r"D6DECL\t([^\t]+)\t([^\t]+)\t([^\t]+)\t(.*)$")` and `AUDIT_RE = re.compile(r"D6AUDIT\t([^\t]+)\t(.*)$")` and use `.search(line)`.
+
+Also for the summary `_int`: the D6AUDIT lines might also get prefixed. Search handles it.
+
+Note: `distinct_cones` shows 4 cones: 1162 with the three standard, 23 with propext only, 236 empty, 198 propext+Quot.sound. Consistent with D5.
+
+Theorems: 887 (including structures' projections? No — `theorem` kind = thmInfo. Structures are induct; their projections are defs). 887 theorems is a lot; these include many internal lemmas. The "verified Lean declarations" list will have all 1619 (1618 parsed + fix → 1619).
+
+Let me fix the parser now.
+dsh: reasoning:
+Now run the verification script (skipping the build since it just finished, to save time — but the script's `lake build` would be incremental and fast anyway; the `--skip-build` leaves the build step out of the recorded steps, but I want the build recorded. I have the log 01_lake_build.log. Let me just run without `--skip-build`: incremental build takes seconds. Actually `lake build` will re-check nothing (all up to date) — it may still print the D6AuditReport? No, up-to-date modules aren't re-elaborated, so the D6DECL output won't appear in the new log. But the script separately runs `lake env lean D6AuditReport.lean`, which re-elaborates the file and emits the report. Good.
+
+Run it now in the background (per-file checks take ~237s per D5). Let me start it.
+dsh: reasoning:
+While that runs (a few minutes), let me write the artifact builder script. This is the biggest piece.
+
+Let me design `tools/d6_build_release.py`:
+
+Inputs:
+- `input/d5-manifest/*.json` (provenance, build-manifest, claims, card-blockers, gate-results, forbidden-scan)
+- `input/D5-clean-rebuild.json` (D5 result card)
+- `manifest/verification.json` (D6 verification)
+- `manifest/verified-declarations.json` (D6 per-decl)
+- D1–D4 result cards from shared `longrun/results/*.json` (read-only). Wait — should D6 read the shared cards directly or the copies? The D5 manifest references them. I'll read shared cards (they're accepted inputs) but record their hashes.
+
+Outputs:
+- `manifest/weekly-release-manifest.json` + `.md`
+- `manifest/theorem-dependency-ledger.json` + `.md`
+- `manifest/verified-theorems.json` + `.md` (curated theorem list; the full declaration inventory is verified-declarations.json)
+- `manifest/blockers.json` + `.md`
+- `manifest/next-20-tasks.json` + `.md`
+- `manifest/input-hashes.json` (hashes of all consumed inputs)
+- `release/D6LedgerProbe.lean` (generated #check probe for every ledger declaration) — then compile it and record.
+
+Let me think about the ledger content generation in detail.
+
+**Helper: resolve short names.** Build an index from verified declarations: for each full name, also map `name.split('.')[-1]` → list of full names. To resolve e.g. "curvature_skew", find full names ending with ".curvature_skew". If exactly one → resolve. If multiple → pick one in the expected module/namespace prefix if provided, else record ambiguous.
+
+I'll include expected namespace hints per cluster:
+- D2 geometry: `Poincare.Longrun.Geometry` / `Poincare.CurvatureAlgebra`
+- D3 kappa: `Poincare.Longrun.Topology`
+- D3 surgery toy: `Poincare.Longrun.Surgery`
+- D4: `Poincare.Longrun.Evolution` / `D4Audit`
+
+**Ledger structure** (JSON):
+```json
+{
+  "schema": "d6-weekly-release/theorem-dependency-ledger-v1",
+  "generated_at": ...,
+  "inputs": {...},
+  "summary": {
+    "program_steps": 11, "blocked": 4, "planned": 7,
+    "interface_nodes": 43, "checked_nodes": 34, "interface_nodes_open": 9,
+    "cluster_theorems_checked": N,
+    "declarations_total": 1619, "theorems_total": 887,
+    "axiom_cones": {...}
+  },
+  "program_steps": [ ... 11 entries ... ],
+  "interface_nodes": [ ... 43 ... ],
+  "cluster_results": [ ... curated checked results ... ],
+  "blocked_layer": [ ... unproved props / missing theorems ... ],
+  "edges": [ ... ],
+  "resolution": {"claimed_names": 193, "resolved": 193, "unresolved": [], "ledger_declarations_resolved": N, "ledger_unresolved": []}
+}
+```
+
+For each cluster result entry:
+```json
+{
+  "id": "D2-geometry/curvature_skew",
+  "cluster": "D2-geometry-foundation",
+  "claim": "...",   // from card when available
+  "lean_declarations": ["Poincare.Longrun.Geometry.AbstractConnection.curvature_skew"],
+  "files": ["Poincare/Longrun/Geometry.lean"],
+  "kinds": ["theorem"],
+  "axiom_cone": ["propext","Classical.choice","Quot.sound"],
+  "status": "checked",
+  "evidence": {"decl_report": "logs/13_d6_decl_report.log", "per_file": "logs/perfile_....log", "exit_code": 0},
+  "blockers": [],
+  "depends_on": []
+}
+```
+
+The claim text: for names I only have identifiers. I can use the declaration's pretty-printed type? That would be excellent evidence. I can add a D6 driver that prints `#check @name` for a generated list — but types could be long. Alternatively, use `set_option pp.all`? No, just `#check` prints signature. Let me generate `D6LedgerProbe.lean` with `#check @<name>` lines and parse output to capture signatures. That's strong: every claimed theorem has its exact statement in the release evidence.
+
+Actually, the D5 ReleaseClaims already #checks 193 names but doesn't record their types in the manifest (the log has them). Let me look at the release claims log from D5 to see the output format. It will be similar for D6.
+
+I'll generate the ledger probe with:
+- All 193 card-claimed names
+- All names in my curated ledger entries
+- All D1 interface node lean names
+Then compile and parse `#check` output into `manifest/checked-signatures.txt` and include signatures in the ledger.
+
+Hmm, but `#check @name` for structures prints the type. For defs, prints the type. Fine. Some names may be ambiguous with `@`. Should be fine.
+
+Wait — there's a subtlety: if a name doesn't exist, `#check` errors and the file fails to compile. I need the probe to compile only if all names resolve. That's the point (claim resolution gate). But if one fails, I want to know which. The log will show the error with line number; I can map line → name. I'll generate with a comment line before each `#check` containing the name, e.g.:
+```
+-- CLAIM: <name>
+#check @<name>
+```
+Then parse errors by line.
+
+Actually simpler: generate one `#check` per line and parse the log; Lean error messages include the line number and the identifier. I'll generate a JSON sidecar mapping line numbers to names. Let me do that: when generating the probe, record `{line_number: name}`. Then parse the compile log for `error` lines with line numbers. 
+
+Let me now also decide the **next 20 builder tasks**. They must be real, grounded in the gaps. Let me draft:
+
+D7 stage (foundational geometry, mathlib-adjacent local modules):
+1. **D7-riemann-curvature-algebra** — Define a local Riemann curvature tensor from an abstract connection with the algebraic identities (Bianchi, skew), prove `ricci` trace and `scalarCurvature` agree with `Poincare.CurvatureAlgebra` interface; bridge to D2 `MetricData.scalarCurvature_eq_sum_basis`. Deliverable: `Poincare/Longrun/Geometry/CurvatureTensor.lean`. Acceptance: compiles, axiom report, bridge theorems checked. Addresses U1/U2 partially.
+2. **D7-ricci-scalar-from-tensor** — Ricci/scalar curvature from the local curvature tensor on `CovariantDerivative`; prove consistency with `Perelman.IsScalarCurvature`/`ScalarCurvatureData`; explicit hypotheses where smoothness missing (U4).
+3. **D7-volume-form-measure** — Riemannian volume density/measure from a metric in a chart; prove `RiemannianVolumePredicate`; define local volume form; interface for global volume form with explicit hypotheses (U7, U2).
+4. **D7-divergence-ibp** — Divergence theorem / integration by parts on a chart domain with explicit boundary hypotheses; prove `WeightedIBPStatement` under those hypotheses (U7, I4).
+5. **D7-bochner-identity** — Bochner formula algebra: prove `BochnerStatement` conditional on curvature decomposition; connects to local Ricci; may be conditional interface + toy check (U7, I4).
+6. **D7-conjugate-heat-interface** — Formalize conjugate heat equation operator, prove basic algebraic identities and discrete analogue; statement-only existence of kernel with explicit hypotheses; prove the F-derivative identity `FDerivativeStatement` under differentiability hypotheses (U6, I4).
+7. **D7-heat-kernel-discrete-limit** — Refine the discrete heat kernel/heat grid; prove convergence statement conditional on explicit mesh hypotheses; strengthen `FiniteMeshConvergence` interface (I2, I7).
+8. **D7-hamilton-short-time-interface** — Define the smooth manifold of Riemannian metrics (or a local model) and state Hamilton short-time existence with explicit hypotheses; prove toy/ODE comparison (U8).
+9. **D7-reduced-length** — Define reduced length functional on a path space model and reduced volume; prove toy monotonicity; interface for minimizer existence (U9, I5 K4).
+10. **D7-kappa-noncollapsing-conditional** — Prove K1/K3 from the entropy monotonicity interface + volume comparison hypothesis, conditional theorems (I5 K1-K3).
+11. **D7-gh-compactness-interface** — Pointed Gromov-Hausdorff convergence interface + metric-space compactness toy theorem (U9, I5 K7).
+12. **D7-canonical-neighborhood-interface** — Canonical neighborhood statement with model geometries (round sphere/cylinder) as explicit structures; conditional consequences (I5 K7, I6).
+13. **D7-surgery-neck-conditional** — Discharge `NeckAnalysis` conditional consequences; construct a nontrivial `SurgeryCertificate` from an explicit homotopy equivalence; prove complexity decreases in a toy model (I6).
+14. **D7-surgery-extinction-conditional** — Prove `ExtinctionTheorem` conditional on complexity decrease + finite surgery; connect to `extincts_and_target` (I6).
+15. **D7-topology-pi1-sphere** — Prove `SimplyConnectedSpace S³` / π₁(S³) trivial locally (S1/S2) — mathlib may lack; a local proof using known results? This might be hard; alternative: define the missing statement and prove equivalent formulations (I5 S1-S5).
+16. **D7-evolution-restatement** — Restate the three A1 overstrong-hypothesis theorems with sharp hypotheses upstream (promote D4Audit corrections into `Poincare.Longrun.Evolution`), preserving old names as deprecated aliases (A1).
+17. **D7-adversarial-audit-d2d3** — Counterexample/vacuity audit of D2 geometry and D3 entropy/kappa clusters, extending A3.
+18. **D7-axiom-cone-automation** — Build a CI-grade per-declaration axiom report generator + negative control integrated into lake (hygiene; supports all future tasks).
+19. **D7-perelman-f-conditional** — Prove a conditional F-monotonicity theorem: from `FDerivativeStatement` + `WeightedIBPStatement` + integrability hypotheses to `Perelman.FMonotonicity`; the finite D4 theorem provides the template (P-F-MONO partial).
+20. **D7-perelman-w-mu-conditional** — Conditional W-monotonicity and µ-monotonicity from conjugate heat kernel + reduced volume interfaces; with explicit non-vacuity checks (P-W-MONO, P-MU-MONO partial).
+
+Maybe also:
+- D7-geodesic-exp-interface (U3)
+- D7-parabolic-max-principle-continuous (I2)
+- D7-orientability (U11)
+- D7-normalized-volume-flow (I5)
+
+I need exactly 20. Let me refine to cover the highest-leverage gaps and make each a builder task with compile-first acceptance:
+
+1. D7-riemann-curvature-tensor (U1)
+2. D7-ricci-scalar-curvature (U2)
+3. D7-geodesic-exp-parallel (U3)
+4. D7-levi-civita-smoothness (U4, U5)
+5. D7-volume-form-divergence (U7, U11)
+6. D7-integration-by-parts-weighted (U7, I4)
+7. D7-bochner-formula (U7, I4)
+8. D7-heat-equation-conjugate-interface (U6, I4)
+9. D7-heat-kernel-existence-interface (U6, I5 K5)
+10. D7-discrete-to-continuous-limit (I2, I7)
+11. D7-hamilton-short-time (U8)
+12. D7-tensor-laplacian-evolution (U10, I7)
+13. D7-reduced-length-volume (U9, I5 K4)
+14. D7-kappa-noncollapsing-conditional (I5 K1-K3)
+15. D7-gh-compactness (U9, I5 K7)
+16. D7-canonical-neighborhood (I5 K7)
+17. D7-surgery-neck-extinction (I6)
+18. D7-sphere-recognition (I5 S1-S5)
+19. D7-evolution-sharp-restatement (A1) + adversarial audit D2/D3 (A3) — maybe split into two.
+20. D7-perelman-conditional-monotonicity (P-F/W/MU partial) + axiom automation.
+
+Let me make it exactly 20 with distinct scopes:
+1. D7-riemann-curvature-tensor
+2. D7-ricci-scalar-curvature
+3. D7-geodesic-exponential
+4. D7-levi-civita-smoothness
+5. D7-orientability-volume-form
+6. D7-divergence-ibp
+7. D7-bochner-formula
+8. D7-conjugate-heat-interface
+9. D7-heat-kernel-existence
+10. D7-discrete-continuous-limit
+11. D7-hamilton-short-time
+12. D7-tensor-laplacian
+13. D7-reduced-length-volume
+14. D7-kappa-noncollapsing-conditional
+15. D7-gh-compactness
+16. D7-canonical-neighborhood
+17. D7-surgery-neck-extinction
+18. D7-sphere-recognition
+19. D7-evolution-sharp-restatement
+20. D7-adversarial-audit-d2d3
+
+Hmm, but then no task for conditional Perelman monotonicity, which is the key program step. Let me replace #20 with D7-perelman-conditional-monotonicity and move adversarial audit into #19 or make it 21? The requirement says exactly "the next 20 queued builder tasks" — exactly 20. I can fold the adversarial audit into a verifier task (not builder) or fold it into D7-evolution-sharp-restatement. Actually A3 (adversarial audit) is a verifier task, not builder. The 20 must be *builder* tasks. So:
+
+19. D7-evolution-sharp-restatement (A1)
+20. D7-perelman-conditional-monotonicity (P-F/W/MU partial)
+
+And I can list A3 adversarial audit as a queued *verifier* task in the blockers/queue notes (not counted among the 20 builder tasks). Good.
+
+Each task entry:
+```json
+{
+  "id": "D7-riemann-curvature-tensor",
+  "stage": "D7",
+  "lane": "builder",
+  "title": "...",
+  "objective": "...",
+  "motivation_blockers": ["U1","U2"],
+  "inputs": ["accepted D5 release package", "..."],
+  "deliverables": ["Poincare/Longrun/Geometry/CurvatureTensor.lean"],
+  "acceptance": ["lake env lean <file> exit 0", "#print axioms main decl ⊆ {propext, Classical.choice, Quot.sound}", "no sorry/axiom/unsafe/native_decide/proof_wanted", "result card with exact commands"],
+  "depends_on": ["D6-weekly-release"],
+  "risk": "...",
+  "definition_of_done": "..."
+}
+```
+
+Now, the **weekly release manifest**:
+```json
+{
+  "schema": "d6-weekly-release/manifest-v1",
+  "task_id": "D6-weekly-release",
+  "generated_at": ...,
+  "verdict": "WEEKLY RELEASE CUT — STAGE 1-4 INFRASTRUCTURE VERIFIED; PERELMAN PROGRAM NOT PROVED",
+  "release_id": "week-1-2026-09-09",
+  "accepted_input": {"task": "D5-clean-rebuild", "verdict": "RELEASE GATE PASS", "card_sha256": ..., "manifests": {...}},
+  "integration_decision": "...",
+  "toolchain": {...},
+  "package": {"root": "release/", "modules": 62, "promoted": 53, "base": 5, "drivers": 4, "files": [...]},
+  "independent_verification": {...summary of verification.json...},
+  "axiom_report": {...},
+  "claims": {...},
+  "verified_content": {...counts...},
+  "not_claimed": [...],
+  "blockers_summary": {...},
+  "next_tasks": {"count": 20, "manifest": "manifest/next-20-tasks.json"},
+  "queue_update": {...},
+  "reproduction": [...],
+  "files": [...]
+}
+```
+
+**Blockers list**: re-adjudicate D5's 29:
+- P1: resolved by D6 queue update (if I can write queue.json) — status `resolved-by-D6`.
+- P2: environment limit; D6 uses same pattern (mirror + promotion attempt).
+- P3: still applies, add D6 name mismatch (D6_release vs D6_weekly_release).
+- A1: open → mapped to task D7-evolution-sharp-restatement.
+- A2: documented.
+- A3: open → mapped to verifier task.
+- U1-U12, I1-I8: open → mapped to D7 tasks.
+- H1-H3: informational.
+Plus any D6-discovered blockers.
+
+The blocker list for "the full Perelman proof" should be organized by program step: which blockers gate P-F-MONO, etc. I'll add a `program_step_blockers` mapping.
+
+Let me now write the builder script. It's long but let's do it carefully. I'll write it in parts.
+
+Actually, first let me check on the verification job; it may take ~4-5 min. I'll write the script while waiting.
+
+One more consideration: the release result card must be honest and comprehensive. Let me structure:
+1. Scope and acceptance rule
+2. Consumed inputs (D5 accepted artifacts, hashes)
+3. Independent D6 verification (gates table)
+4. Release contents (manifest summary)
+5. Verified declarations and axiom report (counts + how to reproduce)
+6. Theorem/dependency ledger summary
+7. Explicit blockers for the full Perelman proof
+8. Next 20 builder tasks
+9. What is explicitly NOT claimed
+10. Reproduction
+11. Files produced
+
+Let me write the script now.
+
+I'll write `tools/d6_build_release.py` with functions:
+- `load_inputs()`
+- `build_ledger()`
+- `build_blockers()`
+- `build_tasks()`
+- `build_manifest()`
+- `write_markdown()`
+- `generate_probe()`
+
+Let me be careful with data structures and keep the code readable. Since this is a one-shot artifact generation, I'll write it as a single script with embedded curated data for the cluster claims and tasks. The curated data must be accurate — derived from cards.
+
+Let me extract the remaining card lists I need:
+- D2-pde claims names (24 from claims.json) — filter to theorems.
+- D3-entropy theorem names — from D6 verified declarations filtered by module prefix `Poincare.Longrun.Entropy`.
+- D3-kappa checked_consequences (29 short names) + file.
+- D3-surgery toy checked (13).
+- D4-evolution names.
+- D2-ricci-ode deliverables.
+
+I'll pull names programmatically where possible, and hardcode only the claim descriptions for the headline results.
+
+Let me write the script. I'll make the ledger include:
+- program_steps: 11 (from D1 card)
+- interface_nodes: 43 (from D1 card)
+- cluster_results: grouped by cluster with names lists + per-decl data
+- blocked_layer: from cards (D2 blocked interfaces, D3 unproved props list, D3 kappa missing, D3 surgery missing, D4 boundaries)
+- edges: D1 edges + program step deps + correction edges
+- resolution stats
+
+For cluster_results, I'll define per cluster a list of "claims" (headline) and a list of "supporting declarations". To keep it honest and complete, I'll compute the *full* checked theorem/lemma inventory per cluster module group from the D6 decl report, and then mark headline entries.
+
+Let me define cluster → module prefixes:
+- D1-mathlib-geometry-map: Probe.GeometryApi → module `Probe.GeometryApi`
+- D1-pde-api-map: `Probe.PdeApi`
+- D1-perelman-ledger: `Ledger.PerelmanDefinitions`, `Ledger.DefinitionSmoke` → declarations are in namespace `Perelman` but modules `Ledger.*`. Module mapping from D6 decl report gives `Ledger.PerelmanDefinitions` etc. Good.
+- D2-geometry-foundation: `Poincare.Longrun.Geometry.*` + `Poincare.Stage1.CurvatureAlgebra` + `Poincare.Stage1.RiemannAdapter`? The cluster files are 6: Geometry.lean, Geometry/ConnectionAdapter, Contraction, LeviCivitaBlocked, MetricData + ... let me check provenance cluster files. Actually D2-geometry files=6. Let me get exact file lists from provenance.
+- D2-pde-foundation: `Poincare.Longrun.PDE.*`
+- D2-ricci-ode-cluster: `Poincare.Longrun.CurvatureODE.*`
+- D3-entropy-interface: `Poincare.Longrun.Entropy.*`
+- D3-kappa-ledger: `Poincare.Longrun.Topology.*` + `Poincare.Stage6.*` (base) + maybe
+- D3-surgery-ledger: `Poincare.Longrun.Surgery.*`
+- D4-evolution-theorem: `Poincare.Longrun.Evolution.*`
+- D4-counterexample-audit: `Audit.CounterexampleAudit`, `Audit.PromotedEvolutionAudit`
+
+Let me get exact provenance file lists per cluster.
+dsh: reasoning:
+Now I have all I need. Let me check verification job progress and then write the builder.
+
+Let me check job output.
+dsh: reasoning:
+Still running (per-file checks take ~4 min). Let me write the builder script now.
+
+I'll write a comprehensive `tools/d6_build_release.py`. Let me carefully compose it.
+
+Structure:
+
+```python
+#!/usr/bin/env python3
+"""..."""
+import hashlib, json, os, re, subprocess, sys
+from datetime import datetime, timezone
+from collections import defaultdict
+
+D6 = ...
+D5 = ...
+ROOT = ...
+RESULTS = os.path.join(ROOT, "longrun", "results")
+
+# ---------- helpers ----------
+def sha256(p): ...
+def load(p): ...
+def jdump(obj, path): json.dump(obj, open(path,"w"), indent=1, ensure_ascii=False)
+
+# ---------- load inputs ----------
+verification = load(D6/manifest/verification.json)
+decls = load(D6/manifest/verified-declarations.json)["declarations"]
+by_name = {d["name"]: d for d in decls}
+suffix_index = defaultdict(list)
+for d in decls: suffix_index[d["name"].rsplit(".",1)[-1]].append(d["name"])
+
+def resolve(short, hint_prefixes=()):
+    # if full name exists, return it
+    if short in by_name: return short, "exact"
+    cands = suffix_index.get(short, [])
+    if not cands: return None, "unresolved"
+    if len(cands)==1: return cands[0], "suffix-unique"
+    # prefer hint prefix
+    for p in hint_prefixes:
+        pref=[c for c in cands if c.startswith(p)]
+        if len(pref)==1: return pref[0], "suffix-prefixed"
+    return cands[0], "suffix-ambiguous"
+
+def decl_entry(name):
+    d=by_name.get(name)
+    if not d: return None
+    return {"name":..., "kind":..., "file":..., "axioms":..., "module":...}
+```
+
+Wait: `by_name` has 1619 entries. For `resolve` on short names, `suffix_index` keyed by last segment. E.g. "curvature_skew" → `Poincare.Longrun.Geometry.AbstractConnection.curvature_skew` unique. Good.
+
+But careful: short names from cards like "KappaNoncollapsingCertificate.volume_ball_pos" — last segment "volume_ball_pos" may appear in both KappaNoncollapsingCertificate and NormalizedBallVolumeLowerBound. So resolve with hint prefix "Poincare.Longrun.Topology.KappaNoncollapsingCertificate." Hmm, the card names are relative to namespace `Poincare.Longrun.Topology`. I can first try `"Poincare.Longrun.Topology." + short`. That handles it. Similarly for surgery toy names: `"Poincare.Longrun.Surgery." + short`. For D2 geometry proved_theorems: try `Poincare.Longrun.Geometry.`, `Poincare.Longrun.Geometry.AbstractConnection.`, `Poincare.CurvatureAlgebra.`. 
+
+Better resolve function: given `short` and a list of candidate prefixes, try:
+1. exact
+2. prefix+short for each prefix
+3. unique suffix
+4. ambiguous → record all candidates.
+
+Let me now define the curated ledger data.
+
+**Program steps** (from D1 card, 11 entries): keep id, name, source, lean_interface, depends_on, status, blockers, next_tasks. Add `claimed_proved: false`, `perelman_proof_dependency: true`.
+
+**Interface nodes** (43): from D1 card nodes. Enrich:
+- `lean_declarations`: parse node["lean_name"] by splitting on "," and stripping. Some are placeholder text like "E, H, I, M with [ChartedSpace H M]" for context node. Only resolve those that look like identifiers (match `^[A-Za-z_][A-Za-z0-9_.']*$`).
+- `decl_data`: for each resolved name, kind/file/axioms.
+- `status` from card.
+
+**Cluster results**: For each cluster, I'll produce:
+```python
+clusters = [
+  {"task_id":"D1-mathlib-geometry-map","stage":"D1","headline": [...], "checked_names": [from claims.json], "blocked": [...]},
+  ...
+]
+```
+Actually for the ledger, I'll create `cluster_results` as a flat list of entries with `cluster`, `claim`, `lean_declarations`, `files`, `kind`, `axioms`, `status`, `evidence`. To keep the file size manageable, I'll create one entry per *headline* claim and one entry per *checked theorem group*, not per declaration. The full per-declaration inventory is in verified-declarations.json.
+
+Hmm. But the requirement is "a theorem/dependency ledger" — it should be complete enough to be useful. I think a good compromise:
+
+- `cluster_inventory`: for each cluster, counts + list of all checked theorem/lemma declarations (names) + files. 
+- `headline_results`: ~25 entries with claim descriptions, declarations, dependencies, evidence.
+- `interface_nodes`: 43.
+- `program_steps`: 11.
+- `edges`: dependency edges.
+
+This is comprehensive without bloating.
+
+Let me define headline results:
+
+**D1 (probes/interfaces):**
+- H1: "Curvature tensor algebraic probe (skew/Bianchi/Ricci trace) checked in finite dimension" — declarations Probe.CurvatureTensor.antisymm, .bianchi, .endo, .ricci (from claims). File Probe/GeometryApi.lean.
+- H2: "Levi-Civita uniqueness/torsion toy probe" — Probe.leviCivita_uniqueness_toy, torsion_antisymm_toy, leviCivita_isLeviCivita_toy.
+- H3: "Discrete heat-slab maximum principle probe" — Probe.PdeApi.strict_finite_grid_max_principle, heat_slab_*.
+- H4: "Perelman interface definitions + toy lemmas" — Perelman.toyF_mono, toyW_nonneg, perelmanMu_le, monotonicity_apply, etc.
+
+**D2 geometry:**
+- H5: "Abstract curvature algebra identities (skew, Bianchi, Ricci add/smul, scalar add/smul, basis trace)" — the 17 proved theorems.
+- H6: "Levi-Civita uniqueness and metric compatibility equivalence" — leviCivita_nabla_unique, meanConnection_isMetricCompatible_iff, leviCivitaExistence_iff_nonempty.
+- blocked: LeviCivitaExistenceStatement, CovariantDerivativeCurvatureStatement.
+
+**D2 PDE:**
+- H7: "Discrete maximum principle on finite heat grid" — HeatGridEvolution.le_of_initial_le, le_sup'_initial, succ_le, energy_nonincreasing.
+- blocked: ContinuousHeatMaximumPrincipleInterface.
+
+**D2 ODE:**
+- H8: "Invariant orthant under Hamilton ODE reaction field" — component_monotone, nonneg_orthant_invariant, nonneg_orthant_invariant_discrete, zero_orthant_invariant.
+- H9: "Scalar functional monotonicity along the ODE" — scalarFunctional_monotone, scalarOfState_monotone, discrete analogues.
+- conditional: scalarCurvature_monotone_of_bridge.
+- blocked: TensorRicciFlowODEBridge etc.
+
+**D3 entropy:**
+- H10: "Entropy interface + certificate algebra" — from Entropy modules; checked algebraic consequences (AntitoneCertificate composition, etc.). I need to extract theorem names from the decl report for Entropy modules. I'll compute them dynamically in the script: all `theorem` kind decls in modules `Poincare.Longrun.Entropy.*`, take a curated subset with descriptions from the card? The card doesn't list names. I'll pick the main ones by name pattern. Let me look at the Entropy decl names after verification completes. I'll do it dynamically and list them all in `cluster_inventory`.
+
+**D3 kappa:**
+- H11: "Compact 3-manifold class consequences" — 7 checked.
+- H12: "Kappa-noncollapsing certificate algebra + normalized volume equivalence" — 22 checked.
+- blocked: K1-K7, S1-S5.
+
+**D3 surgery:**
+- H13: "Surgery ledger interface: certificate constructors, chain composition" — SurgeryCertificate.trivial/ofHomeomorph/ofHomotopyEquiv, ChainCertificate.append/preservation/compact_preserved/orientable_preserved/simplyConnected_preserved.
+- H14: "Toy extinction skeleton" — toyRel_*, ToyChain.no_infinite, toy_extinction_skeleton.
+- blocked: NeckAnalysis, ExtinctionTheorem, MissingInputs.
+
+**D4 evolution:**
+- H15: "Finite Gibbs/reaction functional is antitone along the evolution relation" — perelmanF_antitone (+ discrete). This is the headline checked theorem. Explicit disclaimer: NOT Perelman's F-monotonicity (sign opposite, FDissipation=0).
+- H16: "Dissipation identity" — hasDerivWithinAt_perelmanF.
+- H17: "Certificates consumed from D3" — perelmanAntitoneCertificate, continuousPerelmanCertificate.
+- conditional: perelmanF_monotone_of_tensorBridge, continuousPerelmanFMonotone_of_approximation.
+
+**D4 audit:**
+- H18: "Sharp-hypothesis corrections" — D4Audit.gibbsTerm_strictAnti_of_one_le, gibbsTerm_step_lt_of_one_le, perelmanF_step_lt_of_one_le.
+- H19: "Counterexamples / non-vacuity" — counterexample_continuous_c_half, counterexample_discrete_c_half, counterexample_negative_step, nonvacuity_*.
+
+That's ~19 headlines. Good.
+
+For dependencies in headlines, I'll specify manually where clear (e.g., H15 depends on H8/H9 and D3 entropy). 
+
+Now let me also handle the **claim resolution**:
+- 193 card-claimed names: check each appears in by_name. Count resolved/unresolved. (D5 said all resolve.)
+- Ledger declarations: every declaration referenced in the ledger (program steps' lean_interface, interface nodes, headlines) must resolve; record unresolved.
+
+**Verified declarations list**: `manifest/verified-declarations.json` already has all 1619. I'll also produce `manifest/verified-theorems.json` = subset with kind in {theorem} plus maybe lemma-like defs? In Lean 4, lemmas are theorems (thmInfo). So "theorems" = 887. But some thmInfo declarations are auto-generated (e.g., `_proof_1`?). I'll filter out names ending with `._proof_` or containing `_proof_`? Let me check how many such names exist. I'll do that in the script and report both raw and filtered counts.
+
+Also structures: `induct` + `ctor`. defs include projections. For the verified theorem list, I'll include all `theorem` kind declarations, excluding compiler-generated proof terms (names containing `._proof_` or ending `.proof_`?). Let me inspect after verification.
+
+**Axiom report**: I'll produce `manifest/axiom-report.json` summarizing:
+- approved axioms
+- distinct cones with counts
+- zero forbidden
+- per-declaration report reference
+- negative control evidence
+
+Actually the verified-declarations.json includes per-decl cones. I'll add `axiom-report.json` with aggregate + the D6 audit log tails.
+
+Now let me write the script. It's long; I'll write it in one go and then iterate.
+
+Also `generate_probe()`: generate `release/D6LedgerProbe.lean` with `#check @name` for all ledger declarations + the 193 claims. But wait — adding this file to the release package means `lake build` won't include it unless declared. I'll compile it with `lake env lean D6LedgerProbe.lean` and record. Then the release package has one more driver file. That's fine; I'll mark it as a driver in the manifest (and note that per-file checks exclude drivers). But the manifest's file inventory should include it.
+
+Hmm — the D6 verification already ran per-file checks on 58 files before D6LedgerProbe existed. That's fine.
+
+Actually, is D6LedgerProbe necessary given ReleaseClaims already #checks all 193 claimed names? It adds ledger-declaration coverage (which includes many of the same names). Let me generate it and compile as a final "ledger probe" gate. It strengthens the "every claimed theorem points to a compiling .lean file" requirement.
+
+Let me write the script now.
+
+For the next-20 tasks, I'll embed the curated list.
+
+Let me write the whole thing. I'll aim for correctness and honesty.
+
+One important detail: the release result card must record exact commands and exit codes. My verification.json has that.
+
+Another: the D6 worktree name mismatch (prompt says D6_release, actual D6_weekly_release) — add to blockers as P3 extension.
+
+Also: should I update queue.json? Let me try writing to the shared queue after producing a proposed queue. If denied, mirror and note. The queue update should:
+- mark D5-clean-rebuild `verified` (D5 accepted by D6 independent verification)
+- mark D6-weekly-release `verified` or `done`? As integrator, I finish the task, so set `status: "verified"`? The queue protocol: statuses seen: verified, running, queued. I'll set D6 to `verified` (integrator completed release; supervisor can accept). Hmm, but the integrator shouldn't self-verify. Actually D6 IS the integrator task; marking it "verified" is the integrator's acceptance of its own release? The convention from queue.json: tasks are marked "verified" after acceptance. I'll mark D5 `verified` (consumed and independently reproduced) and D6 `done` — but "done" isn't in the current status vocabulary. Existing statuses: verified, running, queued. The result cards use "done". I'll use `verified` for D5 and `done` for D6? To stay consistent with queue statuses, maybe `verified` for D5 and `completed` for D6? Hmm.
+
+The queue is the integrator's formal acceptance record. Since I am the integrator and this is the final task, I'll mark:
+- D5-clean-rebuild: `verified` (independent D6 reproduction passed)
+- D6-weekly-release: `verified` (deliverables produced, gates pass)
+And append the 20 D7 tasks with status `queued`, deps `["D6-weekly-release"]`.
+
+Also fix the stale entries: D2-geometry-foundation → verified; D2-ricci-ode-cluster → verified; D3-entropy-interface → verified; D4-evolution-theorem → verified; D4-counterexample-audit → verified (all confirmed by D5 clean-room + D6 independent). That resolves P1.
+
+I'll write `manifest/queue.updated.json` and attempt to write to shared `longrun/queue.json`. If denied, mirror to `longrun/queue.json` inside worktree and note the promotion attempt.
+
+Let me now write the script.
+
+Regarding the "weekly release manifest" naming: I'll produce `manifest/weekly-release-manifest.json` and `.md`.
+
+Let me write the code.
+dsh: reasoning:
+Now let me check on the verification job and then run the builder. Let me also write `tools/d6_probe.py` which compiles the generated probe and records results.
+
+Actually, the probe generation happens inside d6_build_release.py. Then d6_probe.py runs `lake env lean D6LedgerProbe.lean` and parses. Let me write it.
+
+But wait: D6LedgerProbe.lean imports ReleaseCheck only. The `#check @name` for names in `Perelman.*` etc. requires those modules to be imported — ReleaseCheck imports all clusters including Ledger.PerelmanDefinitions (via ReleaseCheck → Ledger.PerelmanDefinitions). Yes.
+
+But does ReleaseCheck import D4Audit? ReleaseCheck imports Audit.CounterexampleAudit etc. D4Audit is the namespace inside Audit/CounterexampleAudit.lean. Yes.
+
+Probe.PdeApi/GeometryApi: imported. Good.
+
+One concern: `#check @Perelman.FMonotonicity` etc. resolve.
+
+Another: duplicate names? `#check` duplicates are fine.
+
+Potential issue: `set_option linter.unusedVariables false` — is that a valid option? Yes. But it's harmless if unused. Actually, better to remove it to avoid unknown option errors across Lean versions... `linter.unusedVariables` is a valid option in Lean 4. Fine.
+
+Let me now write d6_probe.py.
+dsh: reasoning:
+All gates pass except the forbidden_token_scan. That's likely my naive scanner flagging the word "sorry" in docstrings that describe the forbidden tokens (the D5 scanner is comment-aware and treats mentions in comments as allowed? Actually D5's scan_forbidden.py had "0 hard matches" for 61 files, but their scanner likely ignores comments AND docstrings). My scanner strips block comments `/-(...)-/` and line comments `--`, so where did it find hard matches? Let me check forbidden-scan.json.
+
+Probably in string literals or in docstring text that my regex didn't strip (e.g., `/-- ... -/` docstrings are block comments, should be stripped; but nested comments? Or the `/--` docstring containing `-/` inside? Or the word "sorry" in a string literal, e.g., in ReleaseAudit.lean comments).
+
+Let me check the matches.
+dsh: reasoning:
+The matches are in D6AuditReport.lean and ReleaseAudit.lean — my own scanner strips comments incorrectly. Looking at my regex: `re.sub(r"/-.*?-/", " ", src, flags=re.S)` — this fails on nested comments and on docstrings containing `-/`. But the matches are at offsets in the docstring header of D6AuditReport.lean (e.g., offset 237 "sorryAx") — my block-comment regex `/-.*?-/` should match from the start of the docstring to the first `-/`... The D6AuditReport header contains `* `sorryAx`,` and later a line `-/`. Hmm, wait — the header has `/-` at the start and `-/` at the end, so it should strip. Unless the docstring contains `-/` earlier... Let me see: the header has "`<decl>._native.native_decide.ax_*`" — no `-/`. Hmm.
+
+Actually the issue: `re.sub(r"/-.*?-/", ...)` with `.*?` non-greedy — first match from first `/-` to first `-/`. In D6AuditReport.lean the first `/-` is the docstring start, first `-/` is the docstring end. So it should strip. But the matches at offset 237... let me compute. Offset 237 might be in the docstring. Wait, after stripping block comments, offsets shift. My scanner records `mm.start()` on the *stripped* text, not original. So offsets don't correspond directly.
+
+Hold on — maybe the issue is the Lean docstring `/-` inside the comment: the header mentions `proof_wanted` and `sorryAx`. If the block comment regex matched `/-` to the *first* `-/`, all that text is gone. Unless... the file starts with `/-\nD6-weekly-release — per-declaration axiom report...` and contains "`sorryAx`" at line ~12. So it should be stripped.
+
+Let me debug directly: run my scanner function on D6AuditReport.lean and print the matched context. Actually, I realize the bug: `re.sub(r"/-.*?-/", " ", src, flags=re.S)` — the file contains the sequence `/-` in the *code*? No.
+
+Wait, actually maybe the issue is the docstring contains an em dash etc. Let me just debug quickly. But the simplest fix: use the D5 `scan_forbidden.py` tool (accepted, comment/string-aware, handles nesting and `«unsafe»`). I copied it to `input/d5-tools/scan_forbidden.py`. As integrator, reusing the accepted scanner is better and defensible. Let me modify `d6_verify.py` to call the D5 scanner via subprocess on the D6 release dir, and record its JSON output. That also keeps the scan methodology identical to D5.
+
+But wait: D5's scanner is a D5 artifact; using it as-is is "consuming accepted D5 artifacts". Good. And it will scan the D6 additions too (D6AuditReport.lean, D6LedgerProbe.lean). Let me verify the D5 scanner returns 0 on my D6 release. Let me run it now.
+
+Also note: the D5 scanner's context uses `text.splitlines()[lineno-1]` on original text — fine.
+
+Let me test it.
+dsh: reasoning:
+The accepted D5 scanner reports 0 hard matches on all 62 files (including my D6 additions). Let me update `d6_verify.py` to use the D5 scanner instead of my inline one.
+
+I'll replace the `forbidden_scan` function to invoke the accepted tool. Keep a fallback? No, just call it.
+
+Let me edit d6_verify.py:
+- Replace the function body with subprocess call to `input/d5-tools/scan_forbidden.py release`, parse JSON output.
+- Note: the scanner writes JSON to stdout and exit 1 if hard matches. Handle nonzero exit.
+
+Then re-run d6_verify.py. The per-file checks will re-run (~4 min). That's fine; but to save time I could add a flag to skip per-file checks... Actually re-running is more rigorous; the build is already done. Let me just re-run fully (it took ~4-5 min). Meanwhile I can fix the builder.
+
+Let me make the edit.
+dsh: reasoning:
+Also the `report["steps"]` entry for forbidden_token_scan uses `scan["hard_match_count"] == 0` — fine. But the step's exit code should account for scanner exit too. Fine.
+
+Now, D6LedgerProbe.lean will be generated by d6_build_release.py, which hasn't run yet. So the current release has 62 files (61 + D6AuditReport). The scan just ran on 62 files. Good.
+
+Let me re-run d6_verify.py in the background. Since the per-file checks take ~4 min, let me start it now and run d6_build_release.py after it finishes (the builder depends on verification.json). Actually, the builder only needs verification.json which already exists from the failed run — but it has gate_pass false. I should re-run verification first, then build artifacts. Let me start verification now.
+
+Wait — a subtlety: if I re-run verification and it regenerates verified-declarations.json, that's the same data. Fine.
+
+Also I should double check: the D6AuditReport output in the new log — will all 1619 declarations be parsed with the `search` fix? Yes.
+
+Let me start the verification job.
+dsh: reasoning:
+While that runs (~4-5 min), let me review the builder script for bugs. There are a few things I want to verify:
+
+1. `build_ledger` resolves names. Let me test the resolution logic offline using the existing verified-declarations.json (from the previous run). I can run a quick dry-run of parts. But the builder writes files; I could run it now and it would use the old verification.json (gate_pass false) — the artifacts would be generated with a failing verification. Better wait. But I can test the ledger building logic in isolation with a small script that imports functions? The module runs main() only under `__main__`, so I can import it. Let me do that to test resolution without writing.
+
+Actually, importing d6_build_release will execute the module-level code (loads decl report, builds BY_NAME). That's fine. Then call build_ledger() and check unresolved counts.
+
+Let me do that now to catch bugs early.
+
+Potential issues in the builder:
+- `generate_probe` is called twice in main (once explicitly, once in the print statement). It writes the same file twice; harmless but sloppy. Let me fix to call once.
+- In `main`, `print(json.dumps({... "probe_names": len(generate_probe(ledger))}))` regenerates. I'll fix by storing names.
+- `md_card` references `blockers["counts"].get('resolved_by_d6', 0)` — exists.
+- `build_blockers` uses `ledger["program_steps"]`.
+- `H()` with `log` param passes to evidence_block(resolved, log) — log is a list or None. Fine.
+- In `H`, `deps` parameter unused? It's used: `"depends_on": list(deps)`. Yes.
+- `evidence_block` takes `per_file_logs` — not populated. Fine.
+- The `resolve` function for D1 node names with prefixes ("Perelman.",): some lean_name values include full names like "Poincare.Longrun.Surgery.ToyChain..."? No, D1 nodes are Perelman.*. Fine.
+- `L-D2-CURVATURE-IDENTITIES`: names like "curvature_skew" — resolve with geo_pfx. `Poincare.Longrun.Geometry.AbstractConnection.curvature_skew` exists. Good.
+- "mean_curvature_apply" etc.
+- `L-D2-ODE-INVARIANT` names "component_monotone" → `Poincare.Longrun.CurvatureODE.component_monotone`? Let me check the actual full names in verified-declarations. The deliverables said "Poincare.Longrun.CurvatureODE.component_monotone" — but is `component_monotone` in namespace `Poincare.Longrun.CurvatureODE` or under `.Invariant`? Let me check the audit names. I'll test.
+
+- `L-D3-ENTROPY-CERTIFICATES` names: "AntitoneCertificate", "ContinuousAntitoneCertificate", "finiteReactionEntropyData_F", "perelmanAntitoneCertificate", "perelmanAntitoneCertificate_discrete", "continuousPerelmanCertificate". Are those full names `Poincare.Longrun.Entropy.AntitoneCertificate`? Need to check.
+
+- `L-D4-EVOLUTION-CERTIFICATES` names: "perelmanAntitoneCertificate" under `Poincare.Longrun.Evolution.`? Might actually be `Poincare.Longrun.Evolution.perelmanAntitoneCertificate`. Need to check.
+
+Let me run a test of build_ledger() and print unresolved/ambiguous entries.
+dsh: reasoning:
+Excellent — the ledger resolves all 169 referenced declarations, 193/193 card claims, 0 unresolved. The only "notes" are for the context node `bg.smooth_manifold` whose lean_name is placeholder text "E, H, I, M with [ChartedSpace H M]" — that's expected and correctly noted. I could suppress those notes since it's a context node, but it's fine to keep (it documents that E/H/I are not declarations). Actually, to avoid confusion, let me change the context node handling: for node type "context", don't attempt resolution (or keep notes but mark expected). I'll leave it; the notes are informative. Actually, cleaner: only attempt resolution if the raw string looks like a declaration (contains "." or starts uppercase and is a single token). "E", "H", "I" are single uppercase letters and resolve to nothing. Let me filter: skip single-character tokens. Minor improvement.
+
+Let me also check the 18 headline results — I defined 19 H() calls? Let me count: 
+1 L-D1-CURVATURE-ALGEBRA
+2 L-D1-LEVI-CIVITA-PROBE
+3 L-D1-PDE-PROBE
+4 L-D1-PERELMAN-TOY
+5 L-D2-CURVATURE-IDENTITIES
+6 L-D2-LEVI-CIVITA
+7 L-D2-DISCRETE-MAX-PRINCIPLE
+8 L-D2-ODE-INVARIANT
+9 L-D2-ODE-SCALAR-MONO
+10 L-D3-ENTROPY-CERTIFICATES
+11 L-D3-KAPPA-MANIFOLD
+12 L-D3-KAPPA-ALGEBRA
+13 L-D3-SURGERY-INTERFACE
+14 L-D3-SURGERY-TOY
+15 L-D4-PERELMAN-F-ANTITONE
+16 L-D4-EVOLUTION-CERTIFICATES
+17 L-D4-SHARP-CORRECTIONS
+18 L-D4-COUNTEREXAMPLES
+That's 18. Fine.
+
+But wait — `L-D1-PDE-PROBE` includes `HeatSlabMaximumPrincipleInterface` which is an unproved Prop, so the headline is "partial"? It resolved as a declaration (it exists as a Prop), so status "checked". The claim text says "the continuous interface is statement-only" — that's honest. OK.
+
+Similarly `L-D2-LEVI-CIVITA` includes `leviCivitaExistence_iff_nonempty` which is a theorem about the Prop being nonempty, fine.
+
+`L-D2-ODE-SCALAR-MONO` includes `scalarCurvature_monotone_of_bridge` (conditional theorem — exists and is checked, though conditional). Honest note included.
+
+Now `L-D1-PERELMAN-TOY` includes `Perelman.FMonotonicity_iff_antitoneOn` — does that exist? Resolution found it, so yes.
+
+Now let me fix the double generate_probe call and the context-node notes. Also, I realize `blocked_layer_entries: 46` — that includes foundational gaps etc. Good.
+
+One issue: `interface_nodes_checked: 34` counts status "checked"; 9 "interface" — correct per D1 card.
+
+Another: The `edges` count 119. Fine.
+
+Now, the blockers mapping: `mapping` maps D5 blocker IDs to D7 task IDs. Check all D7 task IDs exist:
+- D7-riemann-curvature-tensor ✓
+- D7-ricci-scalar-curvature ✓
+- D7-geodesic-exponential ✓
+- D7-levi-civita-smoothness ✓
+- D7-conjugate-heat-interface ✓
+- D7-heat-kernel-existence ✓
+- D7-divergence-ibp ✓
+- D7-bochner-formula ✓
+- D7-hamilton-short-time ✓
+- D7-reduced-length-volume ✓
+- D7-gh-compactness ✓
+- D7-canonical-neighborhood ✓
+- D7-surgery-neck-extinction ✓
+- D7-tensor-laplacian ✓
+- D7-orientability-volume-form ✓
+- D7-perelman-conditional-monotonicity ✓
+- D7-discrete-continuous-limit ✓
+- D7-kappa-noncollapsing-conditional ✓
+- D7-sphere-recognition ✓
+- D7-evolution-sharp-restatement ✓
+All 20 exist. 
+
+Now, the D5 blocker U6 maps to conjugate-heat + heat-kernel; U9 maps to 4 tasks; etc. Fine.
+
+Let me also double check `build_tasks` uses `add(...)` with positional args: `add(tid, title, objective, blockers, deliverables, acceptance_extra=(), deps=(), risk="", inputs=None)`. Calls look right.
+
+One issue: in `add`, `"depends_on": list(deps) or ["D6-weekly-release"]` — for tasks with deps given, they don't include D6-weekly-release. That's fine (deps are within D7). But the queue update uses `task["depends_on"]` as deps; for the first task it's ["D6-weekly-release"]. Good.
+
+Now let me make the small fixes:
+1. Remove double generate_probe.
+2. Skip single-letter tokens in node resolution.
+
+Also: I should double-check the `P1` resolution claim in blockers says "D6 updated longrun/queue.json" — but I haven't successfully written it yet. I'll attempt; if denied, adjust wording to "D6 produced manifest/queue.updated.json and promoted it" or note denial. Let me handle that after attempting.
+
+Let me make the edits now.
+dsh: reasoning:
+Now let me check verification job status. It should be near done.
+dsh: reasoning:
+D6 independent verification PASSES:
+- 1619 declarations audited
+- 887 theorems
+- 58 per-file checks, 0 failures
+- claim probe exit 0
+- gate failures: none
+
+Now run the builder to produce all artifacts. Then compile the probe.
+
+Let me update todos first, then run.
+dsh: reasoning:
+All artifacts generated. Note: probe_names = 240 (169 ledger declarations + 193 card claims, union = 240).
+
+Now compile the probe (D6LedgerProbe.lean). It has 240 `#check` lines. This may take ~30s. Let me run it.
+
+But wait: the probe file was just generated in `release/`. `lake env lean D6LedgerProbe.lean` should compile. However, `lake build` was run before the probe existed; `lake env lean` directly elaborates. Good.
+
+Let me run d6_probe.py.
+dsh: reasoning:
+The probe compiles: all 240 declarations resolve.
+
+Now let me review the generated artifacts for correctness and quality. Let me look at:
+- manifest/weekly-release-manifest.md
+- manifest/theorem-dependency-ledger.md (spot check)
+- manifest/blockers.md
+- manifest/next-20-tasks.md
+- longrun/results/D6-weekly-release.md
+
+Also check that the `P1` blocker resolution claim is accurate (it says D6 updated longrun/queue.json — need to attempt the promotion).
+
+Let me first view the result card and manifest.
+dsh: reasoning:
+The result card looks good. A few issues to fix:
+
+1. Line 93: `L-D3-ENTROPY-CERTIFICATES` resolved `finiteReactionEntropyData_F` and `perelmanAntitoneCertificate` to `Poincare.Longrun.Evolution.*` rather than `Poincare.Longrun.Entropy.*`. The card's D3 entropy interface defines those names? Wait — the D4 card's "d3_consumption" listed `finiteReactionEntropyData_F: EntropyData.F (finiteReactionEntropyData c lam) = perelmanF c lam` and `perelmanAntitoneCertificate`. These may actually live in `Poincare.Longrun.Evolution` module (D4), consuming D3. Let me check: the resolver used prefix `Poincare.Longrun.Entropy.` first, but the actual declaration is in `Poincare.Longrun.Evolution`. Since the headline is about D3 entropy certificates, using D4 declarations is misleading. Let me check where these declarations live.
+
+Actually, D3 entropy cluster is `Poincare.Longrun.Entropy.*` modules; D4 evolution is `Poincare.Longrun.Evolution.*`. The D4 card says "d3_consumption": finiteReactionEntropyData_F etc. — meaning D4 consumes D3 by instantiating. But the names `finiteReactionEntropyData_F`, `perelmanAntitoneCertificate`, `continuousPerelmanCertificate` might be declared in the Evolution modules. The resolver found them there. So my headline for D3 entropy accidentally references D4 declarations.
+
+Let me check the actual declarations in Entropy modules to pick correct ones. Let me query the audit for module prefix `Poincare.Longrun.Entropy`.
+
+2. Line 51: "package: release/ — 62 Lean files (58 promoted + drivers)". After generating D6LedgerProbe.lean, there are 63 files (61 original + D6AuditReport + D6LedgerProbe). Wait: original 61 (58 promoted + 3 D5 drivers) + D6AuditReport = 62. Then D6LedgerProbe = 63. But the manifest was built *before* the probe was generated (generate_probe is called after build_manifest). So the manifest says 62. I need to regenerate the manifest after the probe exists, or account for it. Let me re-run d6_build_release.py now that the probe exists — it will count 63 files, with drivers {ReleaseCheck, ReleaseAudit, ReleaseClaims, D6AuditReport, D6LedgerProbe} = 5 drivers, 58 promoted. Good. Then re-run d6_probe.py (probe file regenerated identically, recompile).
+
+But careful: the manifest's `independent_verification.steps` come from verification.json which had per_file_checks on 58 files (before probe). That's still accurate: the probe is a driver, not a promoted artifact. But the verification.json doesn't include the probe compilation step. I should add the probe result to the verification record. Options: 
+- Have d6_probe.py update `verification.json` by appending a `ledger_probe` step and re-evaluating gate_pass.
+- Or note the probe result in the manifest separately.
+
+Better: make d6_probe.py append its step to verification.json (id `ledger_probe`, gate true). Then re-run d6_build_release.py so the manifest/result card include it. Let me do that.
+
+3. The `P1` resolution wording: I need to actually attempt to write the shared queue.json. Let me do that after finalizing.
+
+4. Line 119: "Full list ... (23 open, 1 resolved by D6, 3 informational)" — should also mention 1 documented, 3 environment limits. The md_card prints open/resolved/informational. Minor; let me add documented and environment counts.
+
+5. `L-D1-PDE-PROBE` claim says "continuous interface is statement-only" — fine.
+
+6. The D3 entropy headline needs fixing to use Entropy-module declarations. Let me look at the actual entropy declarations.
+
+Let me query the audit data for modules.
+dsh: reasoning:
+Now I can pick proper D3 entropy headline declarations from the Entropy modules:
+- `Poincare.Longrun.Entropy.EntropyData.F`, `.W`, `.FDissipation_nonneg`, `.F_mono_integrand`, `.conjugateWeight_pos`, `.τ_pos`, `.ρ_nonneg`, `.integrable_F`, `.integrable_W`
+- `Poincare.Longrun.Entropy.AntitoneCertificate.mono`, `.F_le_of_le`, `.lower_le`
+- `Poincare.Longrun.Entropy.ContinuousAntitoneCertificate.antitoneOn`, `.dissipation_nonpos`, `.hasDerivAt_F`
+- `Poincare.Longrun.Entropy.MonotoneCertificate.mono`, `.F_le_of_le`
+- `Poincare.Longrun.Entropy.LinearDecayCertificate.decay`, `.rate_pos`
+- `Poincare.Longrun.Entropy.heatEnergy_le_initial`, `heatEnergy_nonneg`, `heatEnergyCertificate_zero`
+- `Poincare.Longrun.Entropy.finiteCurvatureDatum_F`, `.finiteCurvatureDatum_W`
+- `Poincare.Longrun.Entropy.continuousMonotoneCertificateOfBridge`, `entropyRegularityBridge_zero`
+
+That's a much better D3 entropy headline. Let me update the headline list in the builder:
+
+Replace:
+```python
+H("L-D3-ENTROPY-CERTIFICATES", "D3-entropy-interface",
+  "Entropy interface: F/W data, monotonicity certificates and their composition are kernel-checked; all analytic inputs are explicit hypotheses.",
+  ["AntitoneCertificate", "ContinuousAntitoneCertificate", "finiteReactionEntropyData_F",
+   "perelmanAntitoneCertificate", "perelmanAntitoneCertificate_discrete",
+   "continuousPerelmanCertificate"],
+  ent_pfx, ...)
+```
+with:
+```python
+H("L-D3-ENTROPY-CERTIFICATES", "D3-entropy-interface",
+  "Entropy interface: F/W data, monotonicity/decay certificates, their composition and the discrete heat-energy certificate are kernel-checked; all analytic inputs are explicit hypotheses.",
+  ["EntropyData.F", "EntropyData.W", "EntropyData.FDissipation_nonneg", "EntropyData.F_mono_integrand",
+   "EntropyData.conjugateWeight_pos", "EntropyData.τ_pos", "EntropyData.ρ_nonneg",
+   "EntropyData.integrable_F", "EntropyData.integrable_W",
+   "AntitoneCertificate.mono", "AntitoneCertificate.F_le_of_le",
+   "ContinuousAntitoneCertificate.antitoneOn", "ContinuousAntitoneCertificate.dissipation_nonpos",
+   "ContinuousAntitoneCertificate.hasDerivAt_F", "MonotoneCertificate.mono",
+   "LinearDecayCertificate.decay", "LinearDecayCertificate.rate_pos",
+   "heatEnergy_le_initial", "heatEnergy_nonneg", "heatEnergyCertificate_zero",
+   "finiteCurvatureDatum_F", "finiteCurvatureDatum_W",
+   "continuousMonotoneCertificateOfBridge", "entropyRegularityBridge_zero"],
+  ent_pfx, ...)
+```
+
+Note `ent_pfx = ("Poincare.Longrun.Entropy.",)`. Resolution: "EntropyData.F" → prefix gives `Poincare.Longrun.Entropy.EntropyData.F`. Good. "heatEnergy_le_initial" → `Poincare.Longrun.Entropy.heatEnergy_le_initial`. Good.
+
+But "ContinuousAntitoneCertificate.antitoneOn" → prefix + short = `Poincare.Longrun.Entropy.ContinuousAntitoneCertificate.antitoneOn` — exists. Good.
+
+Now also D4 certificates headline references `Poincare.Longrun.Evolution.perelmanAntitoneCertificate` etc. — those are D4 declarations, correct there.
+
+Let me also add to the D4 headline the `finiteReactionEntropyData_F` (D4 consumption) — already in D4 certificates? I had `perelmanAntitoneCertificate`, `perelmanAntitoneCertificate_discrete`, `continuousPerelmanCertificate`, `perelmanF_monotone_of_tensorBridge`, `continuousPerelmanFMonotone_of_approximation`. I can add `finiteReactionEntropyData_F` to D4. Good.
+
+Additional improvements:
+1. Add probe step to verification.json. Modify d6_probe.py to update verification.json: append step `ledger_probe` and recompute gate_pass. But then re-running d6_verify.py later would drop it. That's OK; the reproduction order is verify → build → probe. I'll make d6_probe.py patch verification.json and also `manifest/weekly-release-manifest.json`? No — the manifest is built after probe in the final sequence? Current order in reproduction: verify, build_release, probe. But build_release generates the manifest from verification.json *before* probe. Hmm. Let me reorder: verify → build_release (generates probe file) → probe (compiles, updates verification.json) → build_release again (now includes probe step in manifest). That's awkward.
+
+Better: make d6_probe.py write `manifest/ledger-probe-result.json`, and make `d6_build_release.py` read that file if present and include it as a gate step in the manifest (both in `independent_verification.steps` and counts). Then final order: verify → build_release → probe → build_release. Or: build_release generates probe; probe compiles; build_release run again. I'll document reproduction as:
+
+```
+python3 tools/d6_verify.py
+python3 tools/d6_build_release.py
+python3 tools/d6_probe.py
+python3 tools/d6_build_release.py   # fold the probe result into the manifest/card
+```
+
+Actually simpler: have `d6_build_release.py` itself compile the probe at the end (call d6_probe's logic), then include the result in the manifest and write the card. But the card is written within build_release... I can reorder within main: generate_probe → run probe subprocess → build manifest (including probe result) → write all. That's cleanest: one script does everything except verification. But the probe compilation takes ~30s and needs `lake env lean`; fine.
+
+Let me restructure `d6_build_release.py`:
+- build ledger, blockers, tasks
+- generate_probe
+- run probe compile (import function from d6_probe or inline subprocess)
+- load probe result; add to verification data used by build_manifest
+- build manifest (include ledger_probe in independent_verification.steps and counts)
+- write everything
+
+I'll inline a `run_ledger_probe()` function in d6_build_release.py and keep d6_probe.py as a standalone too. Simpler: import d6_probe? It executes at import (module-level code). Let me just inline.
+
+Let me restructure:
+```python
+def run_ledger_probe():
+    # compile release/D6LedgerProbe.lean, write manifest/ledger-probe-result.json, return result
+```
+Then in `build_manifest`, after loading verification.json, append the probe step:
+```python
+probe = load(MANIFEST/ledger-probe-result.json) if exists
+if probe: v["steps"].append({...id: ledger_probe, cmd, exit_code, duration_s, gate: True, log})
+```
+And recompute gate_pass including probe. Actually verification.json already has gate_pass true; I'll add a `probe` section to the manifest rather than mutate verification.json. In the manifest:
+```python
+"ledger_probe": probe,
+"independent_verification": {..., "steps": [..., probe_step]}
+```
+And gate_failures += ["ledger_probe"] if probe fails.
+
+Let me implement.
+
+2. Fix the manifest package count: after generate_probe, release has 63 files. build_manifest is called before generate_probe currently; reorder so probe is generated first. Also `files` includes D6LedgerProbe.lean with its hash. Good.
+
+3. Update md_card to include probe in the gate table automatically (it iterates steps, so yes once included).
+
+4. Update blockers md counts line in card (add documented/environment).
+
+5. Attempt queue.json promotion.
+
+Let me also double-check `package.promoted_files` computation: files excluding drivers = 63 - 5 = 58. Good.
+
+Let me now edit d6_build_release.py.
+
+First, replace the D3 entropy headline. Then restructure main and build_manifest for the probe.
+
+Let me do these edits carefully.
+dsh: reasoning:
+Now restructure build_manifest to include the probe, and main to generate + run probe before building the manifest.
+
+In `build_manifest`, after loading `v`:
+```python
+probe_path = os.path.join(MANIFEST, "ledger-probe-result.json")
+probe = load(probe_path) if os.path.exists(probe_path) else None
+steps = [{...} for s in v["steps"]]
+if probe:
+    steps.append({"id":"ledger_probe","cmd":probe["command"].split(),"exit_code":probe["exit_code"],"duration_s":probe.get("duration_s",0),"gate":True,"log":probe["log"]})
+gate_failures = list(v["gate_failures"])
+if probe and not probe["pass"]: gate_failures.append("ledger_probe")
+```
+Then use `steps` and `gate_failures` in the returned dict. Also add `"ledger_probe": probe`.
+
+Let me view the relevant part of build_manifest and edit.
+dsh: reasoning:
+Now update the `independent_verification` dict inside build_manifest to use `steps` and `gate_failures`, and add `ledger_probe`. Let me view that part.
+dsh: reasoning:
+Now restructure `main()` to: build ledger/blockers/tasks → generate probe → compile probe → build manifest → write artifacts. And also update md_card to use the manifest's gate_failures (already does).
+
+Let me view main() and edit.
+dsh: reasoning:
+Now update the final print to include probe result. Let me check the end of main and adjust. Also I want to include `probe` in the print. Let me view the tail.
+dsh: reasoning:
+Also, I need to update the result card markdown (md_card) to show the probe result more explicitly, and the blockers line to include documented/environment counts. Let me edit md_card:
+
+1. After the gate table, add a line:
+```
+- ledger/claim probe: **240/240 declarations resolve** (`logs/18_d6_ledger_probe.log`)
+```
+2. Blockers line: `(23 open, 1 documented, 1 resolved by D6, 3 environment limits, 3 informational)`.
+
+Let me make these edits.
+dsh: reasoning:
+Now let me also make d6_probe.py consistent (it can stay as a standalone; but now d6_build_release.py runs the probe itself). I'll keep d6_probe.py for standalone use but note it. Actually, to avoid confusion in reproduction, I'll remove the d6_probe.py step from the manifest reproduction and keep the file. Let me update the `reproduction` list in build_manifest:
+
+Current:
+```
+"python3 tools/d6_verify.py            # gates + per-declaration axiom report",
+"python3 tools/d6_build_release.py     # ledger + manifest + blockers + tasks",
+"python3 tools/d6_probe.py             # generate and compile the ledger probe",
+```
+Change to:
+```
+"python3 tools/d6_verify.py            # gates + per-declaration axiom report",
+"python3 tools/d6_build_release.py     # ledger + probe + manifest + blockers + tasks + card",
+```
+
+Let me edit.
+dsh: reasoning:
+Now let me re-run d6_build_release.py. It will:
+1. Build ledger (with fixed entropy headline)
+2. Build blockers/tasks
+3. Generate probe (240 names, same)
+4. Compile probe
+5. Build manifest (63 files, includes probe step)
+6. Write all artifacts + card
+
+Let me run it. It takes ~30-60s for the probe compile.
+
+Wait, one issue: `run_ledger_probe` uses `NOW` (module-level timestamp). Fine.
+
+Another: `generate_probe` is called before `run_ledger_probe`, so the probe file exists. Good.
+
+Let me run.
+dsh: reasoning:
+Now:
+- ledger_declarations_referenced: 191 (up from 169 due to entropy headline additions)
+- probe_names: 262 (union of 191 ledger + 193 card claims)
+- probe exit 0, pass true
+- gate_pass true
+
+Now let me attempt to promote the queue update to the shared `longrun/queue.json`. This is outside my workspace, so likely denied. Per instructions, I can attempt the command; if the sandbox denies, I may escalate once with justification. The policy says "ask" approval; without an answerer, fails closed. Let me try a normal write first (bash cp). Actually, I should be careful: the sandbox may allow writes to `/data/home/.../longrun/` if it's considered part of the session workspace? The session workspace is D6_weekly_release only. Let's test.
+
+I'll attempt to copy `manifest/queue.updated.json` to `../../queue.json`. Also promote the result card to shared `longrun/results/D6-weekly-release.{md,json}`.
+
+Let me first check if the shared queue.json is writable by me (permission-wise): earlier D5's promotion attempt got PermissionError (filesystem permissions), not sandbox denial. Let me check `ls -la` on the shared files: queue.json is `-rw-r--r-- guoshaoyang guoshaoyang` — owned by me, so filesystem perms allow. The sandbox may deny via Landlock. Let me try.
+
+I'll do a careful attempt: write to a temp then `cp`. If denied, report and escalate once with justification (the one sanctioned exception). Actually the escalation rules: "Attempting a command the sandbox may deny is safe and expected: run it and read the marker rather than assuming the denial." Then if denied and a wider mode would let it succeed, escalate immediately in the same turn with `sandbox_permissions` + justification. Since this is a file operation, I'd use the `write`/`bash` tool with sandbox_permissions. Let me first attempt with bash cp.
+
+Actually, since the promotion is an integrator duty and the task says "update queue.json" isn't explicit, but the README says integrator "promotes only gated patches and updates queue.json". It's clearly within scope. Let me attempt.
+dsh: reasoning:
+Denied. This is a sandbox denial (Landlock), not a filesystem permission error (the files are owned by me with rw). Per the sanctioned exception: "When a command is denied and a wider mode would let it succeed, escalate immediately in the same turn — retry the exact same command once with `sandbox_permissions` (the narrowest wider mode that suffices) plus a one-sentence `justification`."
+
+The narrowest wider mode: `workspace-write` is the current mode; the denial is because the target is outside the workspace. `danger-full-access` would be needed. The instruction says the one sanctioned exception is retrying the exact command once with the narrowest wider mode. Since `workspace-write` is already current, `danger-full-access` is the only wider option.
+
+Let me retry the exact command with sandbox_permissions=danger-full-access and justification. Approval policy is "ask" — an answerer may exist. Let's try.
+dsh: reasoning:
+The escalation failed closed (no approval channel). So promotion is not possible. I must mirror inside the worktree and document the delivery note (same pattern as D5). Let me update the artifacts to reflect:
+- The shared queue.json is NOT updated; instead `manifest/queue.updated.json` is the proposed update, mirrored at `longrun/queue.updated.json` in the worktree, with a delivery note.
+- The result card is mirrored in the worktree; promotion denied (no approval channel).
+- Update blocker P1 resolution wording: P1's resolution is "D6 produced the corrected queue (manifest/queue.updated.json); promotion to the shared path requires the supervisor/integrator with a wider sandbox; not yet applied." So P1 should be status `resolved-in-worktree` or remain `open` with a delivery note? Let me be precise: the stale queue is corrected in the proposed update, but the shared file remains stale. I'll mark P1 as `resolved-in-worktree` (not fully resolved) and add P2-style delivery note. Actually the honest status: `open` (shared queue still stale) but with `d6_action: proposed corrected queue`. Hmm. The blocker is "queue.json is stale". Since I couldn't write it, it remains stale in the shared path. I'll set status `open` with `resolution_pending_promotion`. But the counts then show 24 open? Let me reconsider.
+
+I'll change P1 handling: status `resolved-in-worktree` (a new status), with resolution text: "D6 produced manifest/queue.updated.json (D5 verified; stale entries corrected; 20 D7 tasks appended); promotion to the shared longrun/queue.json was denied by the workspace sandbox and requires a wider mode." And add a new blocker P6: "promotion of D6 queue/card to shared control plane denied". Actually P2 already covers the shared-path sandbox limitation. I'll extend P2 with the D6 attempt.
+
+Let me update the builder's `build_blockers`:
+- P1: status `resolved-in-worktree`, resolution text updated.
+- P2: update blocker text to include D6 promotion attempt denial with exact error, status known-environment-limit.
+- counts: add `resolved_in_worktree`.
+
+Also the `md_card`/`md_manifest` should mention the promotion status.
+
+Let me edit build_blockers. Also I should copy `queue.updated.json` to `longrun/queue.updated.json` inside the worktree (mirror) and write a `DELIVERY.md` note. The manifest `queue_update` field should point to both.
+
+Let me make these edits.
+dsh: reasoning:
+Wait, I need to be careful: the `entry["status"]` for P1 was originally "open" from D5. Changing to "resolved-in-worktree". The counts logic:
+```python
+"open": sum(1 for b in blockers if b["status"] == "open"),
+"documented": ...
+"resolved_by_d6": sum(... == "resolved-by-D6"),
+"known_environment_limit": ...
+"informational": ...
+```
+Need to add "resolved_in_worktree" count. Let me update the counts dict.
+
+Also update P2 to mention D6's promotion denial. P2 currently:
+"Shared longrun/results/ path is outside the worker workspace-write sandbox; every card was mirrored inside its worktree and promoted later. D5 uses the same delivery pattern."
+I'll append D6 evidence. Let me edit P2 in build_blockers — but P2 comes from the D5 manifest loop. I can special-case it like P1.
+
+Let me add after the P1 special case:
+```python
+if b["id"] == "P2":
+    entry["blocker"] += (" D6 promotion attempt to the shared longrun/queue.json and "
+                         "longrun/results/D6-weekly-release.* was denied (sandbox, no approval channel); "
+                         "files are mirrored in the D6 worktree.")
+    entry["evidence"] += " D6 delivery note."
+```
+Let me do that.
+dsh: reasoning:
+Now update md_card's blockers line to include resolved_in_worktree, and update the manifest `queue_update` field to mention the mirror + delivery note. Also add a delivery note file.
+
+In md_card:
+```python
+f"({blockers['counts']['open']} open, {blockers['counts']['documented']} documented, "
+f"{blockers['counts'].get('resolved_by_d6', 0)} resolved by D6, "
+f"{blockers['counts']['known_environment_limit']} environment limits, "
+f"{blockers['counts']['informational']} informational)."
+```
+Add resolved_in_worktree.
+
+In build_manifest, `"queue_update": "manifest/queue.updated.json"` → change to include mirror: `"manifest/queue.updated.json (mirrored at longrun/queue.updated.json; shared longrun/queue.json promotion denied)"`.
+
+Let me edit.
+dsh: reasoning:
+Now add the mirror of queue.updated.json to longrun/ inside the worktree in main(), and a DELIVERY.md note. Let me add to main after writing queue.updated.json:
+
+```python
+jdump(queue, os.path.join(MANIFEST, "queue.updated.json"))
+jdump(queue, os.path.join(D6, "longrun", "queue.updated.json"))
+```
+
+And write a delivery note file `longrun/DELIVERY.md` explaining the promotion attempts and denials.
+
+Let me add that.
+dsh: reasoning:
+Now re-run the builder. Then verify the output. Then do a final full end-to-end re-run: d6_verify.py (to make sure everything still passes after adding D6LedgerProbe.lean — note the per-file check excludes drivers, so 58 files; the scanner will scan 63 files including probe; that's fine) followed by d6_build_release.py. Actually d6_verify.py rebuilds and re-runs; the probe is a driver so it's not per-file checked, but `lake build` doesn't include D6LedgerProbe as a lean_lib (it's not declared in lakefile). Wait — D6LedgerProbe.lean is in the release dir but not declared as a lean_lib, so `lake build` won't build it; that's fine since d6_build_release.py compiles it explicitly. But `lake build` may complain about an undeclared Lean file? No, lake only builds declared libs.
+
+However, there's a subtlety: `lake env lean D6LedgerProbe.lean` works because `lake env` sets up the environment. Good.
+
+Should I add D6LedgerProbe to the lakefile as a lean_lib? It's generated, so at the time of the first build it may not exist. It does now. If I add it, `lake build` would build it, making the build log include the #check output. But then d6_verify.py's `lake build` would need it to exist. Since the probe is generated before manifest generation, and d6_verify runs first in reproduction, the probe wouldn't exist on a fresh clone → build failure. So better NOT to declare it. Keep it compiled explicitly by the builder script. Good as is.
+
+But then the manifest's `package.drivers` includes D6LedgerProbe.lean and `lean_files` counts it. Fine.
+
+One more consideration: the manifest `independent_verification.gate_pass` now includes the probe; but `verification.json` (the D6 verify artifact) doesn't include it. The manifest is the authoritative release record, so that's fine.
+
+Now re-run builder.
+dsh: reasoning:
+Let me check the blocker counts now (they were truncated). Let me inspect blockers.json counts and the result card updates.
+dsh: reasoning:
+Good. But the blockers headline still says "P1 (stale queue) is resolved by D6" — should say "resolved in worktree, promotion pending". Let me fix the headline. Also "23 of the 29 D5 blockers remain open" — the D5 blockers: 23 open + 1 documented + 2 env + 3 info = 29. D6 changed P1 from open to resolved-in-worktree, so 22 of the 29 remain open. Let me recompute: D5 had 23 open including P1. Now P1 is resolved-in-worktree, so 22 open. Plus D6 added P4, P5 (2 more). Total open in combined list = 22 (from D5) + 1 (P5) = 23. Coincidentally still 23. The headline should be precise:
+
+"22 of the 29 D5 blockers remain open (P1 is corrected in the worktree queue but promotion is pending); D6 adds P4 (worktree-name mismatch) and P5 (release-source delta). No release-hygiene failure..."
+
+Let me fix the headline text.
+
+Also, D6 blockers P4/P5: P4 is known-environment-limit; P5 is open (process). Total open = 23 (22 from D5 + P5). Let me compute programmatically in the headline to avoid inconsistency.
+
+Let me edit build_blockers headline:
+```python
+d5_open_remaining = sum(1 for b in blockers if b["carried_from"] and b["status"]=="open")
+headline = (f"{d5_open_remaining} of the 29 D5 blockers remain open; P1 (stale queue) is corrected in "
+            f"manifest/queue.updated.json but promotion to the shared path is pending. D6 adds P4 "
+            f"(worktree-name mismatch) and P5 (release-source delta). No blocker is a release-hygiene "
+            f"failure: every one is an upstream mathlib gap, an explicit unproved interface, or a "
+            f"documented boundary.")
+```
+
+Let me apply.
+dsh: reasoning:
+Now let me re-run the builder and then do a final end-to-end verification:
+1. Re-run d6_verify.py (full gates) — to confirm nothing broke after adding files.
+2. Re-run d6_build_release.py.
+3. Review all final artifacts.
+
+But wait — re-running d6_verify.py will re-run per-file checks (~4 min) and rebuild (fast). That's worthwhile for final assurance. However, d6_verify.py's `lake build` will not rebuild D6LedgerProbe (not declared), fine.
+
+One concern: d6_verify.py's `forbidden_scan` scans the whole release including D6LedgerProbe.lean — which contains `#check @...` lines and comments. The D5 scanner is comment-aware; `#check` lines contain declaration names but no forbidden tokens (unless a declaration name contains "sorry" — no). Should be 0.
+
+Also: the `forbidden-scan.json` will now show 63 files. Good.
+
+Another concern: the per-file check excludes DRIVERS (5 files now), leaving 58. Good.
+
+Let me re-run the builder first (quick), then run the final verify, then regenerate artifacts once more (since verify rewrites verification.json with a new timestamp; the builder would need re-running to pick it up). Order:
+1. d6_verify.py (final gates)
+2. d6_build_release.py (final artifacts, includes probe)
+3. Review
+
+Let me start the final verify in the background and review the ledger/tasks markdown meanwhile.
+
+Actually, I realize there might be an issue with `d6_verify.py` `source_hash_verification`: it checks promoted files (53) and base (5) = 58, all present. Good.
+
+Let me run the final verification.
+dsh: reasoning:
+While that runs (~5-6 min), let me review the other artifacts that were already generated: theorem-dependency-ledger.md, blockers.md, next-20-tasks.md, weekly-release-manifest.md. Let me read key parts.
+
+Actually, those will be regenerated by the job. Let me instead review the builder script for the last time and prepare the final summary. Let me also check the JSON sizes.
+
+Let me look at the ledger md (current version) to spot issues.
+dsh: reasoning:
+The tasks look good. Now let me wait for the final verification + rebuild job, then do a final review of the result card and manifest.
+
+While waiting, let me think about whether there's anything missing from the deliverables:
+
+1. ✅ weekly release manifest — manifest/weekly-release-manifest.json/.md
+2. ✅ theorem/dependency ledger — manifest/theorem-dependency-ledger.json/.md
+3. ✅ list of verified Lean declarations — manifest/verified-declarations.json (1619 with cones) + verified-theorems.json (headline + full inventory ref)
+4. ✅ list of explicit blockers — manifest/blockers.json/.md
+5. ✅ next 20 queued builder tasks — manifest/next-20-tasks.json/.md
+6. ✅ release result card — longrun/results/D6-weekly-release.md/.json
+
+Additional: axiom report, probe, queue update, verification, input hashes, delivery note.
+
+Every claimed theorem points to a compiling .lean file and axiom report:
+- D6AuditReport gives per-declaration file+cone.
+- D6LedgerProbe #checks 262 declarations.
+- per-file checks 58 files exit 0.
+- ReleaseClaims 193 names.
+Yes.
+
+"Do not claim the Poincare conjecture, Ricci-flow existence, Perelman monotonicity, or surgery are proved unless the kernel and clean-room verifier demonstrate it." — The manifest/card explicitly say NOT proved; ledger program steps all `proved: false`. Good.
+
+One thing to double check: the release result card in `longrun/results/` must be the final version. The background job regenerates it.
+
+Also: I should verify the `verified-theorems.json` doesn't accidentally imply all 887 theorems are "release claims". It says headline + full inventory reference. Fine.
+
+Potential issue: `manifest/verified-declarations.json` includes declarations in `ReleaseAudit.lean`/`D6AuditReport.lean` themselves (project modules). That's fine — they're audited too.
+
+Let me also consider adding a human-readable `README.md` at the worktree root summarizing the release and pointing to artifacts. That would be helpful. Let me add one after the final artifacts are generated (it won't be overwritten by the builder).
+
+Also, should I copy the final result card to the worktree's `longrun/results/`? The builder already does.
+
+Let me check the background job.
+dsh: reasoning:
+Note: `per_file_checked: 59` now — because D6LedgerProbe.lean exists and... wait, the DRIVERS set in d6_verify.py is `{"ReleaseCheck.lean", "ReleaseAudit.lean", "ReleaseClaims.lean", "D6AuditReport.lean"}` — it doesn't include D6LedgerProbe.lean! So it per-file checked 59 files (58 + D6LedgerProbe). That's actually fine (the probe compiles), and even stronger. But it means the "promoted files" count (58) differs from per-file checked (59). Not a problem, but for consistency I should add D6LedgerProbe.lean to DRIVERS in d6_verify.py so per-file checks remain 58 promoted artifacts and the probe has its own dedicated gate. Or keep 59 — it's harmless and it does compile.
+
+Actually, there's a subtle issue: the per-file check on D6LedgerProbe.lean runs `lake env lean D6LedgerProbe.lean`, which is exactly the probe gate. So it's covered twice. Fine. But the manifest says per_file_checked: 59 while promoted_files: 58 — a reviewer might wonder. Let me make d6_verify.py treat D6LedgerProbe as a driver (add to DRIVERS) and re-run? That would take another 4 minutes. Alternatively, I can leave it and explain in the manifest: per-file checks include the generated probe. Actually the cleaner approach: add D6LedgerProbe.lean to DRIVERS in d6_verify.py, then re-run verify once more (4 min), then rebuild artifacts. It's worth it for a clean, defensible record.
+
+Hmm, but re-running verify again means per-file checks exclude the probe (58), and the probe has its own `ledger_probe` step (exit 0, 262 declarations). That's the cleanest story: 58 promoted files + 5 drivers (ReleaseCheck, ReleaseAudit, ReleaseClaims, D6AuditReport, D6LedgerProbe), with ReleaseCheck/ReleaseAudit/ReleaseClaims/D6AuditReport compiled as part of lake build/gates and D6LedgerProbe compiled by the probe gate.
+
+Wait, is D6AuditReport compiled as part of lake build? Yes, it's a declared lean_lib in defaultTargets. ReleaseCheck/ReleaseAudit/ReleaseClaims too. D6LedgerProbe is not declared, compiled by the probe step. Good.
+
+Let me update DRIVERS and re-run the final verify + build. This is the last iteration.
+
+Also note: in d6_verify.py the `per_file` excludes DRIVERS; the `forbidden_scan` scans all files including the probe (63). Good.
+
+Let me make the edit and re-run. To save wall time, I could avoid the full verify re-run by patching verification.json... but no, honesty requires the recorded run to match. Re-run it.
+
+Actually wait — there's another consideration: the D5 scanner scans the probe file which contains `#check @D4Audit...` etc. It found 0 matches earlier. Good.
+
+Let me edit DRIVERS.
+dsh: reasoning:
+While the final run completes, let me write the worktree README.md that summarizes the release. It's a useful entry point. Let me draft it now and write it after the job finishes (or now — it won't be overwritten).
+
+Let me write README.md for the D6 worktree.
+dsh: reasoning:
+Now let me wait for the final job. Meanwhile, let me think about whether the "weekly release manifest" should also include a version/commit. The worktrees aren't git repos? Let me check if there's a git repo. The parent has no .git visible. Let me check quickly.
+
+Also I should double-check the release package's promoted files are byte-identical to D5 (source hash verification says 53 promoted + 5 base = 58 checked, 0 changed). Good.
+
+Let me check for a git repo and any supervisor heartbeat expectations. Also check `longrun/state/D6_weekly_release/` for expected heartbeat/state markers. The state dir for D6 was empty earlier (created 11:47). Let me look at what other tasks put in state dirs to mimic.
+dsh: reasoning:
+The state directory is managed by the worker loop (`heartbeat.json`, `latest.log`, `prompt.md`, and a `DONE` marker for completed tasks). I should write a `DONE` marker to `state/D6_weekly_release/DONE` when finished, following the D4/D5 pattern. Is that within my sandbox? `state/D6_weekly_release/` is outside my worktree (it's in longrun/state). Writing there may be denied. Let me check: my workspace is the worktree only. The heartbeat.json is being updated by the worker loop automatically (mtime 11:57). I'll attempt to write DONE at the end; if denied, note it.
+
+Actually, the worker loop probably writes DONE when the session ends. Let me not interfere. But to follow the protocol, I'll attempt `touch state/D6_weekly_release/DONE` near the end.
+
+Also, `longrun/queue.json` promotion was denied. The result card promotion was denied. So the supervisor will need to promote.
+
+Let me check the final job status.
+dsh: reasoning:
+Final state:
+- verify: 58 per-file checks, 0 failures, 1619 declarations, gate_pass true
+- build: probe 262 pass, gate_pass true
+
+Now let me do a final quality review of the key artifacts. Let me read:
+1. manifest/weekly-release-manifest.md (final)
+2. longrun/results/D6-weekly-release.md (final, key sections)
+3. manifest/blockers.md (spot)
+4. ledger md (spot)
+
+Let me also validate JSON files parse and check for any obvious issues (e.g., `headline_partial_results`, counts). And confirm all required deliverables exist.
+
+Let me run a comprehensive validation script.
+dsh: reasoning:
+Everything is in place. Let me do a final read of the result card to confirm it reflects the final numbers (per-file 58, probe included, promotion note).
+
+Also, let me update the README.md numbers if needed: it says "58 per-file checks" — wait, README says "Promoted-source hash check: 58/58 unchanged" and doesn't mention per-file count specifically. It says "1619 declarations (887 theorems)". Good. It mentions 23 open blockers. Good.
+
+Let me read the final result card key sections.
+dsh: reasoning:
+The result card is comprehensive and honest. The `L-D3-ENTROPY-CERTIFICATES` now correctly references Entropy declarations. `L-D4-EVOLUTION-CERTIFICATES` now includes finiteReactionEntropyData_F.
+
+One small nit: line 37 says the forbidden scan command is `python3 tools/d6_verify.py (scan)` — it's really the D5 scanner invoked by d6_verify. Minor cosmetic. Let me fix the cmd label in d6_verify.py to `python3 input/d5-tools/scan_forbidden.py release` and record the scanner. But changing it requires re-running verify (~4 min). Is it worth it? The log points to `manifest/forbidden-scan.json` which includes `"scanner": "input/d5-tools/scan_forbidden.py"`. So the evidence is there. I could patch the recorded cmd in verification.json via the builder instead... but that would be dishonest if not actually run that way. It *was* run that way internally (subprocess call). The label is imprecise but not false. Let me fix it properly by editing d6_verify.py and re-running only the scan step? I could write a tiny patch: re-run the scanner and update the step's cmd/tail in verification.json, then re-run builder. But then the manifest timestamps/logs remain consistent.
+
+Actually, cleanest: edit d6_verify.py so the step cmd is `["python3", "input/d5-tools/scan_forbidden.py", "release"]` and its `cwd` D6. Then do the final verify+build once more. This is the third full run (~4 min). I've already done two clean runs. The change is cosmetic but improves the audit trail's accuracy. Given the emphasis on evidence exactness ("Every claimed theorem must point to a compiling .lean file and axiom report"), accuracy of the recorded command matters. Let me do it — but to save time, I can make the per-file check cache? No.
+
+Actually, there's a subtlety: re-running d6_verify.py takes ~4 min. The work is nearly done. Let me make the edit and run it one final time, then rebuild. It's worth the wall time for a fully accurate card.
+
+Let me edit the step dict in d6_verify.py:
+```python
+report["steps"].append({
+    "id": "forbidden_token_scan",
+    "cmd": ["python3", "input/d5-tools/scan_forbidden.py", "release"],
+    "cwd": D6, ...
+})
+```
+
+Also, the `source_hash_verification` cmd is "sha256sum vs input/d5-manifest/provenance.json" — also a label, not a real command. Let me make it more accurate: `["python3", "tools/d6_verify.py", "--hash-only"]`? It's implemented internally. I'll label it `["sha256sum", "--check", "input/d5-manifest/provenance.json (in-process)"]`. Hmm. Simpler: `["python3", "tools/d6_verify.py", "# source_hash_verification"]`. Let me use a descriptive but honest label:
+`cmd: ["python3", "tools/d6_verify.py", "(source_hash_verification)"]`.
+
+For the scan: `["python3", "input/d5-tools/scan_forbidden.py", "release"]` — accurate since that's exactly the subprocess invoked.
+
+Let me make both edits and re-run.
+
+Actually, wait. Is it worth another 4 minutes? Yes — accuracy of the release evidence is the core of this task. Let me do it.
+
+Let me also double check one more potential issue: the manifest `independent_verification.steps` includes `ledger_probe` with cmd from probe["command"].split() = ["lake","env","lean","D6LedgerProbe.lean"]. Good.
+
+Let me edit and run.
+dsh: reasoning:
+While that runs, let me prepare the final summary. Let me also think about the `DONE` marker and heartbeat.
+
+The state dir `longrun/state/D6_weekly_release/` — can I write DONE there? Let me test with a touch. It's outside my workspace so probably denied. The worker loop may handle it. Let me try once (normal mode) — if denied, that's expected and I won't escalate (it's not essential; the result card is the deliverable).
+
+Actually, let me check if the worker loop writes it automatically at session end. The D4/D5 dirs have DONE written at the time the task finished. Since this session is still running, it'll probably write DONE when the session terminates. I'll leave it.
+
+Let me review the ledger md for a final sanity check while waiting.
+dsh: reasoning:
+The ledger looks good. Let me wait for the final job, then do the last checks and write the final summary.
+
+One more thought: the `headline_checked_results: 18` and `proved: True` for the headline entries. Note that some of these are definitions/structures (e.g., `Probe.CurvatureTensor`?) no — the listed ones are theorems mostly. `Perelman.FMonotonicity_iff_antitoneOn` is a theorem. Fine.
+
+But there's a subtle honesty issue: the headline `H(...)` marks status "checked" if all names resolve — regardless of whether a declaration is a theorem or a def/Prop. E.g., `Probe.PdeApi.HeatSlabMaximumPrincipleInterface` is an unproved Prop (def). The claim text explicitly says it's statement-only, and `proved: True` refers to the *cluster claim being kernel-checked as declarations*, not that the interface is proved. This could be misread. To be precise, I could change `proved` semantics to "all referenced declarations exist and are kernel-checked" — which is what it is. The `status` field says "checked". The claim text and notes clarify. I think it's acceptable, but let me strengthen the reading guide in the ledger to say: "`checked-result.proved` means every referenced declaration exists in the kernel-audited environment and the file compiles; it does not mean every referenced declaration is a theorem (statement-only Props are flagged in the claim text/note)."
+
+Actually, better: add a `contains_statement_only: true` flag computed from whether any referenced declaration is a `def` whose name contains "Statement" or "Interface" or is in the blocked layer. Hmm, that's heuristic. Simpler: add to the reading guide a precise definition of `proved`. Let me update the reading guide text:
+
+"checked-result: Kernel-checked theorem/lemma cluster with a compiling file and axiom cone. `proved: true` means all referenced declarations resolve and compile; a referenced declaration that is a statement-only Prop (e.g. an `...Interface`) is identified in the claim text and in `blocked_layer`."
+
+That's honest and clear. Let me edit the reading guide in build_ledger. Since the final job is already running, I'd need to rebuild after editing. The build is quick (~40s including probe compile). I can edit now and rerun build after the current job finishes (the verify part is the slow one). Let me make the edit now and then just rerun d6_build_release.py after the current job completes (which will regenerate everything consistently).
+
+Let me edit.
+dsh: reasoning:
+The final authoritative run passed. But I edited the reading guide in the builder *during* that run, and the build ran before my edit landed? Let me check the order: I edited the reading guide, then waited for bash-6. The bash-6 command sequence was: d6_verify.py then d6_build_release.py. The edit to d6_build_release.py happened while d6_verify.py was running (before d6_build_release.py executed), so the build should have picked up the edit. Let me verify by checking the ledger JSON reading_guide.
+
+Also the card now shows the exact scan command. Let me confirm.
+
+Then regenerate once more if needed? Let me check the ledger's reading_guide.
+dsh: reasoning:
+Everything is consistent:
+- reading_guide updated
+- gate_pass true
+- scan command exact
+- package 63 files (58 promoted)
+- forbidden scan: 63 files, 0 hard, 0 soft
+
+Final steps:
+1. Update todos to completed.
+2. Try to write DONE marker to state dir (optional; likely denied).
+3. Final summary.
+
+Let me also do one last check that the result card in longrun/results is the final version (timestamp 04:14). And verify the README numbers match (it says 58/58 hash check, 1619 declarations, 23 open blockers, 262 probe). Yes.
+
+Wait, README says "Blockers: 23 open (22 carried from D5 + 1 D6 process)". Correct.
+
+Let me attempt the DONE marker. Actually, the worker loop owns state/. If I touch DONE prematurely and the session continues, it might signal completion incorrectly. The state dir is outside my workspace anyway. The worker loop likely writes DONE on session end. I'll leave it alone.
+
+One more consideration: the task said "Worktree: /data/home/.../worktrees/D6_release". That directory doesn't exist; the runtime is D6_weekly_release. Should I create a `D6_release` symlink? That's outside my workspace (in worktrees/), so denied. I documented P4. Good.
+
+Let me update the todo list and produce the final summary.
+
+Actually, let me do one final comprehensive listing of the deliverables and their key contents to include in my answer. Let me also compute a final tree.
+dsh: reasoning:
+Everything is in place. Let me clean up the `__pycache__` (minor hygiene) and finalize.
+
+Also, I notice `logs/10_lake_build.log` through `17_mathlib_status.log` are from the latest verify run (10-17) plus `01_lake_build.log` from the first manual build. Fine.
+
+Let me remove `tools/__pycache__` to keep the release clean.
+
+Then update todos to completed and write the final summary.
+
+One last check: the `D6LedgerProbe.lean` file — let me peek at its head to make sure it's sensible.
+dsh: reasoning:
+Everything is verified. Let me finalize the todo list and write my summary.
+
+Final deliverables summary:
+1. **Weekly release manifest**: `manifest/weekly-release-manifest.json/.md`
+2. **Theorem/dependency ledger**: `manifest/theorem-dependency-ledger.json/.md`
+3. **Verified Lean declarations**: `manifest/verified-declarations.json` (1619 decls, per-decl axiom cone), `manifest/verified-theorems.json` (headline + inventory)
+4. **Explicit blockers**: `manifest/blockers.json/.md` (31 entries: 23 open, 1 documented, 1 resolved-in-worktree, 3 env limits, 3 informational; program-step mapping)
+5. **Next 20 queued builder tasks**: `manifest/next-20-tasks.json/.md` (+1 verifier task)
+6. **Release result card**: `longrun/results/D6-weekly-release.md/.json`
+Plus: `manifest/axiom-report.json`, `manifest/verification.json`, `manifest/ledger-probe-result.json`, `manifest/queue.updated.json`, `longrun/queue.updated.json`, `longrun/DELIVERY.md`, `README.md`, tools, logs.
+
+Key verification numbers:
+- Consumed only accepted D5: 53 promoted + 5 base files, 58/58 hash-identical to D5 provenance
+- Fresh D6 build: `lake build` exit 0 (from scratch, 78s first time)
+- All gates exit 0: ReleaseCheck, ReleaseAudit, D6AuditReport, ReleaseClaims, 58 per-file checks, forbidden scan (63 files, 0 hard), negative control PASS, mathlib pin clean, ledger probe (262 decls, exit 0)
+- Kernel audit: 1619 declarations, 887 theorems; 0 project axioms, 0 unsafe, 0 sorryAx, 0 native_decide, 0 unapproved axioms, 0 proof_wanted; only approved cones.
+- 193/193 card claims resolve; 191/191 ledger declarations resolve; 262/262 probe declarations.
+- No overclaims: 11 program steps all proved=false; explicit not-claimed list.
+
+Promotion status: queue.json + result card promotion denied by sandbox (no approval channel); mirrored in worktree with DELIVERY.md.
+
+Let me update the todos and write the final answer.
+dsh: reasoning:
+The work is complete. Let me write the final summary for the user.
+
+I should be concise but complete, mentioning:
+- What I did (consumed only accepted D5, independently reproduced)
+- The deliverables and paths
+- Key verified numbers
+- Explicit non-claims
+- The one blocked action (promotion) and the mirror
+
+Let me write it.
+## D6 weekly release complete
+
+**Verdict: WEEKLY RELEASE CUT — STAGES 1–4 INFRASTRUCTURE VERIFIED; PERELMAN PROGRAM NOT PROVED.**
+
+I consumed **only** the accepted `D5-clean-rebuild` artifacts, re-copied the 53 promoted + 5 base sources byte-identically, hash-verified them against the D5 provenance manifest (58/58 unchanged), and independently rebuilt and re-audited them in the D6 worktree.
+
+### Deliverables (all under `/data3/.../worktrees/D6_weekly_release`)
+
+| Required output | Artifact |
+|---|---|
+| Weekly release manifest | `manifest/weekly-release-manifest.json` / `.md` |
+| Theorem/dependency ledger | `manifest/theorem-dependency-ledger.json` / `.md` |
+| Verified Lean declarations | `manifest/verified-declarations.json` (1619 decls, each with file + axiom cone); `manifest/verified-theorems.json` |
+| Explicit blockers | `manifest/blockers.json` / `.md` (31 entries + program-step view) |
+| Next 20 queued builder tasks | `manifest/next-20-tasks.json` / `.md` (+1 verifier task) |
+| Release result card | `longrun/results/D6-weekly-release.md` / `.json` |
+
+Supporting: `manifest/axiom-report.json`, `manifest/verification.json`, `manifest/ledger-probe-result.json`, `manifest/queue.updated.json`, `README.md`, `tools/d6_{verify,build_release,probe}.py`, full `logs/`.
+
+### Independent kernel evidence (every gate exit 0)
+
+- **1619 declarations** audited with `Lean.collectAxioms` by the new `release/D6AuditReport.lean`: **0** project axioms, **0** `unsafe`, **0** `sorryAx`, **0** `native_decide`, **0** unapproved axioms, **0** `proof_wanted`; cones only `{}`, `{propext}`, `{propext,Quot.sound}`, `{propext,Classical.choice,Quot.sound}`.
+- `lake build`, `ReleaseCheck`, `ReleaseAudit`, `ReleaseClaims`, **58/58 per-file elaborations**, accepted D5 forbidden-token scan (63 files, 0 hard matches), and negative control (detects `sorryAx` + `native_decide`) all pass; mathlib pin clean.
+- **193/193** result-card declarations resolve; **191/191** ledger declarations resolve; generated `D6LedgerProbe.lean` compiles **262/262** `#check`s.
+
+### Honesty boundary
+
+All 11 Perelman program steps (P-F-MONO … P-EXT) are recorded `proved: false` (4 blocked, 7 planned). The release explicitly does **not** claim the Poincaré conjecture, Ricci-flow existence, Perelman F/W/µ monotonicity, κ-noncollapsing, canonical neighbourhoods, surgery, extinction, or sphere recognition. The only checked content is finite-dimensional/algebraic/discrete infrastructure plus the D4 adversarial audit (including the three sharp-hypothesis corrections). 23 blockers remain open, all upstream-mathlib gaps, explicit unproved interfaces, or documented boundaries — no release-hygiene failure.
+
+### One blocked action
+
+Promotion of `queue.json` and the result card to the shared `longrun/` control plane was **denied by the sandbox** (`Permission denied`), and the one-shot escalation failed closed (no approval channel). Both are mirrored at `longrun/queue.updated.json` and `longrun/results/D6-weekly-release.*` with `longrun/DELIVERY.md`; a wider-mode supervisor must promote them. The queue proposal marks D5 verified, corrects the five stale D2/D3/D4 entries, and appends the 20 D7 tasks.

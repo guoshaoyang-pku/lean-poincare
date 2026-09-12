@@ -1,0 +1,721 @@
+dsh: reasoning:
+The checkpoint says status "complete" with TASK_DONE. This is a continuation invocation (invocation 7, presumably). The task says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work. This invocation is limited to four hours. Save a compile-checked checkpoint at least every hour."
+
+The model line says: "Model: use configured host model only; do not invoke until quota recovery is recorded." Hmm — the objective mentions "do not invoke until quota recovery is recorded". The checkpoint mentions invocation 6 was a "quota-recovery live probe". So it seems quota has been an issue. Now this invocation is presumably a continuation to re-verify.
+
+Let me read the rest of checkpoint.json and the result card, then verify the artifacts still hash-match, and do a fresh independent re-verification. That's the pattern from invocations 2-6.
+
+Let me see the rest of the checkpoint.
+dsh: reasoning:
+This is clearly a continuation invocation (invocation 7) on a completed checkpoint. The pattern established in invocations 2-6: fresh-session independent re-verification with no source changes. The right thing to do here is:
+
+1. Verify artifact hashes against checkpoint.
+2. Re-run the clean rebuild (or at least the verify script) to confirm compile exit 0.
+3. Re-run axiom audit.
+4. Possibly do a new independent check beyond previous invocations (e.g., independent re-proof or a fresh witness) to add value.
+5. Update checkpoint.json and evidence with invocation 7 record.
+6. Confirm TASK_DONE.
+
+But wait — the instruction says "Model: use configured host model only; do not invoke until quota recovery is recorded." This suggests the model quota was exhausted. The invocation 6 was a "quota-recovery live probe". So this invocation is likely invocation 7. I should check whether quota is recovered — I'm running, so it is (presumably). Let me record that.
+
+Let me first read the rest of the checkpoint (inv5, inv6), the result card, and the verify script. Also read evidence/l4cp-reverification-inv6.md.
+
+Let me be efficient. First check artifact hashes quickly to see if anything changed since checkpoint.
+dsh: reasoning:
+All authored artifact hashes match the checkpoint exactly. So no source changes since inv6.
+
+Now I need to do this invocation's (invocation 7) fresh independent re-verification. Let me:
+1. Record quota recovery (read queue.json controller note).
+2. Run the clean rebuild (exit 0).
+3. Run the verify script (11/11 gates).
+4. Axiom audit.
+5. A fresh, genuinely new independent check — e.g., a new witness at a different k/K with an independent verification, or an independent audit script.
+6. Update checkpoint.json + evidence/l4cp-reverification-inv7.md.
+7. End with TASK_DONE.
+
+Wait — should I be recording quota recovery? The task header says "Model: use configured host model only; do not invoke until quota recovery is recorded." I'm running as the configured host model, so quota must be recovered. Let me check the queue.json controller note to see if it's recorded. The checkpoint mentions inv5 and inv6 record quota recovery from queue.json. Let me check the current queue.json.
+
+Note the queue is preserved — I must not modify it. Let me read it (read-only).
+
+Let me also check whether there's a controller state file with a note about this invocation.
+
+Let me find queue.json.
+dsh: reasoning:
+Let me look at the queue.json for this task entry and controller notes about quota recovery (read-only).
+dsh: reasoning:
+Quota recovery is recorded in queue.json controller_note. Good. So this invocation is the live probe (or a subsequent continuation). Let me check the task entry for this task in queue.json to see status/notes.
+
+Let me find the task entry by id.
+dsh: reasoning:
+Interesting: the task entry shows `status: running`, `started_at: 2026-09-12T09:57:41+0800` (= 01:57:41Z). The checkpoint's inv6 says performed_utc 02:45:00Z but current time is 02:43:21Z. There's a small time inconsistency (checkpoint claims inv6 at 02:45 but it's now 02:43). Actually, file mtimes show inv6 logs at 10:39-10:40 local = 02:39-02:40Z. The checkpoint's inv6 "performed_utc": "2026-09-12T02:45:00Z" is slightly in the future relative to actual log times — minor provenance sloppiness. Not a big deal, but I should use accurate timestamps for inv7 and note the discrepancy if relevant. Actually let me not overstate; maybe the clock differs. Let's just use `date -u`.
+
+Now the plan for invocation 7:
+1. Clean rebuild (rm -rf release/.lake/build && lake build the two modules) → exit 0.
+2. `python3 tools/l4cp_verify.py` → 11/11 gates, exit 0.
+3. Axiom audit raw log + fresh independent audit parser (inv6 did its own; I should do something new for inv7 to add value rather than duplicating). Ideas for a genuinely new independent check:
+   - Kernel-level replay with `leanchecker` was done inv6.
+   - A new witness at a different k, K pair with a *different* structure, e.g. check the theorem's necessity of the normalization hypotheses B t0 <= 1/2 etc.
+   - Independently verify the *sharpness* claim: `jacobiSol_two_pos_iff` etc.
+   - Independent re-proof: done in inv5.
+   - Maybe do a "no forbidden constructs" scan (grep for `sorry`, `axiom`, `admit`, `native_decide`, `Classical.choice` usage patterns) — the verify script likely has a gate. Let me read the verify script to see what gates exist, and then decide a new check that is not previously done.
+
+Let me first read the result card and the main theorem file to ground myself in the actual mathematics, so my re-verification is informed rather than mechanical. Also read the verify tool. Since this is a completed task and my job is independent re-verification, I should focus effort on:
+- confirming the statement of the theorem matches the acceptance sentence (I'll write my own independent statement probe).
+- confirming non-vacuity (witnesses).
+- a genuinely new independent check for inv7.
+
+Let me look at things in parallel. First, read the main endpoint file.
+
+Actually, timing: "This invocation is limited to four hours. Save a compile-checked checkpoint at least every hour." The clean build takes ~25s. So plenty of time. Let's be thorough but efficient.
+
+Let me read the endpoint source file.
+dsh: reasoning:
+The theorem is genuine. Note something: `conjugate_point_bound` does not have an explicit hypothesis of `K ≤ k`… yes it has `hk : ∀ t ∈ Ioo 0 T, K ≤ k t`. Good. And `T ≤ π/√K` with `hK : 0 < K`. Good.
+
+One thing to verify: the acceptance sentence says "k >= K > 0 on (0,T), u 0 = 0, u' 0 = 1, u > 0 on (0,T] and the analytic normalization hypotheses of this round's rauch_upper_of_jacobi_constCurv hold, then T <= pi/sqrt(K)". The theorem matches, with the normalization hypotheses made explicit (hBnn, ht₀, ht₀T, hBt₀, hdducont, hB, hBmodel). Confirmed by prior probes.
+
+Now, I want to do a genuinely fresh independent check for inv7 that hasn't been done. Options:
+
+(A) A completely independent numeric/computational check of the mathematical content — e.g., numerically verify that sin(√k t)/√k for k=2 exceeds the model jacobiSol K (via known closed forms) — not so meaningful.
+
+(B) A fresh independent *re-proof* through a different route: inv5 did an independent reproof through jacobi_le_constCurvModel for general K. For inv7, I could write an independent re-proof of the *sharpness* theorem `jacobiSol_pos_iff` and the witness, or better: a genuinely different mathematical route for the endpoint bound.
+
+Actually a stronger independent check: verify the theorem's *conclusion* is not trivially derivable and its hypotheses are all necessary. inv5 showed `0 < K` essential; inv6 showed hpos and hk necessary. A new inv7 check could show:
+- the `hBmodel` normalization hypothesis is necessary (i.e., dropping it makes the statement false)? That would require constructing a Jacobi solution with huge ddu bound where the normalization fails... Perhaps the theorem remains true without it? Hmm, careful: falsifying requires a counterexample where hypotheses minus hBmodel hold but T > π/√K. The model u = jacobiSol k, with k = K constant: T > π/√K implies u(T) < 0, violating hpos. So hpos is the binding constraint. Dropping hBmodel alone likely still leaves the statement true (hBmodel is needed for the proof, not for truth). Falsifying something about necessity would need different construction. Not a good use.
+
+- Necessity of the `du 0 = 1` normalization: if du 0 = c, scale. Hmm.
+
+(C) The most valuable new check for a *completed* task on continuation: verify the claim about endpoint sharpness quantitatively at the exact boundary from an independent angle — e.g., prove independently that `jacobiSol K (π/√K) = 0` — done.
+
+(D) Check the acceptance-relevant claim "sharpened by pi/sqrt 2 for the k=2 solution": that the k=2 solution's first zero is exactly π/√2 — `jacobiSol_two_pos_iff` covers it.
+
+(E) A different high-value check: verify that the theorem is *not* circular/vacuous in a stronger sense: instantiate at a *different* non-constant k and K (e.g., k t = 2 + t, K = 2, T = 2), which requires building a genuine Jacobi solution of a non-constant coefficient equation. That's hard: we'd need to construct u with u'' = -k u. We can use mathlib's ODE existence? That's heavy. Alternatively pick k constant = 3 with K = 2: u = jacobiSol 3 gives T ≤ π/√2 when T < π/√3. Actually instantiate with k = 3, K = 2, T = 1: need positivity on (0,1] of jacobiSol 3 — true since π/√3 ≈ 1.8138 > 1. And hk: 2 ≤ 3 everywhere. That's a *new* witness pair (k=3, K=2), and gives the bound 1 ≤ π/√2. Also the sharper statement: the k=3 solution's first zero at π/√3 shows that for k=3, K=2 the bound T ≤ π/√2 is not attained — fine, it's a sound bound.
+
+Hmm, but is that valuable? It is a non-vacuous witness of the *general* theorem with a different pair. Prior invocations did k=5,K=5 (inv5) and k=2 K=4 (inv6). So k=3,K=2 with K < k strict is a modest variant. Not all that new.
+
+(F) A genuinely new independent verification axis: **independent recomputation of the mathematical statement in a different formal system** — not feasible.
+
+(G) **Check the theorem's conclusion numerically against high-precision ODE integration** for a non-constant k? Could do: pick k(t) = 1.5 + 0.5*cos(t) ≥ 1 = K on (0,T), solve u'' = -k u, u(0)=0,u'(0)=1 numerically, find first zero ≈ ... and check it's > π/√K? Wait the theorem says: if u > 0 on (0,T] then T ≤ π/√K. For k ≥ K, solutions oscillate faster than the K-model, so the first zero of u is < π/√K. So numerically, first zero of u for k(t) = 1.5+0.5cos t should be slightly less than π. That's a numeric sanity check in Python (scipy), confirming the mathematical content, not a Lean check but a genuine falsification attempt: if the theorem were wrong, the numeric first zero would exceed π/√K. This is a nice, genuinely new independent check: a **numeric falsification attempt** of the acceptance statement with a non-constant k. It doesn't prove anything but is evidence against statement error. Previous invocations did not do numeric ODE checks (they were all Lean-level). This adds an independent axis.
+
+Additionally I could do a numeric check that the *sharp* threshold behaves: for k = K + ε with small ε, first zero just below π/√K.
+
+(H) Random testing of the verify script's fail-closed behavior — done multiple times.
+
+I think a good inv7 package:
+1. Clean rebuild + verify script + axiom audit (mechanical reproduction).
+2. Fresh statement-ascription probe with a *new* declaration set: e.g. independent HeadlineType ascription (was done inv5/inv6 — I can write it fresh; avoid importing previous probes).
+3. New independent check: numeric ODE falsification attempt in Python (mpmath/scipy) for non-constant k ≥ K, verifying first zero < π/√K with margin, plus the near-threshold behavior; and confirm the sharpness claim jacobiSol K (π/√K)=0 numerically.
+4. Also maybe an independent audit parser run (fresh) — cheap.
+5. Update evidence + checkpoint with inv7 record.
+
+Also should I add a Lean check that's new: `#check` that the acceptance-target statement is exactly what the theorem proves under a from-scratch `example`? A fresh probe file that:
+- states HeadlineType with *all* hypotheses in the acceptance order and ascribes `conjugate_point_bound` via `(conjugate_point_bound : HeadlineType)` (defeq ascription).
+- re-proves the acceptance sentence as an `example` by calling the theorem.
+- instantiates a brand new witness with non-constant k? We can't easily make non-constant exact solutions... but we CAN make k non-constant in a vacuous way? The hypotheses k appears in JacobiSolutionOn k u du ddu. If we pick u = jacobiSol 2 and k = fun t => 2 + 0*t? that's constant. To get a non-constant k we'd need JacobiSolutionOn with that k, i.e., a genuine solution. We could exploit that `k` only enters via `eq_secondDeriv : ∀ t ∈ Ioo 0 T, ddu t = -(k t) * u t`. Given u and ddu we can *define* k t := -(ddu t)/u t for t in (0,T) and check K ≤ k t. So construct: pick k t := 2 + t·something. Hmm, alternatively construct a solution of a *known* non-constant coefficient equation: u(t) = t works with k = 0 (not > 0). u(t) = sin(√2 t)/√2 has k=2.
+
+There are known solvable equations: u'' = -(a + b t) u gives Airy functions; u'' = -c²/t²-ish. Not in mathlib readily. However, we can *choose any smooth u* and then define k to satisfy the equation — but then the hypothesis K ≤ k(t) needs checking, requiring bounds on -u''/u. That's feasible: pick u(t) = t·(1 + t) maybe? u(0)=0, u'(0)=1. Then u''=2, so k(t) = -2/(t(1+t)) < 0. No good. Pick u = t(1 - t/4) on (0,2): u'' = -1/2, k = (1/2)/(t(1-t/4)) > 0 on (0,2). And K ≤ k needs K ≤ inf k = k(2) = (1/2)/(2·(1/2)) = 1/2. So with K = 1/2 and T = 2, positivity holds, and the bound says T=2 ≤ π/√(1/2) = π√2 ≈ 4.44. True. But is k non-constant in t? k(t) = 1/(2t(1-t/4)) = 2/(t(4-t)) — yes non-constant and even unbounded near 0, but that's fine, only need K ≤ k on (0,T) interior. Wait but the equation requires ddu t = -(k t) * u t; with u = t(1-t/4), ddu = -1/2, and -(k t)*u t = -(2/(t(4-t)))·t(1-t/4) = -(2/(t(4-t)))·(t(4-t)/4) = -1/2.✓. So we do get a genuine *non-constant-coefficient* Jacobi solution! Great. Then also need du = u' = 1 - t/2, and JacobiSolutionOn also requires hasDerivAt_u, hasDerivAt_du, continuousOn. And K ≤ k(t) on (0,2): k(t) = 2/(t(4-t)); on (0,2], t(4-t) ≤ 4 with max at t=2: 2·2=4; so k(t) ≥ 2/4 = 1/2. So K=1/2 works. Then we also need hK : 0 < K ✓, and the normalization: B ≥ |ddu| = 1/2, pick B = 1/2 (or 1), t₀ ≤ T, B t₀ ≤ 1/2, and hBmodel: (K·max(1/√K) T)·t₀ ≤ 1/2. K = 1/2, 1/√K = √2, max(√2, 2) = 2, so K·2 = 1, so t₀ ≤ 1/2 with B t₀ ≤ 1/2: B = 1/2, t₀ = 1/2 gives 1/4 ≤ 1/2 and 1·(1/2) = 1/2 ≤ 1/2 ✓. So instantiate conjugate_point_bound with k(t) = 2/(t(4-t)), u = t(1-t/4), T = 2, B = 1/2, t₀ = 1/2, K = 1/2, yielding 2 ≤ π/√(1/2) = π√2. That's a *genuinely new witness with non-constant coefficient k*, which exercises the general theorem beyond constant-curvature models — much stronger non-vacuity evidence than prior invocations (which were all constant k). This is a real value-add for inv7. It also tests hk (K ≤ k) nontrivially and the ODE identity with a nontrivial k.
+
+That's an excellent new independent check. Let me do that in a fresh probe file `tmp/l4cp_probe_inv7.lean` (not importing the endpoint module? It should import the endpoint module to *use* the theorem — that's fine, it's a consumer test). The probe uses only mathlib + the endpoint theorem; it must be a fresh instantiation. And I can verify the bound numerically: 2 ≤ π·√2 ≈ 4.4429 ✓ (true, loose but the theorem's bound is π/√K).
+
+Even better: can I make it tight-ish? The true first zero of u = t(1-t/4) is at t=4 which is > 2, so T=2 is not near the threshold; the bound π√2 is loose for this k. That's fine: the point is non-vacuous instantiation with non-constant k. But a critic might say "the bound is trivially true; the instantiation doesn't exercise sharpness". The witness just needs to discharge hypotheses. It does genuinely discharge all of them, including the nontrivial k ≥ K, the ODE equation, positivity, |ddu| bound. Good.
+
+Additionally: numerically, for k(t) = 2 + cos t ≥ 1 on (0, 3.2), solve u'' = -k u, u(0)=0, u'(0)=1 and find the first zero; check it is < π/√1 = π ≈ 3.14159 with margin. And for k(t) = 1 + 0.01·cos(t), first zero slightly below π. That's a numeric falsification attempt for the general statement with genuinely non-constant k. Combined with the Lean instantiation above, this is strong.
+
+Let me also do the numeric check of the *sharpness* statement: for constant k = K, first zero exactly π/√K.
+
+Plan for this invocation:
+1. ✅ Recon (done).
+2. Record quota recovery (done — note in evidence).
+3. Clean rebuild: `rm -rf release/.lake/build && lake build <2 modules>` → log + hash.
+4. `python3 tools/l4cp_verify.py` → 11/11.
+5. Independent fresh audit parser (fresh inline, like inv6 but written fresh now) — cheap; maybe skip duplicating and instead rely on the verify script + a fresh check of cones via `#print axioms` on the new probe's declarations. Actually I do want the fail-closed audit re-run. The verify script does it. Plus for the new probe declarations, I'll include `#print axioms` and check cones.
+6. New Lean probe with non-constant-k witness + statement fidelity ascription + requirement checks.
+7. Numeric ODE falsification attempt (Python, scipy or pure RK4 — check scipy availability).
+8. Write evidence/l4cp-reverification-inv7.md, update checkpoint.json (add continuation_reverification_inv7, update updated_at), and re-hash the result card to confirm unchanged (the result card is the deliverable and should not change; I may add nothing to it — but note: "Only your own longrun/results/L4-child-conjugate-point-bound.md can complete this task." It already exists with TASK_DONE. Should I update it with the inv7 record? Prior invocations did not change it ("result_card_changed": false). I'll keep it consistent: don't change the card, just add evidence + checkpoint. Hmm, but each invocation writes evidence files and checkpoint entries — that's the pattern. Actually, let me consider whether the result card should mention the invocation-7 non-constant-k witness. The card is the task deliverable; the checkpoint says result_card hashes; changing it would invalidate prior hash pins but that's fine if I update the checkpoint. Prior invocations deliberately kept it unchanged to avoid churn. I'll follow the established convention: keep the card unchanged, record the new checks in evidence + checkpoint.
+
+Let me start with the rebuild in the background while I write the numeric check. Actually build takes ~25s; let me just run it and wait (foreground) since verify depends on it.
+
+Let me check the verify script first to understand what it does (so I can describe gates correctly and ensure I don't break anything).
+dsh: reasoning:
+Good. Now start the clean rebuild in the background (it takes ~25s but I can prepare other things meanwhile). Actually it's short; run it foreground with timing.
+
+Let me run the clean rebuild and capture output.
+dsh: reasoning:
+Clean rebuild exit 0, 2771 jobs, wall 31.9s. Note that building the audit module runs the `#print axioms` queries; the log contains the cones.
+
+Now run the verify script. Note it will rebuild (lake build) — already built so fast. Run it.
+dsh: reasoning:
+Verify script exit 0, 11/11 gates. The console log hash fa62246... is byte-identical to inv3/4/5 (as expected, since the manifest hash isn't printed in console... interesting, inv6 differed; maybe inv6 log had an extra line? whatever).
+
+Now:
+- Axiom raw log hash identical: 01112349... (inv2-7).
+- Manifest hash 88115ce... differs from inv6's 7168a7b before. Probably only generated_at differs. Let me diff manifests (inv6 snapshot? there's manifest/l4cp-verification-inv4.json only). Let me check the manifest content: gates true, and compare against the checkpoint's claimed inv6 hash (we don't have the inv6 manifest saved as a snapshot... maybe in evidence). Let me just diff against inv4 snapshot ignoring generated_at.
+
+Then: write the new inv7 probe with the non-constant-k witness. Let me design it carefully.
+
+Probe file: tmp/l4cp_probe_inv7.lean
+
+```lean
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+
+noncomputable section
+open Set Filter
+open scoped Topology
+open MeasureTheory
+
+namespace Poincare.L4.GeodesicComparison
+
+open Poincare.D12.ComparisonGeodesics Poincare.D10
+
+/-- Independent ascription of the acceptance sentence (inv7). -/
+def Inv7HeadlineType : Prop :=
+  ∀ (k u du ddu : ℝ → ℝ) (T B t₀ K : ℝ),
+    0 < T → 0 ≤ B → 0 < t₀ → t₀ ≤ T → B * t₀ ≤ 1/2 →
+    JacobiSolutionOn k u du ddu 0 T → ContinuousOn ddu (Icc 0 T) →
+    (∀ t ∈ Ioo 0 T, |ddu t| ≤ B) → u 0 = 0 → du 0 = 1 →
+    (∀ t ∈ Ioc 0 T, 0 < u t) → 0 < K → (∀ t ∈ Ioo 0 T, K ≤ k t) →
+    (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1/2 →
+    T ≤ Real.pi / Real.sqrt K
+
+theorem inv7_statement_fidelity : Inv7HeadlineType := conjugate_point_bound
+```
+
+Wait, `conjugate_point_bound` has implicit `{k u du ddu T B t₀ K}`; using it as a term of a Π-type should work via defeq ascription. In inv5/inv6 they did similar. It should be fine.
+
+Then the non-constant coefficient witness. Define:
+
+k(t) = 2/(t(4-t)), u(t) = t - t²/4, du(t) = 1 - t/2, ddu(t) = -1/2.
+
+Check: u'' = -1/2. -(k t) * u t = -(2/(t(4-t))) * (t - t²/4) = -(2/(t(4-t))) * (t(4-t)/4) = -1/2. ✓ for t(4-t) ≠ 0, which holds for t ∈ (0,2).
+
+u(0) = 0 ✓, du(0) = 1 ✓.
+Positivity on (0,2]: u(t) = t(1 - t/4) > 0 for 0 < t ≤ 2 ✓.
+|ddu| = 1/2 ≤ B = 1.
+K = 1/2: need K ≤ k(t) on (0,2): k(t) = 2/(t(4-t)); t(4-t) ≤ 4 for t ∈ (0,2] (since t(4-t) = 4 - (t-2)² ≤ 4). So k(t) ≥ 2/4 = 1/2 ✓.
+Normalization: K·max(1/√K, T)·t₀ = (1/2)·max(√2, 2)·t₀ = (1/2)·2·t₀ = t₀ ≤ 1/2, so t₀ = 1/2 works ✓, and B·t₀ = 1/2·1/2 = 1/4 ≤ 1/2 ✓.
+
+JacobiSolutionOn k u du ddu 0 2 requires:
+- hasDerivAt_u : ∀ t ∈ Ioo 0 2, HasDerivAt u (du t) t: u = fun t => t - t^2/4, du = 1 - t/2. d/dt (t - t²/4) = 1 - t/2 ✓.
+- hasDerivAt_du : HasDerivAt du (ddu t) t: d/dt (1 - t/2) = -1/2 ✓.
+- eq_secondDeriv : ddu t = -(k t) * u t ✓ (field_simp; ring).
+- continuousOn_u, continuousOn_du ✓.
+
+Then conclude: `inv7_nonconstant_witness : (2:ℝ) ≤ Real.pi / Real.sqrt (1/2)` via conjugate_point_bound with those functions.
+
+Actually, I need to give `T := 2`, and positivity `∀ t ∈ Ioc 0 2, 0 < u t`.
+
+Let me write the Lean with explicit definitions:
+
+```lean
+/-- A coefficient that is non-constant on `(0,2)` and stays `≥ 1/2` there. -/
+def inv7k (t : ℝ) : ℝ := 2 / (t * (4 - t))
+
+def inv7u (t : ℝ) : ℝ := t - t ^ 2 / 4
+
+def inv7du (t : ℝ) : ℝ := 1 - t / 2
+
+def inv7ddu (_ : ℝ) : ℝ := -(1/2)
+```
+
+Then lemmas. Let me write the proof carefully; Lean 4 with mathlib. Derivative facts: `hasDerivAt_id`, `HasDerivAt.pow`, etc. Easier: use `fun_prop` or `hasDerivAt` combinators. Something like:
+
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAt inv7u (inv7du t) t := by
+  have h : HasDerivAt (fun s : ℝ => s - s ^ 2 / 4) (1 - 2 * t / 4) t := by
+    simpa using (hasDerivAt_id t).sub (((hasDerivAt_id t).pow 2).div_const 4)
+  convert h using 1
+  ring
+```
+
+Hmm, `(hasDerivAt_id t).pow 2` gives HasDerivAt (·^2) (2 * t^(2-1) * 1) t = (2*t) t? Let me recall the signature: `HasDerivAt.pow (n : ℕ) : HasDerivAt (fun x => f x ^ n) (n * (f t) ^ (n - 1) * f') t`. So `((hasDerivAt_id t).pow 2)` : HasDerivAt (fun s => s^2) (2 * t^(2-1) * 1) t. Then `.div_const 4` gives HasDerivAt (fun s => s^2/4) (2*t^1*1/4) t. Then sub from hasDerivAt_id: derivative 1 - (2*t/4) = 1 - t/2. `ring` should close it.
+
+Alternatively use `fun_prop` to prove differentiability and `deriv` computations. Simpler: `simpa [inv7u, inv7du] using (hasDerivAt_id t).sub (((hasDerivAt_id t).pow 2).div_const 4)` — but need to match the derivative expression. Might need `ring_nf` on the derivative value. Let me instead use the `deriv` approach:
+
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAt inv7u (inv7du t) t := by
+  have h1 : HasDerivAt (fun s : ℝ => s) 1 t := hasDerivAt_id t
+  have h2 : HasDerivAt (fun s : ℝ => s ^ 2 / 4) (2 * t / 4) t := by
+    simpa using ((hasDerivAt_id t).pow 2).div_const 4
+  have h := h1.sub h2
+  convert h using 1 <;> ring
+```
+
+Hmm `convert h using 1` then goals: inv7u =? fun s => s - s^2/4 (defeq after unfold? need `simp [inv7u]`), and derivative equality 1 - 2*t/4 = inv7du t. Let me write:
+
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAt inv7u (inv7du t) t := by
+  have h2 : HasDerivAt (fun s : ℝ => s ^ 2 / 4) (t / 2) t := by
+    have := ((hasDerivAt_id t).pow 2).div_const 4
+    convert this using 1
+    ring
+  have h := (hasDerivAt_id t).sub h2
+  convert h using 1
+  · ext s; simp [inv7u]
+  · simp [inv7du]; ring
+```
+
+Actually `convert h using 1` with function equality: target `HasDerivAt inv7u (inv7du t) t`, h : HasDerivAt (fun s => s - s^2/4) (1 - t/2) t. convert should generate goals: `inv7u = fun s => s - s^2/4` and `1 - t/2 = inv7du t`. Using `ext s; simp [inv7u]` and `simp [inv7du]`. Should work.
+
+Alternatively, use `fun_prop`:
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAt inv7u (inv7du t) t := by
+  unfold inv7u inv7du
+  fun_prop
+```
+`fun_prop` proves differentiability, but to get the specific derivative value we need `deriv`... Actually `fun_prop` can prove `HasDerivAt` goals with the correct derivative? There's `fun_prop` support for HasDerivAt goals where the derivative expression is a metavariable? I believe `fun_prop` can solve `HasDerivAt (fun x => x - x^2/4) ?_ t` by synthesizing the derivative. If I state the explicit derivative, it may fail. Safer approach: prove differentiability with fun_prop + `deriv` computation via `simp [inv7u, inv7du]`? mathlib has `deriv` lemmas: `deriv (fun s => s - s^2/4) t = 1 - t/2` might be proven by `simp [deriv_sub, deriv_pow, ...]` or `fun_prop` + `deriv` tactic. There's a `deriv` tactic in mathlib? There is `deriv?`... Not reliable.
+
+Let's just do the manual HasDerivAt composition. I'll test in Lean.
+
+Similarly hasDerivAt_du: derivative of 1 - t/2 is -1/2: `(hasDerivAt_const (x:=t) (c:=1)).sub ((hasDerivAt_id t).div_const 2)`.
+
+eq_secondDeriv: `inv7ddu t = -(inv7k t) * inv7u t`: simp [inv7ddu, inv7k, inv7u]; field_simp; ring. Since t ∈ Ioo 0 2 → t ≠ 0 and 4 - t ≠ 0. Actually the identity holds for all t with t*(4-t) ≠ 0: 2/(t(4-t)) * (t - t²/4) = 2/(t(4-t)) * t(4-t)/4 = 1/2. For t=0 or t=4 it's junk but we only need on (0,2). Proof:
+
+```lean
+theorem inv7_eq_secondDeriv (t : ℝ) (ht : t ∈ Ioo (0:ℝ) 2) :
+    inv7ddu t = -(inv7k t) * inv7u t := by
+  have ht0 : t ≠ 0 := ne_of_gt ht.1
+  have ht4 : t ≠ 4 := ne_of_lt (lt_trans ht.2 (by norm_num))
+  have h4t : 4 - t ≠ 0 := sub_ne_zero.mpr (Ne.symm ht4)
+  simp only [inv7ddu, inv7k, inv7u]
+  field_simp
+  ring
+```
+
+Hmm `field_simp` with `2 / (t * (4 - t))` and `t - t^2/4`. Should work with hypotheses t≠0, 4-t≠0. Let me be careful: `field_simp` needs `t * (4 - t) ≠ 0` which follows from mul_ne_zero ht0 h4t. Provide `mul_ne_zero ht0 h4t`. Let me write `field_simp [ht0, h4t]` or `rw [div_mul_eq_mul_div]` then `field_simp`. I'll test.
+
+continuity: `continuousOn_u : ContinuousOn inv7u (Icc 0 2)` by `fun_prop` or `continuity`. `ContinuousOn inv7u (Icc 0 2)` — since polynomial, `fun_prop` should do it.
+
+positivity: `∀ t ∈ Ioc 0 2, 0 < inv7u t` → `t - t²/4 = t(1 - t/4)`, t>0, t ≤ 2 → 1 - t/4 ≥ 1/2 > 0. `nlinarith` can do it: from ht.1 : 0 < t, ht.2 : t ≤ 2: t - t^2/4 > 0 ⟺ t(4-t) > 0. nlinarith [ht.1, ht.2] should handle since t*(4-t) = 4t - t² and t>0, t≤2 → 4-t ≥ 2 > 0. nlinarith with products might need hint: `mul_pos ht.1 (by linarith)`. So:
+
+```lean
+theorem inv7_u_pos : ∀ t ∈ Ioc (0:ℝ) 2, 0 < inv7u t := by
+  intro t ht
+  have h1 : 0 < t := ht.1
+  have h2 : 0 < 4 - t := by linarith [ht.2]
+  have : inv7u t = t * (4 - t) / 4 := by simp only [inv7u]; ring
+  rw [this]
+  positivity
+```
+
+k bound: `∀ t ∈ Ioo 0 2, (1/2:ℝ) ≤ inv7k t`:
+inv7k t = 2/(t(4-t)); t(4-t) ≤ 4 and > 0. So 2/(t(4-t)) ≥ 2/4 = 1/2.
+
+```lean
+theorem inv7_k_ge (t : ℝ) (ht : t ∈ Ioo (0:ℝ) 2) : (1/2:ℝ) ≤ inv7k t := by
+  have ht0 : 0 < t := ht.1
+  have ht4 : 0 < 4 - t := by linarith [ht.2]
+  have hden_pos : 0 < t * (4 - t) := mul_pos ht0 ht4
+  have hden_le : t * (4 - t) ≤ 4 := by nlinarith [sq_nonneg (t - 2)]
+  rw [inv7k, le_div_iff₀ hden_pos]  -- 1/2 * (t*(4-t)) ≤ 2
+  nlinarith
+```
+
+Careful: `le_div_iff₀` : a ≤ b/c ↔ a*c ≤ b for c>0. So `(1/2) ≤ 2/(t(4-t)) ↔ 1/2 * (t(4-t)) ≤ 2`. nlinarith with hden_le: t(4-t) ≤ 4 gives 1/2·(t(4-t)) ≤ 2 ✓.
+
+second-deriv bound: `∀ t ∈ Ioo 0 2, |inv7ddu t| ≤ 1`: |−1/2| = 1/2 ≤ 1 ✓.
+
+The main witness:
+
+```lean
+theorem inv7_nonconstant_witness : (2 : ℝ) ≤ Real.pi / Real.sqrt (1/2) := by
+  have hmain := conjugate_point_bound (T := 2) (B := 1) (t₀ := 1/2) (K := 1/2)
+    (k := inv7k) (u := inv7u) (du := inv7du) (ddu := inv7ddu)
+    (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by norm_num)
+    (⟨inv7_hasDerivAt_u, inv7_hasDerivAt_du, inv7_eq_secondDeriv, inv7_cont_u, inv7_cont_du⟩)
+    (by fun_prop)
+    (fun t ht => by simp [inv7ddu])
+    (by simp [inv7u])
+    (by simp [inv7du])
+    inv7_u_pos
+    (by norm_num)
+    inv7_k_ge
+    (by
+      have hsqrt : Real.sqrt (1/2) = 1 / Real.sqrt 2 := by
+        rw [Real.sqrt_div_iff]  -- maybe
+        ...
+      ...)
+```
+
+Careful with the normalization: hBmodel : (K * max (1 / sqrt K) T) * t₀ ≤ 1/2 with K=1/2, T=2, t₀=1/2: (1/2 * max (1/sqrt(1/2)) 2) * 1/2 ≤ 1/2. Need to show max(1/√(1/2), 2) = 2, i.e., 1/√(1/2) ≤ 2 ⟺ √(1/2) ≥ 1/2 ⟺ 1/2 ≥ 1/4 ✓. Actually 1/√(1/2) = √2 ≈ 1.414 ≤ 2 ✓.
+
+Can prove: `rw [max_eq_right]` with goal `1 / Real.sqrt (1/2) ≤ 2`. `rw [div_le_iff₀ (Real.sqrt_pos_of_pos (by norm_num))]` → `1 ≤ 2 * Real.sqrt (1/2)`. Since sqrt(1/2) ≥ sqrt(1/4) = 1/2, we get 2*sqrt(1/2) ≥ 1. Prove `(1/2:ℝ) ≤ Real.sqrt (1/2)`: `Real.le_sqrt (by norm_num) (by norm_num)`? The lemma: `Real.le_sqrt (hx : 0 ≤ x) (hy : 0 ≤ y) : x ≤ sqrt y ↔ x^2 ≤ y`. So `(1/2) ≤ sqrt (1/2) ↔ 1/4 ≤ 1/2` ✓ by norm_num. Then nlinarith.
+
+There's also `Real.sqrt_div_iff`? Let me use a helper. Actually simpler: `have h : Real.sqrt (1/2) = Real.sqrt 2 / 2 := by rw [show (1/2:ℝ) = 2/4 by norm_num, Real.sqrt_div (by norm_num) ...]` — messy. Alternative: `Real.sqrt_inv` gives `sqrt K⁻¹ = (sqrt K)⁻¹`; `1/2 = (2:ℝ)⁻¹`, so `Real.sqrt (1/2) = (Real.sqrt 2)⁻¹ = 1/Real.sqrt 2`. Then `1/√(1/2) = √2`, so need `√2 ≤ 2` ⟺ 2 ≤ 4 ✓.
+
+Using `Real.sqrt_inv (x := 2)`: `Real.sqrt 2⁻¹ = (Real.sqrt 2)⁻¹`. Note `(1/2 : ℝ) = 2⁻¹` by norm_num. And `1 / Real.sqrt (2⁻¹) = 1 / (Real.sqrt 2)⁻¹ = Real.sqrt 2`. Then `Real.sqrt 2 ≤ 2` by `Real.sqrt_le_iff` or `nlinarith [Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 2), Real.sqrt_nonneg 2]`.
+
+Maybe easiest: prove a general helper `inv7_sqrt_half : 1 / Real.sqrt (1/2) = Real.sqrt 2` and `Real.sqrt 2 ≤ 2`.
+
+Let me write:
+```lean
+have hsqrt2le : Real.sqrt 2 ≤ 2 := by
+  nlinarith [Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 2), Real.sqrt_nonneg 2]
+have hsqrtinv : Real.sqrt (1/2) = (Real.sqrt 2)⁻¹ := by
+  rw [show (1/2 : ℝ) = 2⁻¹ by norm_num, Real.sqrt_inv]
+have hone : 1 / Real.sqrt (1/2) = Real.sqrt 2 := by
+  rw [hsqrtinv, one_div, inv_inv]
+have hmax : max (1 / Real.sqrt (1/2)) (2:ℝ) = 2 := by
+  rw [hone, max_eq_right hsqrt2le]
+...
+rw [hmax]
+norm_num
+```
+
+Then final: `(1/2 * 2) * (1/2) = 1/2 ≤ 1/2` ✓ by norm_num.
+
+The conclusion from `conjugate_point_bound` would be `(2:ℝ) ≤ Real.pi / Real.sqrt (1/2)` directly.
+
+Also add the cone queries:
+```lean
+#print axioms inv7_nonconstant_witness
+#print axioms inv7_statement_fidelity
+```
+and maybe `#print axioms inv7_k_ge` etc.
+
+Also to strengthen: check that inv7k is genuinely non-constant: `inv7_k_not_constant : inv7k 1 ≠ inv7k 2`? Compute: inv7k 1 = 2/(1·3) = 2/3; inv7k 2 = 2/(2·2) = 1/2. So `inv7k 1 ≠ inv7k 2` — prove `norm_num [inv7k]`. Actually `norm_num [inv7k]` should show 2/3 ≠ 1/2. Good — this formally certifies the witness is NOT covered by the constant-curvature route (the prior invocations only exercised constant k). Also prove `inv7u` is not of the form jacobiSol? Not necessary; the non-constant k plus the exact ODE identity is enough.
+
+Hmm, one subtlety: does `conjugate_point_bound`'s hypothesis `hBmodel` with `T := 2` use `max (1/√K) T` where T = 2 — yes, I set T := 2. Good.
+
+Also note the acceptance statement requires "k >= K > 0 on (0,T)" — hk is on Ioo 0 T (open), and hK 0 < K. Our witness satisfies.
+
+Let me also consider whether including a non-constant k in the probe is *sound*: `JacobiSolutionOn` definition — let me check D12 Definitions to make sure of the exact fields and that `0 T` refers to an interval `(0,T)` not `[0,T)`. Let me read the definition quickly.
+
+Then compile the probe: `cd release && lake env lean ../tmp/l4cp_probe_inv7.lean`. Need the module path resolution: the probe imports Poincare.L4... so run from release dir with `lake env lean ../tmp/l4cp_probe_inv7.lean` — LEAN_PATH set by lake env. Previous invocations did this (tmp/l4cp_probe.lean). Let me check how they ran it — the log should show. Let me check evidence/l4cp-reverification-inv6.md for the exact command.
+
+Let me first read the JacobiSolutionOn definition.
+dsh: reasoning:
+Now I understand the pattern. The `JacobiSolutionOn` uses `HasDerivAtR` (a project-local alias?). Let me check what `HasDerivAtR` is — likely `HasDerivAt` on ℝ. Let me grep.
+
+Then write the probe. Let me check `HasDerivAtR` definition.
+dsh: reasoning:
+Important: `HasDerivAtR` is an abbrev with pinned instances. So when writing my probe, I should produce `HasDerivAtR` goals. Since it's an abbrev for `@HasDerivAt ...` with specific instances, `HasDerivAt.add`, `.sub`, `.mul`, `.div_const` etc. from mathlib produce `HasDerivAt` with the instances synthesized in *my* import context, which include the endpoint module imports. The D12 header warns that instance synthesis is import-context dependent: `HasDerivAtR` pins `RCLike.toInnerProductSpaceReal.toModule`, whereas in my context `HasDerivAt` might synthesize a different `Module ℝ ℝ` instance (e.g., `Semiring.toModule`), in which case the terms won't be defeq.
+
+Safer approach: prove derivative goals directly with `HasDerivAt` in the probe and then `exact`/`simpa only [HasDerivAtR]`? Hmm. Actually, in the existing endpoint file, they used `jacobiSol_jacobiSolutionOn` etc. Let me look at how other files in the repo construct `JacobiSolutionOn` for a custom function. E.g., search for `JacobiSolutionOn` constructions with `.sub` or `HasDerivAtR` usage in D12.
+
+Look at ModelEuclidean or SturmComparison for examples of proving HasDerivAtR.
+
+Let me grep for "HasDerivAtR" usage patterns and for constructions of JacobiSolutionOn in repo.
+dsh: reasoning:
+Let me look at how `sin_jacobiSolution` in RauchBridge.lean is constructed — that will show the idiom for HasDerivAtR in this context.
+dsh: reasoning:
+Interesting — in RauchBridge.lean, `simpa using Real.hasDerivAt_sin t` works for `HasDerivAtR`. So the instance pinning works out with `simpa` in that context. My probe imports the endpoint module, which imports ConstantCurvatureRauch → RauchBridge, so the import context should be at least as rich. The question is whether `HasDerivAt.sub`/`.div_const` etc. produce terms defeq to HasDerivAtR with pinned instances. In SturmComparison.lean line 40 they build `HasDerivAtR (wronskian ...)` via `have hsub : HasDerivAtR ...`. Let me look at that proof to see the idiom.
+
+Actually maybe an easier route for my witness: avoid HasDerivAtR composition by using `Real.hasDerivAt_*` where possible, or better use the `jacobiSol` closed forms. Hmm, but my k is non-constant and u is a polynomial. Derivatives of polynomials: is there a `Real.hasDerivAt_pow`-like lemma? `hasDerivAt_pow` is generic (`HasDerivAt.pow`). Let me look at SturmComparison line 30-60 to see how they prove HasDerivAtR of a combination.
+
+Also `hasDerivAtR_pow` in Definitions.lean: `HasDerivAtR (fun x => x^n) ((n:ℝ) * t^(n-1)) t := hasDerivAt_pow n t`. But care: `hasDerivAt_pow` here is likely `hasDerivAt_pow` from the file itself (line 77 references `hasDerivAt_pow n t`). Let me grep for `hasDerivAt_pow` definition in Definitions.lean — I saw line 76-77: `theorem hasDerivAtR_pow (n : ℕ) (t : ℝ) : HasDerivAtR (fun x : ℝ => x ^ n) ((n : ℝ) * t ^ (n - 1)) t := hasDerivAt_pow n t`. So `hasDerivAt_pow` is defined earlier (maybe mathlib's). Fine.
+
+Note also `hasDerivAtR_add`, `hasDerivAtR_sub`? Let me grep lines 60-80 region... I saw only id, const, inv, pow. So combination lemmas are not provided; but SturmComparison does prove HasDerivAtR of wronskian via combinations. Let me read SturmComparison lines 25-60.
+dsh: reasoning:
+In SturmComparison, `(h2.hasDerivAt_u ht).mul (h1.hasDerivAt_du ht)` produces a plain `HasDerivAt` term and it's assigned to `h₁ : HasDerivAt ...`; then `h₁.sub h₂` produces `HasDerivAtR` via `exact h₁.sub h₂` — so the plain `HasDerivAt` with synthesized instances is defeq to `HasDerivAtR` in that context. Good, so composition should work in my probe (same import context as SturmComparison? SturmComparison's imports are D12 ones; my probe imports the endpoint module which imports much more; instance synthesis for `Module ℝ ℝ` might differ in a richer context...). Risk exists but let's just try.
+
+Approach for my witness derivatives: use plain `HasDerivAt` proofs with `hasDerivAt_id`, `.pow`, `.div_const`, `.sub`, then `exact`/`simpa` to `HasDerivAtR`. If the instance defeq fails, fallback: prove `HasDerivAtR` by `simpa` from `hasDerivAtR_pow`, `hasDerivAtR_id` and manual `@HasDerivAt.sub` with pinned instances, or use `hasDerivAt_iff_hasFDerivAt`... Let's just try the straightforward thing first and iterate.
+
+Plan for probe Lean file:
+
+```lean
+/-
+inv7 probe ...
+-/
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+
+noncomputable section
+open Set Filter
+open scoped Topology
+
+namespace Poincare.L4.GeodesicComparison
+open Poincare.D12.ComparisonGeodesics Poincare.D10
+
+/-- Acceptance sentence, written independently. -/
+def Inv7HeadlineType : Prop :=
+  ∀ (k u du ddu : ℝ → ℝ) (T B t₀ K : ℝ),
+    0 < T → 0 ≤ B → 0 < t₀ → t₀ ≤ T → B * t₀ ≤ 1 / 2 →
+    JacobiSolutionOn k u du ddu 0 T → ContinuousOn ddu (Icc 0 T) →
+    (∀ t ∈ Ioo 0 T, |ddu t| ≤ B) → u 0 = 0 → du 0 = 1 →
+    (∀ t ∈ Ioc 0 T, 0 < u t) → 0 < K → (∀ t ∈ Ioo 0 T, K ≤ k t) →
+    (K * max (1 / Real.sqrt K) T) * t₀ ≤ 1 / 2 →
+    T ≤ Real.pi / Real.sqrt K
+
+theorem inv7_statement_fidelity : Inv7HeadlineType := conjugate_point_bound
+```
+
+Hmm: `conjugate_point_bound` has implicit args; as a bare term `conjugate_point_bound` should elaborate to the Π type with implicits instantiated to the bound variables? When used as `(conjugate_point_bound : Inv7HeadlineType)`, the elaborator will unify the type of `conjugate_point_bound` (with metavariables for implicit args) against Inv7HeadlineType — since implicit args are exactly the bound variables, unification should succeed in order. inv5/inv6 did exactly this and it worked. Good.
+
+Then definitions:
+
+```lean
+/-- Non-constant coefficient. -/
+def inv7k (t : ℝ) : ℝ := 2 / (t * (4 - t))
+def inv7u (t : ℝ) : ℝ := t - t ^ 2 / 4
+def inv7du (t : ℝ) : ℝ := 1 - t / 2
+def inv7ddu (_ : ℝ) : ℝ := -(1 / 2)
+```
+
+Then lemmas. Let me write and iterate in the sandbox.
+
+Also want `inv7_k_nonconstant : inv7k 1 ≠ inv7k 2 := by norm_num [inv7k]`.
+
+Then `inv7_jacobi : JacobiSolutionOn inv7k inv7u inv7du inv7ddu 0 2 where ...`.
+
+For the derivative proofs:
+
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAtR inv7u (inv7du t) t := by
+  have h2 : HasDerivAt (fun s : ℝ => s ^ 2 / 4) (t / 2) t := by
+    have h := ((hasDerivAt_id t).pow 2).div_const 4
+    convert h using 1
+    ring
+  have h := (hasDerivAt_id t).sub h2
+  convert h using 1
+  · funext s; simp [inv7u]
+  · simp [inv7du]; ring
+```
+
+Hmm, `(hasDerivAt_id t).pow 2` — the `HasDerivAt.pow` signature in recent mathlib: `HasDerivAt.pow (n : ℕ) : HasDerivAt (fun x => f x ^ n) (n * f t ^ (n - 1) * f') t`. With f = id, f' = 1: derivative = 2 * t^(2-1) * 1. Then `.div_const 4`: derivative = (2 * t^1 * 1)/4 = t/2 after ring. `convert h using 1` should give goal `t/2 = 2 * t ^ (2-1) * 1 / 4`, closable by `ring`.
+
+Then `(hasDerivAt_id t).sub h2` : HasDerivAt (fun s => s - s^2/4) (1 - t/2) t. convert to HasDerivAtR inv7u (inv7du t): goals are function equality `inv7u = fun s => s - s^2/4` (or `inv7u t' = ...` pointwise) and value equality `1 - t/2 = inv7du t`.
+
+Actually, maybe simpler: `simpa only [inv7u, inv7du] using ...` if the derivative value matches syntactically after simp/ring_nf. Let me write:
+
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAtR inv7u (inv7du t) t := by
+  have h2 : HasDerivAt (fun s : ℝ => s ^ 2 / 4) (t / 2) t := by
+    have h := ((hasDerivAt_id t).pow 2).div_const 4
+    convert h using 1
+    ring
+  have h : HasDerivAt (fun s : ℝ => s - s ^ 2 / 4) (1 - t / 2) t :=
+    (hasDerivAt_id t).sub h2
+  simpa only [inv7u, inv7du] using h
+```
+
+`simpa only [inv7u, inv7du]` unfolds the defs and should match: target after unfold: HasDerivAtR (fun s => s - s^2/4) (1 - t/2) t. `h : HasDerivAt ...`. `simpa` uses defeq up to reducible transparency? `simpa only [defs]` will rewrite the target and then `assumption`-close using `h`; it uses `whnf`/defeq at reducible? Actually `simpa` closes goals up to syntactic equality after simp normalization. `HasDerivAt` vs `HasDerivAtR`: HasDerivAtR is an abbrev (reducible), so `simpa only [inv7u, inv7du, HasDerivAtR]`? Hmm — `HasDerivAtR` is an `abbrev`, so it unfolds during elaboration/defeq checks automatically. The instances pinned might cause mismatch. SturmComparison's `exact h₁.sub h₂` shows that plain HasDerivAt elaborated in that file's context IS defeq to HasDerivAtR. My probe's import context includes the endpoint module. The instance `RCLike.toInnerProductSpaceReal.toModule` should still be the one synthesized (it's the standard instance), unless a richer context introduces ambiguity. Let's just try.
+
+For du: derivative of `1 - t/2` is `-1/2`:
+```lean
+theorem inv7_hasDerivAt_du (t : ℝ) : HasDerivAtR inv7du (inv7ddu t) t := by
+  have h : HasDerivAt (fun s : ℝ => 1 - s / 2) (0 - 1 / 2) t :=
+    (hasDerivAt_const (x := t) (c := (1:ℝ))).sub ((hasDerivAt_id t).div_const 2)
+  simpa only [inv7du, inv7ddu] using h
+```
+`(hasDerivAt_id t).div_const 2`: HasDerivAt (fun s => s/2) (1/2) t. sub gives derivative 0 - 1/2 = -1/2. The expression `0 - 1/2` vs `-(1/2)`: simp should normalize both to `-(1/2)` or `-1/2`. Use `norm_num`? `simpa only [inv7du, inv7ddu]` might leave `0 - 1/2` vs `-(1/2)`; simp normalizes `0 - a` to `-a`. Good.
+
+eq_secondDeriv:
+```lean
+theorem inv7_eq_secondDeriv (t : ℝ) (ht : t ∈ Ioo (0:ℝ) 2) :
+    inv7ddu t = -(inv7k t) * inv7u t := by
+  have ht0 : t ≠ 0 := ne_of_gt ht.1
+  have h4t : 4 - t ≠ 0 := by linarith [ht.2]
+  simp only [inv7ddu, inv7k, inv7u]
+  field_simp
+  ring
+```
+Check: goal after simp: `-(1/2) = -(2/(t*(4-t))) * (t - t^2/4)`. field_simp should clear denominators using ht0 and h4t (it can derive `t*(4-t) ≠ 0`). It may need the hypothesis as `t * (4 - t) ≠ 0`: it can prove from the two via `mul_ne_zero`. Let me provide `have hden : t * (4 - t) ≠ 0 := mul_ne_zero ht0 h4t` and `field_simp [hden]`. Fine—iterate if needed.
+
+continuousOn:
+```lean
+theorem inv7_continuousOn_u : ContinuousOn inv7u (Icc (0:ℝ) 2) := by fun_prop
+theorem inv7_continuousOn_du : ContinuousOn inv7du (Icc (0:ℝ) 2) := by fun_prop
+```
+
+positivity:
+```lean
+theorem inv7_u_pos : ∀ t ∈ Ioc (0:ℝ) 2, 0 < inv7u t := by
+  intro t ht
+  have h : inv7u t = t * (4 - t) / 4 := by simp only [inv7u]; ring
+  rw [h]
+  have h1 : 0 < t := ht.1
+  have h2 : 0 < 4 - t := by linarith [ht.2]
+  positivity
+```
+
+k bound:
+```lean
+theorem inv7_k_ge : ∀ t ∈ Ioo (0:ℝ) 2, (1/2:ℝ) ≤ inv7k t := by
+  intro t ht
+  have hden : 0 < t * (4 - t) := mul_pos ht.1 (by linarith [ht.2])
+  have hle : t * (4 - t) ≤ 4 := by nlinarith [sq_nonneg (t - 2)]
+  rw [inv7k, le_div_iff₀ hden]
+  nlinarith
+```
+After `rw [inv7k, le_div_iff₀ hden]` goal: `1/2 * (t * (4 - t)) ≤ 2`. nlinarith [hle] should close: from hle: t*(4-t) ≤ 4, multiply by 1/2: ≤ 2 ✓.
+
+ddu bound:
+```lean
+theorem inv7_ddu_bound : ∀ t ∈ Ioo (0:ℝ) 2, |inv7ddu t| ≤ 1 := by
+  intro t ht
+  simp [inv7ddu]
+```
+
+Main witness:
+```lean
+theorem inv7_nonconstant_witness : (2 : ℝ) ≤ Real.pi / Real.sqrt (1/2) := by
+  have hsqrt2le : Real.sqrt 2 ≤ 2 := by
+    nlinarith [Real.sq_sqrt (by norm_num : (0:ℝ) ≤ 2), Real.sqrt_nonneg 2]
+  have hsqrtinv : Real.sqrt ((1:ℝ)/2) = (Real.sqrt 2)⁻¹ := by
+    rw [show (1:ℝ)/2 = 2⁻¹ by norm_num, Real.sqrt_inv]
+  have hone : 1 / Real.sqrt ((1:ℝ)/2) = Real.sqrt 2 := by
+    rw [hsqrtinv, one_div, inv_inv]
+  have hmax : max (1 / Real.sqrt ((1:ℝ)/2)) (2:ℝ) = 2 := by
+    rw [hone, max_eq_right hsqrt2le]
+  have hBmodel : ((1:ℝ)/2 * max (1 / Real.sqrt ((1:ℝ)/2)) 2) * (1/2) ≤ 1/2 := by
+    rw [hmax]; norm_num
+  have hmain := conjugate_point_bound (T := 2) (B := 1) (t₀ := 1/2) (K := 1/2)
+    (k := inv7k) (u := inv7u) (du := inv7du) (ddu := inv7ddu)
+    (by norm_num) (by norm_num) (by norm_num) (by norm_num) (by norm_num)
+    ⟨inv7_hasDerivAt_u, inv7_hasDerivAt_du, inv7_eq_secondDeriv, inv7_continuousOn_u, inv7_continuousOn_du⟩
+    (by fun_prop)
+    inv7_ddu_bound
+    (by simp [inv7u])
+    (by simp [inv7du])
+    inv7_u_pos
+    (by norm_num)
+    inv7_k_ge
+    hBmodel
+  exact hmain
+```
+
+Wait: `conjugate_point_bound` expects `hdducont : ContinuousOn ddu (Icc 0 T)` where ddu = inv7ddu = constant -1/2 → `by fun_prop` should do. Good.
+
+Also `(hB : ∀ t ∈ Ioo 0 T, |ddu t| ≤ B)` with B=1 → inv7_ddu_bound ✓.
+
+Note that the conclusion of `conjugate_point_bound` is `2 ≤ Real.pi / Real.sqrt (1/2)` — exactly. 
+
+Structure literal `⟨...⟩`: field order in `JacobiSolutionOn` is hasDerivAt_u, hasDerivAt_du, eq_secondDeriv, continuousOn_u, continuousOn_du. My `inv7_eq_secondDeriv` has signature (t) (ht) — the field wants `∀ ⦃t⦄, t ∈ Ioo a b → ...`, so passing `inv7_eq_secondDeriv` should work (implicit t vs explicit: the structure field's t is implicit `⦃t⦄`; my function has explicit t, which is fine—it can be used where implicit expected? Actually a field of type `∀ ⦃t⦄, t ∈ Ioo 0 2 → ddu t = ...`; providing a term of type `∀ t, t ∈ Ioo 0 2 → ...` should be accepted by eta/defeq since implicit vs explicit binder is not part of defeq... Binder info matters for elaboration but `∀ ⦃t⦄, P t` and `∀ t, P t` are the same Pi type up to binder info, which is ignored in kernel defeq. So OK. But careful with `inv7_hasDerivAt_u (t : ℝ) : HasDerivAtR inv7u (inv7du t) t` — same. Fine.
+
+Also note: `hpos : ∀ t ∈ Ioc 0 T, 0 < u t` — inv7_u_pos matches.
+
+Potential issue: `simpa [inv7u]` for `inv7u 0 = 0`: unfold → `0 - 0^2/4 = 0` → norm_num. `simp [inv7u]` should close with `norm_num` maybe; use `by norm_num [inv7u]` — norm_num can't unfold defs unless given. `by simp [inv7u]` should work: 0 - 0/4 = 0. Similarly `inv7du 0 = 1`: `by simp [inv7du]`.
+
+Then `#print axioms` queries for the new declarations:
+
+```lean
+#print axioms inv7_statement_fidelity
+#print axioms inv7_nonconstant_witness
+#print axioms inv7_k_nonconstant
+...
+```
+
+We need to know the fully qualified names: namespace `Poincare.L4.GeodesicComparison` → `Poincare.L4.GeodesicComparison.inv7_nonconstant_witness`. I'll write the #print axioms lines with fully qualified names at the end.
+
+Also, I realize a subtlety with `def Inv7HeadlineType : Prop := ...` and `theorem inv7_statement_fidelity : Inv7HeadlineType := conjugate_point_bound`: with `Inv7HeadlineType` a def, the ascription triggers unfolding; fine.
+
+But careful: acceptance sentence "k >= K > 0 on (0,T)" — in the theorem, hypotheses are ordered: hK : 0 < K and hk : ∀ t ∈ Ioo 0 T, K ≤ k t. Note that hk doesn't require k > 0 separately, since K > 0 and K ≤ k implies k > 0. Good — matches "k >= K > 0".
+
+One more consideration: the acceptance sentence mentions "the analytic normalization hypotheses of this round's rauch_upper_of_jacobi_constCurv hold". I should verify that the hypotheses of `conjugate_point_bound` match those of `rauch_upper_of_jacobi_constCurv` exactly (minus hzero, plus hK>0). Let me read the statement of `rauch_upper_of_jacobi_constCurv` and `jacobi_le_constCurvModel` to compare. This is a meaningful fidelity check: the prior invocations claimed it, but let me verify myself.
+
+Let me read ConstantCurvatureRauch.lean around lines 100-260.
+dsh: reasoning:
+Confirmed: `rauch_upper_of_jacobi_constCurv` has exactly the same hypotheses as `conjugate_point_bound` except `hK : 0 ≤ K` there and `hK : 0 < K` in the endpoint theorem, plus `hzero` which is removed. And `conjugate_point_bound` takes `hzero`'s role by deriving the model positivity from `K > 0` and the endpoint limit. Hypothesis-for-hypothesis match. Good.
+
+Also note `jacobi_le_constCurvModel` is presumably a corollary of the rauch theorem. Fine.
+
+Now let me write the inv7 probe. I'll iterate on compilation. The key risk is the HasDerivAtR instance issue. Let me write the file now.
+
+File: tmp/l4cp_probe_inv7.lean
+
+I'll be careful with naming (prefix inv7) to avoid clashing with existing names in the namespace (e.g., `Inv7HeadlineType` fine).
+
+Also include the `#print axioms` at the end for all new declarations. But `#print axioms` on `def`s (Inv7HeadlineType) is fine too.
+
+Let me write it.
+
+Also new: to make the non-vacuity claim stronger, I could also show that the *strict* theorem applies with this non-constant k (T < π/√(1/2)): `conjugate_point_bound_strict` gives the same. And show the bound is non-trivial: `(2:ℝ) < Real.pi / Real.sqrt (1/2)` (since π√2 ≈ 4.44 > 2). Let me add `inv7_nonconstant_witness_strict : (2:ℝ) < Real.pi / Real.sqrt (1/2)` using `conjugate_point_bound_strict`. Good.
+
+Also `inv7_k_nonconstant : inv7k 1 ≠ inv7k 2`.
+
+And to demonstrate the ODE identity is genuinely nontrivial, verify at a point: `inv7ddu 1 = -(inv7k 1) * inv7u 1`? That's just the lemma instantiated. Not needed.
+
+Maybe also: `inv7_u_not_model : inv7u 1 ≠ jacobiSol 2 1`? Unneeded.
+
+The main novelty: first non-constant-k instantiation. Also, is there any previous witness with non-constant k in the repo? Let me check whether prior probes used non-constant k — grep tmp for "fun _ : ℝ => 2" patterns... The checkpoint says witnesses all k ≡ 2, 3, 4, 5. So yes, novel. Let me quickly grep tmp/*.lean for definitions to be safe.
+
+Then also numeric ODE cross-check in Python. Let me check scipy availability in background while I write the Lean.
+
+Let me start writing the probe file now. I'll use the write tool.
+dsh: reasoning:
+Now compile it. Use `cd release && lake env lean ../tmp/l4cp_probe_inv7.lean`. Let me check how previous probes were invoked — perhaps with `-DwarningAsError=false`? Let's just run and capture.
+
+Note: compiling a file in tmp/ against release's oleans. The `import Poincare...` resolution requires LEAN_PATH; `lake env lean` from release dir sets it. Let me try.
+dsh: reasoning:
+Exit 1 and `sorryAx` appears. Let me see the beginning of the log to find the errors. The `sorryAx` presumably comes from `fun_prop` or `positivity` or `convert`... Actually `sorryAx` appearing means some tactic failed and left a sorry? No — in Lean, tactics don't silently insert sorry; but `by fun_prop`? No. More likely there are errors like "declaration uses 'sorry'" from failed `fun_prop`? Hmm, actually if a tactic fails, the error is reported and the declaration is not added... but here declarations were added and depend on sorryAx. That happens when a tactic like `simp` closes a goal using a lemma proved with sorry? No.
+
+Wait: `sorryAx` enters if a tactic uses `sorry`-based fallback. `fun_prop` doesn't. Let me look at the head of the log for errors.
+dsh: reasoning:
+Several issues to fix. Note `sorryAx` appears because errors mean the declarations fall back? Actually when a declaration has errors, Lean still adds it with `sorryAx` for the unfinished parts (the `sorry` inserted by `by` blocks on error). And exit 1. So I need to fix all errors.
+
+1. Line 47: `inv7_statement_fidelity : Inv7HeadlineType := conjugate_point_bound` fails because `Inv7HeadlineType` is a `def` and Lean doesn't unfold it for the ascription? It should unfold reducible defs during unification... but the error says the expected type is `Inv7HeadlineType` and it didn't unfold. Hmm, in inv5/inv6 how did they do it? They probably used `(conjugate_point_bound : Inv6HeadlineType)`? The error suggests unification didn't unfold the def because `Inv7HeadlineType` is semireducible (def, not abbrev). For a `def` of type Prop, it's not reducible by default in unification (semireducible transparency only unfolds defs when stuck?). Use `abbrev Inv7HeadlineType : Prop := ...` instead. Or `show Inv7HeadlineType from conjugate_point_bound`? `show` uses defeq at reducible? Let me just use `abbrev`. But `#print axioms` on an abbrev... fine. Actually check inv6's probe to see how they wrote it. Let me grep tmp/l4cp_probe_inv6.lean.
+
+2. Line 70: `ring` made no progress in the h2 derivative proof (the convert left goal `t / 2 = 2 * t ^ (2 - 1) * 1 / 4` — maybe `ring` can't handle `t ^ (2-1)` because `2-1` is not normalized? `norm_num` or `ring_nf` would. Error says "ring_nf made no progress" — weird. Let me just compute the derivative differently: 
+
+```lean
+have h2 : HasDerivAt (fun s : ℝ => s ^ 2 / 4) (t / 2) t := by
+  have h : HasDerivAt (fun s : ℝ => s ^ 2) (2 * t) t := by
+    simpa using (hasDerivAt_id t).pow 2
+  have h' := h.div_const 4
+  convert h' using 1
+  ring
+```
+`(hasDerivAt_id t).pow 2` gives derivative `2 * t ^ (2-1) * 1`. `simpa using` may normalize `t^(2-1)` to `t^1` → `t`, using `pow_one`? simp knows `Nat.reduceSub`? `simp` should reduce `2-1` to `1` since both are numerals (Nat.succ). Yes simp should do `show 2 - 1 = 1` via `norm_num`? Simp has `Nat.reduceSub`. Then `2 * t * 1`; `simpa` closes `2*t*1 = 2*t`. Then div_const 4 gives `(2*t)/4`, convert goal `t/2 = 2*t/4`, ring.
+
+Alternatively avoid the convert entirely: prove the HasDerivAt directly by `hasDerivAt_iff_tendsto`? Too heavy. Another approach: use `deriv` and `DifferentiableAt` + `deriv_sub`, then `HasDerivAt` from `hasDerivAt_iff_deriv`? Hmm.
+
+Even simpler: Since `inv7u t = t - t^2/4`, and mathlib has `hasDerivAt_iff_isLittleO`... Let me use the `fun_prop`-friendly route: prove differentiability and then compute `deriv` via `deriv` simp lemmas:
+
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAtR inv7u (inv7du t) t := by
+  have hderiv : deriv inv7u t = inv7du t := by
+    simp only [inv7u, inv7du]
+    rw [deriv_sub (by fun_prop) (by fun_prop)]  -- etc
+```
+Messy.
+
+Cleaner: `HasDerivAt` of a polynomial via `hasDerivAt_pow` + `HasDerivAt.sub` and then use `convert ... using 1` with the derivative value, but handle the `t^(2-1)` normalization by using `norm_num`/`simp` first:
+
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAtR inv7u (inv7du t) t := by
+  have h2 : HasDerivAt (fun s : ℝ => s ^ 2 / 4) (t / 2) t := by
+    have h : HasDerivAt (fun s : ℝ => s ^ 2) (2 * t) t := by
+      simpa using (hasDerivAt_id t).pow 2
+    have h' : HasDerivAt (fun s : ℝ => s ^ 2 / 4) (2 * t / 4) t := h.div_const 4
+    convert h' using 1
+    ring
+  ...
+```
+`(hasDerivAt_id t).pow 2` type: `HasDerivAt (fun x => x ^ 2) (↑2 * t ^ (2 - 1) * 1) t`. `simpa` with `show (2:ℝ) * t ^ (2-1) * 1 = 2*t`? `simp` should simplify `2 - 1` to `1` (Nat.reduceSub), then `t^1` → `t` (pow_one), then `2*t*1` → `2*t` (mul_one). So target `HasDerivAt (fun s => s^2) (2*t) t` closes. Then `h.div_const 4` derivative `2*t/4`. `convert h' using 1` → goal `t/2 = 2*t/4`, `ring` closes. Good.
+
+Similarly for du:
+```lean
+theorem inv7_hasDerivAt_du (t : ℝ) : HasDerivAtR inv7du (inv7ddu t) t := by
+  have h : HasDerivAt (fun s : ℝ => 1 - s / 2) (-(1/2)) t := by
+    have h' := (hasDerivAt_const (x := t) (c := (1:ℝ))).sub ((hasDerivAt_id t).div_const 2)
+    have h'' : (0 : ℝ) - 1 / 2 = -(1/2) := by ring
+    rwa [h''] at h'
+```
+Hmm. Simpler:
+```lean
+  have h1 : HasDerivAt (fun s : ℝ => 1 - s / 2) (-(1/2)) t := by
+    have h := (hasDerivAt_const (x := t) (c := (1:ℝ))).sub ((hasDerivAt_id t).div_const 2)
+    convert h using 1
+    ring
+```
+convert goal: `-(1/2) = 0 - 1/2`, ring closes. Then function equality: `inv7du = fun s => 1 - s/2` after unfolding — but the earlier failure (line 73) was not the function equality, it was that `simpa only [inv7u, inv7du]` did not convert `HasDerivAt` into `HasDerivAtR`. The error says: after simplification, term h has type `HasDerivAt (fun s => s - s^2/4) (1 - t/2) t` but expected `HasDerivAtR inv7u (1 - t/2) t`. So `simpa only [inv7u]` did not unfold `inv7u` in the target? Actually it says expected `HasDerivAtR inv7u ...` — the target wasn't unfolded because `simpa only [inv7u]` should rewrite `inv7u` to the lambda... Hmm, `simp only [inv7u]` rewrites occurrences of `inv7u` applied to args; `HasDerivAtR inv7u ...` has `inv7u` as a bare function, not applied — `simp only [inv7u]` with a def equation `inv7u = fun t => ...`? Def unfolding via `simp only [inv7u]` produces the equation `inv7u = fun t => t - t^2/4`? For a def, `simp only [inv7u]` uses the equation lemma `inv7u.eq_1 : inv7u = fun t => ...`? I think `simp only [inv7u]` does delta-reduction of applications but maybe not bare occurrences. Use `simp only [inv7u, inv7du, HasDerivAtR]`? Unfolding `HasDerivAtR` (an abbrev) would give the pinned-instance HasDerivAt, then `h` must be defeq to it. The original error said after simplification it expected `HasDerivAtR inv7u` — meaning it didn't unfold the def. Let me use explicit `change`:
+
+```lean
+theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAtR inv7u (inv7du t) t := by
+  change HasDerivAtR (fun s : ℝ => s - s ^ 2 / 4) (1 - t / 2) t
+  ...
+```
+`change` uses defeq up to reducible transparency, unfolds inv7u/inv7du (defs are semireducible; `change` uses `isDefEq` at default transparency which unfolds semireducible defs? Yes, `change` uses `withDefault` transparency (semireducible)). That should work.
+
+Then build the HasDerivAt for the lambda and `exact` it, relying on defeq between plain `HasDerivAt` and `HasDerivAtR` (SturmComparison shows it usually works). If it doesn't, use `simpa only [HasDerivAtR] using h` — but then instances might mismatch. Let's try.
+
+3. fun_prop on `inv7u` fails since it's a def and fun_prop doesn't unfold local defs. Use `change ContinuousOn (fun s : ℝ => s - s^2/4) (Icc 0 2)` then `fun_prop`, or directly `continuousOn_u := (continuous_id.sub (continuous_pow 2).div_const 4).continuousOn`. Let me do `by change ContinuousOn (fun s : ℝ => s - s ^ 2 / 4) (Icc 0 2); fun_prop`. Actually after `change`, `fun_prop`/`continuity` should work.
+
+Wait, there's an issue: does `ContinuousOn inv7u (Icc 0 2)` unfold `inv7u` with `change`? Yes.
+
+4. Structure field types: `hasDerivAt_u : ∀ ⦃t⦄, t ∈ Ioo 0 2 → HasDerivAtR inv7u (inv7du t) t`. My lemma is `∀ t, HasDerivAtR inv7u (inv7du t) t` (no membership). Need to add the membership argument and implicit binder:
+```lean
+theorem inv7_hasDerivAt_u {t : ℝ} (_ht : t ∈ Ioo (0:ℝ) 2) : HasDerivAtR inv7u (inv7du t) t := ...
+```
+Then field gets `inv7_hasDerivAt_u` — for `∀ ⦃t⦄, t ∈ Ioo 0 2 → ...` vs mine `∀ ⦃t⦄, _ht : ... → ...` — the binder name doesn't matter. Good.
+
+5. Line 121 unsolved goal `2⁻¹ ≤ 1` in inv7_k_ge: after `rw [inv7k, le_div_iff₀ hden]` goal was `1/2 * (t*(4-t)) ≤ 2`; nlinarith used hle... but the displayed unsolved goal `⊢ 2⁻¹ ≤ 1` suggests `nlinarith` derived something odd or the goal after rw is different. Hmm, `le_div_iff₀` with `a = 1/2`, `b = 2`, `c = t*(4-t)`: goal becomes `1/2 * (t*(4-t)) ≤ 2`. nlinarith [hle] where hle : t*(4-t) ≤ 4 should prove it. The unsolved goal `2⁻¹ ≤ 1` is strange — perhaps from `nlinarith` preprocessing: it might have transformed to `2⁻¹*(t*(4-t)) ≤ 2` and then... Actually

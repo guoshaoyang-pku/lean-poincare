@@ -1,0 +1,1029 @@
+dsh: reasoning:
+Gate.json not at that path. Let me look around the state dir.
+dsh: reasoning:
+Gate.json doesn't exist for D9-cheeger-gromov-compactness yet. Let me check the longrun/results directory in the worktree and the state dir contents.
+dsh: reasoning:
+The gate.json file does not exist. Let me check last_run.json, latest.log, heartbeat.json, and the prompt.md. Also look at input dir - the authored files are probably in `input/`.
+dsh: reasoning:
+Interesting: the gate.json was not created (or was removed). The state dir has a DONE file from 10:49 and last_run.json says exit_code 0. But now this run says "The compile gate failed (attempt 1)". Perhaps gate.json was deleted. Let me look at the result card to understand what files were authored, and look at logs from the previous run (20_D9_*).
+
+Let me look at the result card and the verify script.
+dsh: reasoning:
+The prior run appeared complete with exit 0. The gate.json for this task doesn't exist though, and the current prompt claims compile gate failed (attempt 1). Note the state dir has a `DONE` marker from 10:49. Hmm, and last_run.json ended 10:12 with exit_code 0.
+
+But the worktree root's authored files are those in `release/Poincare/D9/CheegerGromov/`. Let me find them.
+
+Note: gate.json missing — maybe the dispatcher creates it only on failure and it got removed? Or maybe the gate is run at worktree root over ALL .lean files (including release/...). The replica ran with 68 files all exit 0 on Sep 10 10:09.
+
+Wait — prompt says "The compile gate failed (attempt 1)". Perhaps the dispatcher's gate run happened after something changed? Let me check the modification times of files in the worktree — maybe someone modified files after 10:11 (e.g., a supervisor re-ran something).
+
+Let me check what's changed recently.
+dsh: reasoning:
+The files were last modified before the last successful gate run at 10:09. Yet the prompt claims a failure. Possibly the dispatcher's gate run for "attempt 1" is happening now and gate.json is written after the run. Let me just run the gate myself: run `lake env lean` on every .lean file from the worktree root (as the dispatcher does). The gate replica earlier listed 68 files. Let me check the gate.py used by the supervisor. Let me search for the dispatcher code that writes gate.json.
+dsh: reasoning:
+Let me read the dispatcher to see how gate.json is produced and what "attempt" means, and where the gate output would be.
+dsh: reasoning:
+So the dispatcher removed gate.json when queuing a repair. The gate result was `ok: false` presumably. So gate.json was removed at 11:14. But the logs from the earlier self-replica run (20_D9_gate_replica.json) showed ok: true with 68 files. Hmm... but the gate that the dispatcher ran uses `env=ENV` with ELAN_HOME=PATH and `cwd=wt`. The difference: the replica used the same thing presumably.
+
+Wait: The gate.json was removed by the dispatcher... but "REPAIR ... attempt 1 queued" means gate["ok"] was false. The `files` list was computed by walking the worktree at the time of gate. If at that time some new .lean file appeared (e.g., a file from another task in the shared package? No, the worktree is separate).
+
+Actually wait — the gate walk includes ALL .lean files not in .lake/.git/.dshpkg. That includes `release/.lake`? The `dirnames` filter removes ".lake" at any level, so release/.lake is skipped. But there might be new .lean files elsewhere, e.g., in `logs/` (gate_repair_replay.py copies?) or in the release dir modified by another concurrent process.
+
+Hmm — important: the worktree shares `release/` package? No, each worktree has its own release directory. But `.lake -> release/.lake` symlink.
+
+Actually wait. The sibling tasks D7-* etc. are all working in the same worktree directory tree? Let me check: worktrees/D9-cheeger-gromov-compactness/release/Poincare/D9/... Each task has its own worktree.
+
+But here's a thought: These longrun worktrees may be *shared* by many tasks — the D7/D9/D10 tasks all live under different worktrees though.
+
+Let me look at queue.json to see this task's entry, and check the modification time of files across the whole worktree to find new .lean files since 10:09.
+
+Also, key insight: the dispatcher gate runs `lake env lean <file>` from cwd=wt for every .lean file. The per-file compile of e.g. `release/Poincare/...` might fail if the module graph needs `release/.lake/build/lib/lean` to be up-to-date. Earlier it worked.
+
+Let me check the queue.json entry and see if repair_count etc.
+
+Actually the most direct approach: re-run the gate myself exactly as the dispatcher does, and find failures. 68 files × ~4s each = ~280 s. That's fine; run in background.
+
+But first let me check for stray .lean files (e.g., created by tools in worktree root) that might not compile.
+
+Let me list all .lean files and their mtimes.
+dsh: reasoning:
+No new .lean files. But the gate failed at 11:14 while the replica passed at 10:09. What changed between 10:09 and 11:14? Perhaps an environment issue: the dispatcher runs as a different user or with a different ELAN_HOME path. Note ENV["ELAN_HOME"] = os.path.join(os.path.dirname(ROOT), "elan") = /data3/guoshaoyang/workdir/lean_poincare/elan. And PATH prepends that bin. Also `lake` must be found.
+
+Hmm, another possibility: the compile gate ran while another process (the worker) was running concurrently, holding locks / or the `.lake` symlink changed. Or maybe it ran at 11:14 and a resource contention caused a failure (e.g., OOM).
+
+We don't have gate.json. The fastest path is to re-run the gate ourselves exactly as the dispatcher does, capture the failures. It takes ~5 min. Let me write a script that dumps per-file exit codes to a log, run it in the background.
+
+But wait — maybe I should check whether the last gate run's output somewhere. The dispatcher runs `subprocess.run(capture_output=True)` and discards output for failures, only recording exit codes. gate.json was deleted. So no record. Hmm, that's harsh.
+
+Let's just re-run. Also check for a lock issue: lake build in release? The dispatcher gate only uses `lake env lean`, which loads oleans; no build. `lake env lean <f>` might trigger a build if the file is not in the manifest? Actually `lake env` just sets up the env; `lean` elaborates the file and searches LEAN_PATH. If a file was modified after its olean was built, lean will still use the stale olean for imports but elaborate the given file from source. That works since the file is passed directly.
+
+One potential issue: concurrent `lake env lean` invocations could conflict over `lake` lock? Unlikely.
+
+Key suspicion: ELAN_HOME=/data3/... vs earlier 20_D9_verify.sh used /data/home/guoshaoyang/workdir/lean_poincare/elan. Note /data3 vs /data — maybe /data is a symlink to /data3? Let me check. Earlier verify.sh used /data/home/... path and it worked. The dispatcher uses os.path.dirname(ROOT) where ROOT=/data3/guoshaoyang/workdir/lean_poincare/longrun → /data3/guoshaoyang/workdir/lean_poincare/elan. Let me check both exist and are the same.
+
+Actually, if elan isn't found, `lake` would fail with exit 127 for ALL files, making the gate fail. That's a plausible cause! Let me check whether /data3/guoshaoyang/workdir/lean_poincare/elan exists.
+
+Wait, but the sibling tasks promoted fine earlier (D9-tensor-algebra-manifolds verified at 10:04). So the environment worked then. Hmm, but maybe the worker environment differs.
+
+Let me check paths and then run the exact gate.
+dsh: reasoning:
+Environment is fine. Let's reproduce the full gate. I'll write a python script mirroring the dispatcher exactly (walk, sort, `lake env lean` per file with ENV ELAN_HOME/PATH, cwd=wt, timeout 1800), and record exit codes + stderr tails. Run in background.
+
+Note: the gate will use my bash env; the dispatcher's ENV is os.environ plus ELAN_HOME. Let me mirror that.
+
+Let me start it in the background and meanwhile inspect the authored files for issues (forbidden tokens etc.).
+
+Actually, before the long run, let me quickly pre-check the four authored files individually in parallel? That's the same as part of the gate. The full gate takes ~280s. Let's do the full replica now.
+
+Also note: files are permission 600 (-rw-------) owned by guoshaoyang — we are presumably guoshaoyang. Fine.
+
+Let me write the gate script to logs/ and launch it.
+dsh: reasoning:
+While that runs, let me inspect the four authored files and the result card.
+dsh: reasoning:
+This file looks reasonable. Note `Poincare.RiemannAdapter.PointwiseCurvature` — namespace might be different (from Stage1/RiemannAdapter.lean). It compiled before, so fine.
+
+Let me now check the gate progress.
+dsh: reasoning:
+These are state-only interfaces, no sorry. Good.
+
+Now let me look at DiscreteModel.lean and AxiomAudit.lean while the gate runs. Also the result card.
+dsh: reasoning:
+Fine. Let's check AxiomAudit.lean and progress of gate.
+dsh: reasoning:
+Hmm, the gate has been running a while but only 1 file done? The first file was negcontrol (fast, ~3s?). Let me check if it's actually progressing — the log shows only 1 ok. Maybe each of the release/ files takes a long time (the earlier replica took 280s for 68 files ≈ 4s/file). Let me wait a bit and check again. Actually the output is buffered? I used flush=True on the prints, and the redirect writes to a file. Should be fine.
+
+Wait, it's been maybe 3-4 minutes since I started. Let me check job status and log again.
+dsh: reasoning:
+Time is 11:15:07 and I started the job just moments ago (the session started ~11:14). Only 2 lines in log because output buffering? Actually with `python3 ... > log 2>&1`, stdout is block-buffered even with flush=True? No, flush=True forces flush. Hmm, but I do `> logs/repair_gate_run.log` — python's print flush=True should write through.
+
+Wait — the earlier `cat` showed "ok negcontrol" as line 1 of the log, and now wc -l says 2 (probably line 1 = ok negcontrol, line 2 = ...). Let me look at the log content now.
+
+Actually, the process has 3 matching `lake env lean` processes. Interesting.
+
+Hold on: 11:15 is only ~1 minute after start. My perception of elapsed time is off; the tool calls are fast. The gate takes ~5 minutes.
+
+Let's wait for it and meanwhile look at the result card to plan updates. Also examine the negcontrol file (it has sorry, and it's included in the gate — exit 0 because warnings not errors; it's the negative control so it's expected). Note the task says "no sorry" for authored files — the negative control intentionally has sorry/native_decide but it's a pre-existing control file, not authored by this task presumably. Actually wait, the gate includes negcontrol/NegativeControl.lean and it compiles with exit 0 (warnings only). The forbidden scan may flag it, but that's the negative control harness file, part of D5/D6 setup. We should be careful: the instruction "Fix ONLY the authored files in your worktree" means I shouldn't modify negcontrol.
+
+Hmm, but "no `sorry`, `axiom`, `unsafe`, `native_decide`, or `proof_wanted`" applies to authored content. The negcontrol file is deliberately a negative control (from the D5/D6 release). The previous run's forbidden scan (20_D9_forbidden_scan.json) presumably excluded it. Let me check that scan output.
+
+Let me read the result card now.
+dsh: reasoning:
+The card is complete and ends with TASK_DONE. So the only issue is the compile gate failure. Since gate.json was removed, I need to reproduce the failure myself.
+
+Key difference between the successful replica (mine, at 10:09, and the verify script) and the dispatcher gate: the dispatcher uses `subprocess.run` with `env=ENV` where ENV is derived from the *dispatcher's* environment (which may differ from my shell env). Also cwd=worktree root. Also, importantly: the dispatcher's compile gate walks the worktree and includes files in `logs/` — e.g., if someone wrote a `.lean` file into logs/. Not the case.
+
+Another key difference: the dispatcher gate might have run concurrently with something (like the D10 test). Or... the timeout? 1800s per file.
+
+Wait — maybe the failure is transient/environmental. Let me check `logs/dispatch.log` in longrun root to see the gate result and any info.
+
+Also check whether there's a copy of gate.json anywhere (e.g., in logs/dispatch.log with details). Let me grep dispatch.log.
+dsh: reasoning:
+Interesting: "PROMOTE D9-cheeger-gromov-compactness"? It's not in the log! There's no "PROMOTE D9-cheeger-gromov-compactness verified". Wait, the DONE file exists (10:49). The dispatcher's cycle runs every 600s. At 10:49 the DONE file was created; gate run then would have happened at ~10:51:18 cycle. But the log at 10:51:18 says PROMOTE D10-gaussian-toolbox. Hmm — because the state dir has a `DONE` file created at 10:49 but the dispatcher saw it only at 11:05:18 and reported REPAIR attempt 1.
+
+But wait, if the gate had passed it would say PROMOTE. The gate must have failed at ~11:05. So between 10:09 (my replica 68/68 pass) and 11:05, something made a file fail. Nothing was modified (mtimes all ≤10:01). So it's likely environmental — e.g., the dispatcher's compile gate ran while another gate (D10-gaussian-toolbox) was running concurrently, and resource contention (memory) caused a failure; or the ENV lacks an important var (e.g., LEAN_PATH?) — no, we don't set LEAN_PATH.
+
+Hmm, another thought: The dispatcher gate does `subprocess.run(..., timeout=1800)` per file. If a file takes >1800s, it's "timeout" → fail. Under heavy parallel load (many worktrees compiling at the same time), elaboration could be much slower. The AxiomAudit file takes maybe 30-60s? Not 30 min.
+
+Wait, but actually there's something important: `Lake env lean <file>` when cwd=worktree root uses the *root* lakefile (PoincareWorktree, srcDir=release, globs Poincare.+). The root `.lake` is a symlink to `release/.lake`. When `lake env lean` runs, lake may decide it needs to *build* missing targets or check the manifest. Actually `lake env` runs the `env` command which requires the workspace config; it resolves dependencies. It shouldn't build.
+
+Hmm. However! There's a subtlety: the root lakefile globs `Poincare.+` with `srcDir = "release"`. If any file under release/Poincare has a *newer* mtime than its olean, `lake env lean X.lean` doesn't rebuild — it just elaborates X.lean in the given env. Right.
+
+Let me look at the gate replica I ran at 10:03-10:09: it passed. But there's a difference between my replica and the dispatcher: the dispatcher's `lake env lean` runs with `env=ENV` where `ENV = dict(os.environ)` at dispatcher startup, plus ELAN_HOME and PATH. Environment might contain something from the supervisor. Let me look at what env vars exist in my shell vs. the dispatcher's process. I can check /proc/<pid>/environ of the dispatcher process.
+
+Let me find the dispatcher pid.
+dsh: reasoning:
+The dispatcher runs `python3 longrun/bin/dispatch_loop.py` from cwd `/data/guoshaoyang/workdir/lean_poincare`? Wait, the command was `cd ~/workdir/lean_poincare && ...` where ~ = /data/home/guoshaoyang or /data3? `ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))`. If invoked via relative path from cwd... `os.path.abspath(__file__)` = /data3/.../longrun/bin/dispatch_loop.py if the shell resolved through /data3. Hmm, but wait: the PID 2361632 was started Sep 09 with `cd ~/workdir/lean_poincare`. If ~ resolves to /data3/guoshaoyang (per /etc/passwd), ROOT is /data3. The dispatch log we've been reading is /data3/.../longrun/logs/dispatch.log — and it's being updated (11:14). So ROOT=/data3/...
+
+Let me check the dispatcher's actual environment to see if it differs from mine.
+dsh: reasoning:
+The gate is progressing (6 files ok so far). Let it run.
+
+Meanwhile, let's think about what could have failed. A key candidate: **disk space**! If the filesystem filled up, `lake env lean` could fail. Let me check df.
+
+Another candidate: memory. Let me check free.
+
+Also, could another worker have been writing into this worktree at the time? Let me check the D10-gaussian-toolbox worktree etc. No.
+
+Actually — hmm, wait. A crucial detail: the dispatcher gate walks the worktree **including `logs/`**, which contains `20_D9_gate_replica.py`, `20_D9_make_card.py`, etc. But no .lean files there. However! My own repair_gate.py writes nothing. OK.
+
+But here's a thought about the *D10-triangulation-low-dim* task: it was launched at 11:14 and its worktree is separate.
+
+Another key thought: The gate at 11:05 was probably run while the D10-gaussian-toolbox promotion gate was also running (10:51). Actually the dispatcher is single-threaded: it runs compile_gate synchronously in the loop. At 10:51:18 it promoted D10-gaussian-toolbox. Then the next cycle at ~11:01:18 would see D9-cheeger DONE and run its gate; it would take ~5 min, finishing ~11:06 → log "REPAIR ... attempt 1" at 11:05:18. Yes! So the gate ran starting ~11:01 and during it... a new D10 task launched? No, launches happen after the gate.
+
+What else was running at 11:01? The D10-gaussian-toolbox worker had finished (promoted at 10:51). Hmm. Maybe D9-tensor-algebra-manifolds or D10-jacobi etc. no.
+
+So likely a transient disk/memory issue, or... hold on. Maybe the gate failure was on the **negcontrol** file? No, it passes.
+
+Actually let me reconsider: maybe another task's worker (D10-gaussian-toolbox repair worker) was still running and writing to *its* worktree; no effect.
+
+Wait — is it possible that the worktree was *shared* with another task at that moment? Let me check if other tasks have worktrees that symlink to this one's release. E.g., D10-bochner-euclidean's worktree could have `release` symlinked to D9-cheeger's release? Let me check siblings.
+
+Actually more importantly, think about the `.lake` symlink and concurrent lake runs: `lake env lean` might take a lock. Also `lake build` from another process could conflict. Hmm.
+
+Let me check free memory and disk now.
+dsh: reasoning:
+Memory: 2015 GB total, 28 used, 73 free, 1912 buff/cache — plenty available (1975). Disk fine.
+
+Note load average 5-8 — multiple workers running.
+
+So the failure is puzzling. Let me examine the possibility that the gate failed on a *newly appearing* .lean file. When did D10-triangulation-low-dim get its worktree? 11:05. Its worktree is separate though.
+
+Wait... hmm! Very important: maybe the dispatcher gate ran in the D9-cheeger worktree while `release/.lake` was being *rebuilt* by a concurrent process? Let me check whether some other worktree shares the same `release/.lake` directory (e.g., hardlinked `cp -al`). The scaffold note says `cp -al ../D6_weekly_release/. .` — hardlink copy! So all worktrees' `release/` files are hardlinks to the same inodes from D6! For `.lake` build artifacts (oleans), hardlinked copies mean each worktree has its own path but the same underlying files (read-only typically). Modifying a file via one path changes it everywhere (same inode). But nobody modifies the release sources.
+
+But directories are separate. `.lake` in each worktree: is it a symlink to its own release/.lake or hardlinked dirs? Let me check if D9-cheeger's release/.lake/build/lib/lean/... oleans are hardlinks shared with D6_weekly_release.
+
+Hmm, but what about `release/.lake` in the D9-cheeger worktree: does it contain build artifacts for the D9 modules? Let me check.
+
+Another thought: maybe the failure is in the path: the dispatcher gate passes an *absolute* path `/data3/.../release/Poincare/D9/CheegerGromov/X.lean` with cwd=wt. My replica did that too.
+
+OK, rather than theorize, let's wait for my replica. If it passes, then the dispatcher's failure was maybe transient. But the dispatcher won't re-run the gate: it already counted repair 1/2 and will re-run the gate after my DONE (on next cycle). If the gate passes then, we're good.
+
+But note: even if I do nothing, the gate might pass next time. Still, I should verify and, if all files pass, update the card and end with TASK_DONE. The dispatcher will re-run the gate after I write DONE. Hmm, but wait: the state dir currently has DONE from 10:49 (it wasn't removed). And the dispatcher removed gate.json at 11:05 when queueing repair. My worker will end and rewrite DONE? Let's look at worker_loop.sh to understand the lifecycle: it probably removes DONE at start and creates it at end.
+
+Let me read worker_loop.sh.
+dsh: reasoning:
+So DONE is touched when my dsh run exits 0. The old DONE (10:49) is still there — meaning the dispatcher sees `done=True` already. During my current run, DONE is present, so the dispatcher at its next cycle (~11:15?) may re-run the gate concurrently! Careful: the dispatcher cycle is every 600s: last at 11:14:20, so next ~11:24:20. My worker must finish and update the card before then... Actually, if my gate replica passes but the dispatcher's own gate run also passes at 11:24, it will PROMOTE — that's fine, as long as the card_status reports "done" (card tail has TASK_DONE or latest.log tail).
+
+Hmm, but there's a race: if I finish and dsh writes TASK_DONE to latest.log (state/latest.log) and the worker touches DONE, then the dispatcher's next compile_gate runs over the worktree — that's exactly the real gate. If it passes, PROMOTE.
+
+So the most important thing: make sure every .lean file really compiles, and make sure the gate run isn't racing with my own processes (my replica gate running concurrently could cause the dispatcher gate to be slow/fail, or vice versa). I should be careful not to leave my background gate running when the dispatcher runs its gate. Mine takes ~5 min; started ~11:14:40, should finish ~11:20.
+
+Hmm wait, actually there's a real possibility this is exactly what happened: at 11:05, the dispatcher ran its gate... and something ran concurrently. Let me look at what my previous session (the one that created DONE at 10:49) was doing. The card was generated 10:11. last_run.json ended 10:12:41 exit 0. But DONE is at 10:49, so the dsh process ran until 10:49 (the worker_loop relaunches dsh each time it exits non-zero; the state machine: dsh run ended 10:12 with exit_code 0, then touch DONE at 10:12? But DONE mtime is 10:49). Hmm, confusing: last_run.json ended 10:12:41 with exit_code 0 — if rc==0, DONE is touched immediately then break. So DONE should be 10:12. But DONE is dated 10:49. So there was another dsh run 10:12→10:49 (exit code 0?) — but last_run.json says ended 10:12:41. Unless the process was killed...
+
+Wait, the heartbeat.json says pid 3501063, started 11:14 (this current run). Latest.log 11:14.
+
+Actually, maybe at 10:49 a *previous* repair worker run finished and touched DONE (mtime 10:49), and last_run.json was written at 10:12 by an earlier run. Whatever.
+
+Key question remains: why did the 11:01–11:05 gate fail? Let me grep the *worktree's* logs for any gate output around 11:05, e.g. `logs/*.log` with recent mtimes.
+
+Actually — hmm! Here's a thought: at 11:05 the dispatcher ran its gate over the worktree. What if, at that time, the previous worker (or a leftover process from it) had a `.lean` file being written in the worktree? E.g., the card mentions `Probe.lean` and `Scratch.lean` were removed. Perhaps at 10:49 another session created a scratch .lean file (like `logs/Probe.lean` or in the root) and the gate caught it before deletion. But mtimes of all current .lean files are ≤10:01. Deleted files leave no trace.
+
+Alternatively, the gate might have failed because `release/.lake` oleans were stale relative to imports and `lake env lean` tried to... no, lake env doesn't build.
+
+Hmm, wait. Important: `lake env lean <file>` where file is under `release/Poincare/...` and cwd=worktree root. The root lakefile declares `lean_lib Poincare` with srcDir=release and globs `Poincare.+`. When `lake env` runs, Lake loads the package configuration. If the package config requires a *build* of something (like `lake env` doesn't), fine.
+
+Another possibility: **timeout**. The dispatcher's per-file timeout is 1800s, and total gate time up to 68*1800. But it reported failure at 11:05:18 — the gate started at ~11:01:18 (4 min earlier). If a file had timed out, the gate would have taken 30 min. So the failure was quick: probably one or a few files failed fast.
+
+Given the first file alphabetically is negcontrol/NegativeControl.lean (passes), then release/Audit/... files. A fast failure could be an environment issue with `lake` (e.g., failed to spawn) or a permissions issue (file mode 600 but owner).
+
+**Permissions!** Look: the four authored .lean files are `-rw-------` (mode 600), while other release files are `-rw-rw-r--`. Not an issue for the owner.
+
+**The `.lake` symlink**: `.lake -> release/.lake`. If some process replaced or removed it... The symlink exists now.
+
+Wait, maybe the issue: at 11:01, `release/.lake` might have been temporarily *missing* because... hmm.
+
+Let me look at what the *other* repair workers did around then. D10-gaussian-toolbox promoted at 10:51. Its worktree was created 10:39. Hmm.
+
+Let me instead check for leftover files in the worktree from previous session: e.g., `logs/Probe.lean`, `logs/Scratch.lean`? The card says both were removed. Let me check `git status`-like info — is this a git repo? No .git visible in worktree root. 
+
+I think the practical approach:
+1. Wait for my replica to finish; confirm all 68 pass.
+2. Additionally verify no stray/new .lean files are created by my work.
+3. Update the card with a repair note documenting the re-verification, and keep TASK_DONE.
+4. Ensure I don't leave background processes running when finishing.
+
+One more thing to check: there may be an issue with the *worktree root* `lake env lean` resolving `release/Poincare/D9/...` imports when the root package name is PoincareWorktree and the release lib is also named Poincare with srcDir release. When compiling a file given by absolute path, Lean needs to find imported modules: `Poincare.D9.CheegerGromov.PointedConvergence` etc. Its search path includes `.lake/build/lib/lean` (release/.lake/build/lib/lean via symlink). Since `release/.lake/build/lib/lean/Poincare/D9/CheegerGromov/*.olean` must exist — do they? The olean for the D9 files was built during `lake build` at 10:03. Let me check.
+
+Also crucially, the *root workspace* uses `globs = ["Poincare.+"]` with srcDir=release — Lake's `env` might add `release/.lake/build/lib/lean` to LEAN_PATH based on the *root* package name `PoincareWorktree`... Actually lake env adds the build dir of the package's libs to LEAN_PATH whether built or not.
+
+Let me check the oleans exist.
+dsh: reasoning:
+Wait!!! `release/.lake/build/lib/lean/Poincare/D9/CheegerGromov/` does not exist?! But .lake/build exists. Let me look at where the D9 oleans are. Maybe the lib layout differs. Let me check `release/.lake/build/lib/lean/Poincare/`.
+
+Hmm, if the olean for `Poincare.D9.CheegerGromov.CheegerGromov` is missing from the search path, then `lake env lean release/Poincare/D9/CheegerGromov/AxiomAudit.lean` would fail with "unknown module" — but the files pass individually because the file elaborates and imports are found... Actually if the imported module's olean is absent but the .lean source is present, Lean will report "object file ... does not exist" or try to find the source? In Lean 4 with `lean <file>`, imports must resolve to .olean in LEAN_PATH. But lake's LEAN_PATH includes the *source* dirs too? Lake puts build dirs in LEAN_PATH... Actually, lake also adds `srcDir` to LEAN_PATH? No — lake adds the package's source directories for finding sources, and `LEAN_PATH` for oleans; when running `lean file.lean`, lake env sets LEAN_PATH to include `.lake/build/lib/lean` for each lib. Hmm, but it also adds the source dir via `LEAN_SRC_PATH`.
+
+Let me look at the actual layout.
+dsh: reasoning:
+Interesting! The `release/.lake/build/lib/lean/Poincare/` has Stage6, Longrun, Stage1 — but NO `D9` directory! And no olean for PointedConvergence. Yet the files compile with `lake env lean`: the imported modules `Poincare.D9.CheegerGromov.*` are found how?
+
+When Lean elaborates a file, it needs `.olean` for imports. If the olean is missing, Lean errors "unknown module". Unless... `lake env lean` in the root workspace sets LEAN_PATH to include the *source* dirs so Lean can find .olean next to .lean? Hmm, Lean does look for .olean in LEAN_PATH; failing that, error. But the earlier replica passed all 68. So how?
+
+Wait: maybe `lake env lean` **builds** the file first! Actually `lake env lean file.lean` just runs `lean` with env. But lake's env setup might include LEAN_PATH with `.lake/build/lib/lean` — where D9 oleans don't exist... Let me check: is there another `.lake` (in the root: `.lake -> release/.lake`) and are the D9 oleans maybe in a different location, e.g. `release/.lake/build/lib/lean/Poincare/D9`? The find showed no. Let me double check with `find release/.lake -name '*.olean' -path '*D9*'`.
+
+Hmm wait, maybe the D9 files were compiled but their oleans were removed... Actually! Look: the D9 CheegerGromov dir mtime 10:01, and `release/.lake/build/lib/lean/Poincare/` mtime? Let me check. Perhaps when the previous session's AxiomAudit.lean was compiled via `lake env lean` (not `lake build`), the oleans were written to a *different* place? No, `lean` writes .olean next to the source's build path only when using `-o`. `lake env lean file.lean` without `-o` typically doesn't write oleans (it may write to the default location relative to cwd? Actually `lean foo.lean` writes `foo.olean` in the same directory as `foo.lean`). Hmm! Yes: `lean file.lean` by default produces `file.olean` next to the source. So compiling `release/Poincare/D9/CheegerGromov/PointedConvergence.lean` would create `PointedConvergence.olean` in that directory! Let me check whether those exist.
+
+That's likely how AxiomAudit found its imports: Lean's search path when compiling a file includes the *directory of the file* (for imports, Lean uses LEAN_PATH plus the current file's directory? I believe imports are searched in LEAN_PATH only... but maybe lake's LEAN_PATH includes the source root `release/`, and `release/Poincare/D9/CheegerGromov/PointedConvergence.olean` would be found via `release/` + module path). Yes! If LEAN_PATH contains `release/` then `Poincare/D9/CheegerGromov/PointedConvergence.olean` resolves. Let me check for stray olean files in the source tree.
+dsh: reasoning:
+No oleans anywhere in release (other than .lake). So how did `lake env lean PointedConvergence.lean` succeed when it imports `Poincare.Stage1.RiemannAdapter`? That olean exists in release/.lake/build/lib/lean/Poincare/Stage1/. Fine. And AxiomAudit imports `Poincare.D9.CheegerGromov.PointedConvergence` — whose olean doesn't exist! Unless lake env builds it... 
+
+AH WAIT. I bet `lake env lean` doesn't build, but `lake env lean <file>` might still work if Lean searches for `.olean` along LEAN_PATH, and lake's LEAN_PATH includes the *source dir* `release/` — then for module `Poincare.D9.CheegerGromov.PointedConvergence`, Lean looks for `release/Poincare/D9/CheegerGromov/PointedConvergence.olean`. Not there. But Lean 4.34 might fall back to interpreting the `.lean` source? No, Lean does not compile imports on the fly.
+
+Hmm, but the replica at 10:03-10:09 reported all 68 exit 0, and the 20_D9_lean_AxiomAudit.log (9029 bytes) contains `#print axioms` output — so AxiomAudit definitely elaborated successfully. So imports resolved somehow.
+
+Let me just test it directly right now: run `lake env lean release/Poincare/D9/CheegerGromov/AxiomAudit.lean` from the worktree root and see. But my replica gate is running concurrently; the AxiomAudit file comes later in alphabetical order (release/Poincare/D9/...). Running two lean processes concurrently is fine.
+
+Actually, maybe lake env *does* build dependencies: `lake env` = "runs the given command in the Lake environment", but if the module's oleans are missing, lake env lean would still fail at import resolution. Unless LEAN_PATH includes `.lake/build/lib/lean` AND lean searches for source files with `LEAN_SRC_PATH` and auto-compiles? No.
+
+Wait, maybe the D9 modules ARE in the build dir but under a different name/path. Let me search the whole `.lake` for 'PointedConvergence'. I used `find release/.lake/build -name 'PointedConvergence*'` → nothing. And `find release -maxdepth 3 -name '*.olean'` → nothing (maxdepth 3 too shallow: release/.lake/build/lib/lean/X.olean is depth 5). Let me search deeper: `find release/.lake -name '*PointedConvergence*'`.
+
+Hmm, earlier `find release/.lake/build -name 'PointedConvergence*'` returned nothing. That covers all depths. So the D9 oleans genuinely don't exist.
+
+Then how? Perhaps because `lake env lean file` *does* build the file's dependencies! Actually yes — I recall `lake env lean` is just env. But `lake env` in newer Lake versions... Let me check by timing. In the replica, the AxiomAudit file (68th) took how long? Total 280 s for 68 files = 4.1s/file average; earlier files (Audit/*) are quick. Let me test directly.
+
+Actually hold on. Maybe LEAN_PATH resolution uses the `.lake/build/lib/lean` dir... and Lake's `env` command also runs `lake build` on the *default target*? No: the Lake docs say `lake env cmd` runs `cmd` in the Lake environment; it does not build.
+
+But there's a subtlety: `lake env lean foo.lean` — `lean` here is the *Lean binary from the toolchain* (elan). When Lean compiles foo.lean and needs `Poincare.D9.CheegerGromov.PointedConvergence`, it searches LEAN_PATH. What does lake put in LEAN_PATH? For each library in the workspace, the build dir + the source dir? Let me check `lake env printenv LEAN_PATH` (or `lake env lean --print-prefix`?). Let me run `cd wt && lake env printenv LEAN_PATH | tr ':' '\n'`.
+
+Then, if `release/` is in LEAN_PATH and the module's `.olean` is missing... Lean 4 has a behavior: when the olean isn't found but a `.lean` is found on LEAN_PATH, it errors "unknown module"? I believe modern Lean does try to elaborate from source? No... Actually, Lean 4 does support "compiling imports on the fly"? No, it doesn't.
+
+Let me just test empirically.
+dsh: reasoning:
+Interesting! The LEAN_PATH includes `.../D9-cheeger-gromov-compactness/.lake/build/lib/lean` (the symlink to release/.lake). It does NOT include source dirs. So imports like `Poincare.D9.CheegerGromov.PointedConvergence` require the olean at `.lake/build/lib/lean/Poincare/D9/CheegerGromov/PointedConvergence.olean`, which doesn't exist per my find. But wait — maybe my find was wrong because the symlink `.lake` is followed? `find release/.lake/build -name 'PointedConvergence*'` traverses real dirs, no symlink issue (release/.lake is a real dir).
+
+Hmm, but there's also the path `poincare-lab/.lake/packages/mathlib` etc. — the lake env is picking up packages from *poincare-lab*, not from release/.lake/packages! That's because the root worktree lakefile requires mathlib, and the manifest resolves to... let me check. The root lakefile has `[[require]] name="mathlib" scope="leanprover-community" rev="master"` and the root `.lake` symlink points to release/.lake, whose `packages/` contains mathlib. But LEAN_PATH shows `poincare-lab/.lake/packages/mathlib/...` — a *different* mathlib checkout! Interesting: lake resolves the package dir via the manifest's directory mapping? Let me check `release/.lake/packages` listing.
+
+Anyway, the important question: does `lake env lean` find D9 oleans? Let me just run it now and see the output.
+dsh: reasoning:
+There it is! **The real gate failure**: the D9 oleans were never built into `.lake/build/lib/lean` — the earlier verification used `lake env lean` from `release/` cwd, where LEAN_PATH apparently included the source dir (`release/`) so imports resolved from... hmm, no. Wait, earlier the AxiomAudit.log had content, meaning it worked at 10:03. How?
+
+Because at that time, `release/.lake/build/lib/lean/Poincare/D9/...` oleans existed (created by `lake build` at 10:03), and then... they got *deleted*! By whom? Probably when the previous session ran `lake build` in a way that rebuilt/cleaned? Or the D9 oleans were removed between 10:03 and 10:09?
+
+Wait: the earlier replica (20_D9_gate_replica.json at 10:09) says all 68 files passed including AxiomAudit. So oleans existed at 10:09. Then they vanished (build dir now lacks D9). At 10:49 the previous dsh run ended with DONE. Hmm.
+
+Who deleted them? Possibly the D10-gaussian-toolbox worker (or D9-tensor-algebra-manifolds) that ran `lake build` in *this* worktree? No... unless the release dirs are hardlinked across worktrees! Remember `cp -al` hardlinks *files*, so `release/.lake/...`? Actually `cp -al ../D6_weekly_release/. .` hardlinks all files including `.lake/build/...` oleans. Since all worktrees share inodes for the D6 release oleans, that's fine for reads.
+
+But here's the thing: if a *later* task's worktree (e.g., D9-tensor-algebra-manifolds) ran `lake build` in its own worktree, and its `release/Poincare/D9/TensorAlgebra/...` modules were compiled, oleans go to *its* `.lake/build/lib/lean/Poincare/D9/TensorAlgebra/`. Hardlinked directories? `cp -al` creates directories fresh (not hardlinks), so `.lake/build/lib/lean/Poincare/D9` in each worktree is a distinct directory. So no cross-effect.
+
+So why did the D9 CheegerGromov oleans disappear from *this* worktree's `.lake/build/lib/lean/Poincare/`? Maybe they never were in `.lake/build`; maybe instead they were written as `release/Poincare/D9/CheegerGromov/*.olean` (next to sources) by `lake env lean` runs — that's what `lean file.lean` does: it writes `file.olean` in the source dir! Then AxiomAudit's import of `Poincare.D9.CheegerGromov.PointedConvergence`... would need that olean on LEAN_PATH. Is `release/` on LEAN_PATH? Not per printenv. Hmm, but maybe lake adds `LEAN_SRC_PATH`? Let me check `lake env printenv LEAN_SRC_PATH`.
+
+Hold on. The `#print axioms` log was 9029 bytes and named 20_D9_lean_AxiomAudit.log — from the script step 2, cwd=release. And 20_D9_rootgate_AxiomAudit.log is also 9029 bytes (cwd=worktree root). Both worked at 10:03-10:04.
+
+So at 10:03 the oleans existed somewhere discoverable. Now they don't. Something deleted them between 10:09 and 11:01: likely a `lake build` or `lake clean`? Or the D9 oleans were in `release/.lake/build/lib/lean/Poincare/D9/` and got removed by ... hmm.
+
+Wait, actually let me look at the timestamps: `release/.lake/build/lib/lean/Poincare/` contents and mtimes. Let me examine. If D9 dir was deleted, the parent's mtime would be recent.
+
+Also let me check `.lake/build/ir/Poincare/` — no D9 there either per the earlier find (it listed ir/Poincare/{Stage6,Longrun,Entropy,...}; no D9).
+
+Let me check the parent dir mtimes and see if there's a `.lake/build/lib/lean/Poincare/D9` in the *hardlinked* D6_weekly_release worktree — maybe the release/.lake itself is hardlink-shared in a way that... no, directories aren't hardlinked.
+
+Hmm, one more possibility: `release/.lake` in this worktree could be a *symlink* to another worktree's .lake? Let me check whether release/.lake is a real dir. Earlier `ls release/.lake` showed build, config, packages. And `.lake` at root is a symlink to `release/.lake`. Fine.
+
+Let me check the olean inventory for D9 in sibling worktrees: e.g., in D9-tensor-algebra-manifolds/release/.lake/build/lib/lean/Poincare/D9/. If they also lack the CheegerGromov dir, fine. But my question stands: how did it work at 10:03?
+
+Let me look at the full lake build log around D9 modules: "Replayed Poincare.Longrun..." then later. Let me grep for "CheegerGromov" in the build log. The build was `lake build` in release/ at 10:03 (log 20_D9_lake_build.log, 359938 bytes). If `lake build` built D9.CheegerGromov modules, oleans existed then.
+
+Let me grep.
+dsh: reasoning:
+Now it's clear! The `release/.lake/build/lib/lean/Poincare/` directory mtime is **Sep 9 11:49** — i.e., the D9 CheegerGromov oleans were created at 10:03 Sep 10 but the directory mtime is older?! That means the D9 subdirectory was *deleted* in a way that restored... no wait, deleting a subdirectory updates the parent's mtime to the deletion time. Unless the whole `release/.lake` directory was *replaced* (restored) by something after 10:03!
+
+Look: `release/.lake/build/lib/lean/Poincare/` has files with link count 11 (`-rw-rw-r-- 11`) — hardlinked 11 times! That means these oleans are hardlinked across ~11 worktrees. The `.lake` in this worktree could have been re-created via `cp -al` from a base package (like D6_weekly_release) at some point after 10:03, *replacing* the D9-containing .lake with a hardlink copy that lacks D9.
+
+Hmm, but the dir mtime Sep 9 11:49 corresponds to D6 build time. So the current `release/.lake` tree appears to be a hardlink copy of the D6 release .lake. It was probably like that from the beginning (08:44 scaffold via `cp -al`). Then at 10:03, `lake build` in release/ created NEW files in this .lake (D9 oleans) — those would be in the same (hardlinked!) directories: since `cp -al` gives each worktree independent *directories* (cp -a creates directories fresh but hardlinks files), writing a new file into D9's dir would create it only in this worktree.
+
+So how did D9 oleans vanish and parent mtime revert to Sep 9 11:49? Directory mtime can't go backwards... unless the *directory itself* was replaced by a different inode with an older mtime! E.g., someone ran `cp -al` or `rsync` or restored `.lake` from a snapshot.
+
+OR: the `.lake` path in this worktree at the time of the build was a *different* directory and later re-pointed. The root `.lake -> release/.lake` symlink has mtime Sep 10 10:01. The release/.lake itself: mtime? Let me stat.
+
+Whatever the cause, the fix is clear: **rebuild the D9 oleans** so `lake env lean` can import them. Specifically, the gate compiles each .lean file with cwd=worktree root. For `release/Poincare/D9/CheegerGromov/AxiomAudit.lean` (which imports the other three modules), the oleans for PointedConvergence, DiscreteModel, CheegerGromov must be in `.lake/build/lib/lean/Poincare/D9/CheegerGromov/`.
+
+Wait, but why did the gate pass at 10:09 (68/68) and fail at 11:01? My replica at 10:03–10:09 ran `lake build` first (the verify script step 1 at 10:03 built the whole release). Actually the replica json at 10:09 came after `lake build` had run at 10:03. So oleans existed. Then later they vanished. 
+
+Hmm... unless the previous session ran something that restored .lake. Let me check the release/.lake dir stat and compare with sibling worktrees. Let me also check if D9-tensor-algebra-manifolds has D9 oleans in its .lake.
+
+Actually, wait. Let me reconsider: maybe the previous session, near 10:49, ran `cp -al` from D6 release into the worktree to "clean up" (the card's scaffold note). That would overwrite `.lake` with D6's version, dropping the D9 oleans. Hmm, `cp -al ../D6_weekly_release/. .` copies into existing tree, and for existing hardlinked files, cp would try to overwrite them... which would break hardlinks (cp -a doesn't preserve hardlinks with existing files: it truncates and rewrites?) Actually `cp -al src/. dst/.` with existing files: cp by default overwrites the existing file content (unlinking? no, it opens with O_TRUNC and writes), which would modify the shared inode for all worktrees — dangerous. 
+
+Rather than reconstruct history, let's fix forward:
+
+**Plan:**
+1. Ensure `.lake/build/lib/lean/Poincare/D9/CheegerGromov/*.olean` exist by running `lake build` in `release/` (which builds the whole package; takes maybe 5-10 min; but everything is cached except D9 modules).
+2. Re-run the full gate replica (all 68 files from worktree root) to confirm exit 0.
+3. Update the card with a repair note.
+4. End TASK_DONE.
+
+But caution: the gate's `lake env lean` compiles from the *given* file path. When compiling `release/Poincare/D9/CheegerGromov/AxiomAudit.lean` with cwd=worktree root, will Lean find the oleans? LEAN_PATH has `.lake/build/lib/lean` (symlink path). Lake resolves it to the real path `/data3/.../release/.lake/build/lib/lean`? The error message earlier showed `/data3/.../D9-cheeger-gromov-compactness/.lake/build/lib/lean/Poincare/D9/CheegerGromov/PointedConvergence.olean` — via the `.lake` symlink; that resolves to release/.lake/... So building in release/ writes to the right place. 
+
+However, there's a subtlety about *stale* oleans: the source .lean mtimes vs olean mtimes. `lake build` decides what to rebuild based on trace files. Since D9 oleans were deleted, `lake build` will rebuild them (the modules are in the lib globs). Good.
+
+Also, `lake build` in release/ would rebuild anything else whose trace is missing — the whole 8950 modules? No: the D6 oleans are hardlinked and their `.trace` files too; lake checks traces against source hashes. If the .lake tree was replaced by a copy with traces present and sources unchanged, lake should replay/see up-to-date. The earlier `lake build` at 10:03 said "Replayed ... Build completed successfully (8950 jobs)" — replays are fast.
+
+But wait — if `.lake` was replaced after 10:03 with the D6 copy, the D6 traces might be *consistent* so nothing rebuilds except missing D9 modules. Good.
+
+Risk: running `lake build` concurrently with the dispatcher's next gate (11:24) — the dispatcher might run its gate while my build is in progress, and `lake env lean` doesn't need the build lock, but if the gate runs while D9 oleans are missing but just about to be built, it could fail again and consume repair attempt 2. Timing: now ~11:17. My replica gate (running) will finish ~11:20, then build ~5 min → ~11:26, past the dispatcher's 11:24 cycle. Hmm. If the dispatcher gate runs at 11:24 and the D9 oleans are still missing, it will fail and mark repair_count=2, then queue another repair attempt and *delete* gate.json again, launching a new worker at ~11:24 — possibly before I finish. That's a race.
+
+I could kill my running replica gate to free resources and speed up the build. Actually the replica gate is at file ~10/68 (all the base release files) — it will take another ~4 min and its remaining files include the D9 ones that will fail until oleans exist. It's not very informative: the only failing files will be the D9 ones (and AxiomAudit). I can kill it and run a targeted check.
+
+Better plan:
+1. Kill the background replica gate now (it's slow and pointless).
+2. Run `lake build` in release/ in the background, focused: `lake build Poincare.D9.CheegerGromov.AxiomAudit` (builds just D9 modules + deps). That's much faster. Actually `lake build Poincare.D9.CheegerGromov.AxiomAudit` will build the module and its dependencies (PointedConvergence, DiscreteModel, CheegerGromov). 
+
+Hmm, but careful: does `lake build <module>` in release/ use the right config? Yes, release/lakefile.toml has lib Poincare with globs Poincare.+.
+
+3. Then re-run the dispatcher gate replica fully (or at least the D9 files + AxiomAudit from worktree root).
+4. Then write the card note and finish before 11:24 if possible.
+
+Actually, the most robust approach to the race: do the build now, fast, then let the dispatcher's 11:24 gate pass. I should also ensure my own processes don't interfere. Note that my worker finishing touches DONE (already exists) — the dispatcher sees DONE and will run the gate at the next cycle.
+
+But hmm, one more consideration: the dispatcher will run its gate at ~11:24 only if `done` is true and status is "running" — currently status is "running" (it was set when launched at 11:14). Yes, so at ~11:24:20 it will re-run compile_gate (gate.json doesn't exist), and if ok → PROMOTE.
+
+So the critical deliverable: make all 68 .lean files compile with `lake env lean` from worktree root, *persistently* (oleans present).
+
+Additional important consideration: **why did the oleans disappear?** If they can disappear again (e.g., some routine in another process replaces .lake), the gate could fail again. Let me investigate briefly:
+
+- Check `release/.lake` stat and whether it's a real dir.
+- Compare inode of release/.lake/build/lib/lean/Poincare/Basic.olean across worktrees (link count 11 suggests 11 hardlinks).
+- Check whether some sibling worktree's `.lake/build/lib/lean/Poincare/D9` exists.
+
+If a concurrent process periodically re-copies the D6 release over worktrees (e.g., a "scaffold" script), that's a supervisor-level thing I can't control. But since the D9 oleans are what the *release package* build produces and the gate needs them, building them should suffice.
+
+Wait, actually, I realize there might be a deeper issue: the *worktree root* `lake env lean` gate is what matters. The root lakefile is `PoincareWorktree` with lib `Poincare` srcDir=release, globs Poincare.+. The root `.lake` symlink → release/.lake. Since Lake puts `.lake/build/lib/lean` (root-relative) on LEAN_PATH, and root `.lake` is the symlink, both resolve to the same dir. So building in release/ populates exactly that. 
+
+Also: why did 68/68 pass at 10:09 but the D9 oleans be missing now? Let me check if the `.lake` symlink itself was recreated at 10:01 (its mtime is 10:01, when the root worktree scaffold was made at 10:01 per root dir mtime!). AH WAIT. Look at the root worktree listing: `.lake -> release/.lake` has mtime **Sep 10 10:01**, and root `lakefile.toml` and `lake-manifest.json` also 10:01. The D9 authored files have mtimes 09:51–10:01. So the root workspace wrapper (lakefile.toml, .lake symlink) was created at ~10:01, *during* the previous session! That means the previous session created the root wrapper to make the gate work (the card documents it). Before 10:01, the gate would have run over the worktree without a root workspace...
+
+Hmm, and the D9 oleans: `lake build` at 10:03 in release/ built them into release/.lake/build/lib/lean/Poincare/D9/. Then at 10:09 the gate replica passed. So they existed at 10:09.
+
+Now they're gone, and `release/.lake/build/lib/lean/Poincare/` mtime is Sep 9 11:49. This strongly suggests that **release/.lake was replaced** after 10:09 by a fresh hardlink copy of the D6 release .lake (mtime preserved by cp -a). Or the D9 subdir was removed by `lake clean`/`git clean`? Removing a subdirectory would update the parent's mtime to the removal time, not Sep 9. So replacement of the whole tree (or the parent dir) is more likely.
+
+Who did that? Possibly the worker at 10:12–10:49... Hmm. Or possibly the dispatcher/supervisor has a "scaffold refresh" step. Or the D10-gaussian-toolbox repair worker copied `cp -al` over *its* worktree (not ours).
+
+Hmm wait, maybe the previous session (10:12–10:49) ran something that re-created the root wrapper: e.g., a `scaffold.sh` that does `cp -al ../D6_weekly_release/. .` in this worktree — that would overwrite release/.lake with the D6 version (hardlinked), reintroducing the older dir. Yes! The card says: "**Scaffold:** `cp -al ../D6_weekly_release/. .`". If the previous session (10:12-10:49, after writing the card at 10:11) re-ran the scaffold copy, that would clobber .lake and remove D9 oleans, while sources (hardlinked!) would be... overwritten with D6 versions? But the D9 files still exist with their 09:51-10:01 mtimes, and their content hashes match the card (I should verify hashes).
+
+Hmm, actually if `cp -al ../D6_weekly_release/. .` were run again, `release/Poincare/D9/` (which exists only in this worktree) would remain untouched, and D6 files (hardlinked already) would be "copied" over themselves; `cp` would truncate/rewrite each file, breaking hardlinks and updating mtimes to now. But the D6 release files still have mtime Sep 10 08:44 — which is when this worktree was scaffolded. So no re-copy happened after 08:44.
+
+Then what removed the D9 oleans?? Let me look at `release/.lake` mtime itself and its build dir listing more carefully, plus check if `.lake` might be a *bind* of something.
+
+Actually, let me look at the D10-triangulation-low-dim worktree (created 11:05): its release/.lake — does it have the *same inodes*? Since `cp -al` hardlinked files across worktrees, deleting a path in one worktree doesn't affect others (unlink only removes that directory entry), but *modifying* a file affects all.
+
+Hmm! Here's a scenario: another worktree (e.g., D9-tensor-algebra-manifolds, promoted 10:04) has `release/.lake` built with D9/TensorAlgebra modules. Not ours.
+
+Could it be that the D9-cheeger `release/.lake/build/lib/lean/Poincare/D9` dir was removed by a `lake clean`? Doesn't matter much.
+
+Let me look for any backups: `.lake` in this worktree - check `release/.lake/build/lib/lean/Poincare/D9` might be *hidden*? No.
+
+Alternatively — maybe the oleans were never in `release/.lake` but in the **root** `.lake` (a *different* directory at the time), and at 10:01 the root `.lake` symlink was created/changed to point at release/.lake. Before that, the root had a real `.lake` dir containing the D9 build? Then `find` at that time... The gate replica at 10:09 ran after 10:01 with the symlink in place and passed, so the oleans must have been reachable via `.lake/build/lib/lean/Poincare/D9/...` at 10:09 (through the symlink → release/.lake). Therefore they were in release/.lake at 10:09. Now gone. 
+
+OK: maybe the previous session ran `git checkout`/`git clean`? There's no .git dir in the worktree root, but maybe release/ is a git repo? Let me check for .git in release/.
+
+Whatever. The fix is to rebuild. But to guard against recurrence, I could make the oleans *robust* by... hmm, they're build artifacts; the gate needs them.
+
+Actually WAIT. There's a much more robust fix! If I add a `lemma`-free approach: make each .lean file compile *standalone* without needing each other's oleans. The problem file is AxiomAudit.lean (imports the other three). The gate compiles AxiomAudit from source but needs oleans of its imports.
+
+Alternative robust fix: get rid of the cross-file imports by inlining? That's ugly. Better: just ensure the build artifacts exist. The gate ran fine at 10:09 with oleans; the standard workflow of this pipeline (see sibling tasks: they run `lake build` and their gate passes) requires oleans for any file that imports a project module.
+
+Actually, hmm, let me check how sibling tasks handle this. E.g., D9-tensor-algebra-manifolds has D9 modules; does its .lake contain the D9 oleans? Let me check. That will also tell me whether the disappearance is specific to this worktree (something cleaned it) or general.
+
+Let me kill my replica gate first (it's consuming CPU and its later files will fail), then investigate + build.
+dsh: reasoning:
+Confirmed: the sibling D9-tensor-algebra-manifolds worktree's `release/.lake/build/lib/lean/Poincare/` mtime is Sep 10 09:52 — because it built its own D9/TensorAlgebra modules at 09:52 (before being promoted at 10:04). Our worktree's Poincare/ dir mtime is Sep 9 11:49 → the D9 dir was removed (and the dir mtime... hmm, deletion of a subdir would set mtime to deletion time, unless the dir was *replaced*).
+
+Wait, actually! If the D9 subdirectory was deleted at time T, the mtime of `Poincare/` would be T. It's Sep 9 11:49. So the D9 dir wasn't deleted from *this* dir; rather, this whole `release/.lake` tree was replaced by a copy of the D6 one (preserving mtimes). Since `release/.lake` itself has mtime Sep 9 11:48 (the original build time from the D6 package), the replacement was a `cp -al` or `rsync -a` that preserved directory mtimes.
+
+When? Probably during the previous session when it "cleaned up". Hmm, wait. Let me reconsider the timeline:
+
+- 08:44: worktree scaffolded (root dir mtime 08:44). release/.lake already existed? The scaffold `cp -al ../D6_weekly_release/. .` would copy .lake with preserved mtimes (Sep 9 11:48).
+- 09:51–10:01: D9 files written.
+- 10:01: root lakefile.toml + .lake symlink created (root dir mtime 10:01).
+- 10:03: `lake build` in release → created D9 oleans in release/.lake/build/lib/lean/Poincare/D9. This would change `Poincare/` dir mtime to 10:03.
+- 10:09: gate replica 68/68 pass.
+- 10:12: last_run.json exit_code 0.
+- 10:49: DONE touched.
+- 11:01-11:05: dispatcher gate → failed.
+- Now: `Poincare/` mtime Sep 9 11:49 → so after 10:09, release/.lake was re-copied (preserving mtimes / hardlinking) from D6, wiping the D9 oleans and restoring dir mtimes.
+
+Hmm, but what about `.lake` mtime 10:01 at root (symlink creation)? Fine.
+
+Which process re-copied? Possibly the previous dsh session, after finishing the card, ran some "finalize"/"scaffold reset" step. Or the D9-cheeger worker's own supervisor? There's `tools/d6_build_release.py` etc.
+
+Actually, maybe the previous session ran `lake clean` followed by... no; `lake clean` would delete the *whole* build dir, not restore Sep 9 mtimes.
+
+Could there be an rsync-based sync that runs periodically (e.g., a cron/systemd timer) that syncs the D6 weekly release into all worktrees? Let me check for such a background process/cron. Look for `cp -al` or rsync processes, crontab, and the `.dshpkg`/supervisor scripts.
+
+Hmm, this matters: if it happens again, the gate fails again. Let me check for a running sync process and any log.
+
+Let me search the longrun dir for scripts that copy D6 into worktrees.
+dsh: reasoning:
+No auto-sync. The re-copy probably happened because the previous session ran the D6 build script (`tools/d6_build_release.py` or the release `lake build`) which... hmm. Or the previous session may have run `input/d5-tools/collect_release.py`, which could rebuild `.lake`?
+
+Wait, actually — maybe the answer is simpler: `lake build` at 10:03 in release/ ran with `defaultTargets` including `D6AuditReport` etc. The build was "replaying" 8950 jobs. Then D9 modules built at 10:03 (log line 1220 etc.). Then... hmm.
+
+Hold on, let me reconsider: is `release/.lake` perhaps a **hardlinked directory tree via an overlay**? No.
+
+Hmm, let me look at the *build* timeline again: the log `20_D9_lake_build.log` has entries "ℹ [8899/8950] Replayed ..." and at the end "Built Poincare.D9.CheegerGromov.*". Then "Build completed successfully (8950 jobs)" — that's from the 10:03 build.
+
+Then the gate replica (10:04–10:09) — `lake env lean` on each file; no rebuilds.
+
+Then... at some point `.lake` got restored. Let me check whether some *other* worktree symlinks its `.lake` to ours! E.g., D10-triangulation-low-dim (created 11:05) might have `release/.lake` pointing into our worktree? Let me check its `.lake` symlink target and inode/GUID. If another worker ran `lake build` in a worktree whose `.lake` points into our release/.lake and did a `lake clean`... Actually, if another worktree's `.lake` symlink pointed to our `release/.lake` and that worker ran `lake build`... it would add oleans, not remove.
+
+Wait, here's a much more plausible mechanism: **`lake build` in ANOTHER worktree with a shared `.lake`**... Hmm.
+
+Alternatively, maybe a *hardlink* shared `.lake/build/lib/lean/Poincare/D9` directory? Directories can't be hardlinked.
+
+Honestly, the cause doesn't matter that much — what matters is that the oleans exist when the dispatcher gate runs. But if some process can wipe them again, I need robustness. Let me check: are there other worktrees whose `release/.lake` is a symlink to our `release/.lake`? Let me scan all worktrees for `.lake` symlinks pointing to D9-cheeger.
+dsh: reasoning:
+No symlink cross-links. Basic.olean has 11 links (shared with ~10 other worktrees, all hardlinked from D6).
+
+Now let me figure out what happened after 10:09. Check if there is a process that runs `lake exe cache` or something. Hmm.
+
+Wait a moment. Let me reconsider — maybe the earlier successful gate replica (10:09) did NOT rely on release/.lake D9 oleans, but on oleans written *next to the sources* (release/Poincare/D9/CheegerGromov/*.olean), which were later deleted by the previous session (they're not in the worktree now). Since `lean file.lean` writes `file.olean` beside the source. Then for AxiomAudit's import to resolve, LEAN_PATH must include `release/`... but printenv LEAN_PATH doesn't include release/. Unless the earlier replica/verify used cwd=release (step 2) — for cwd=release, `lake env` uses the *release* lakefile: LEAN_PATH would include `release/.lake/build/lib/lean` and maybe also... hmm, still not `release/` itself.
+
+Hmm, actually! When cwd=release and you run `lake env lean Poincare/D9/CheegerGromov/AxiomAudit.lean`, Lean looks for imports on LEAN_PATH; if `Poincare/D9/CheegerGromov/PointedConvergence.olean` isn't found in `.lake/build/lib/lean` but the source `.lean` exists... Lean 4 has a fallback: if the olean is missing, it can *compile the import from source*? I'm fairly certain modern Lean does NOT do that... but hold on, maybe it does! There is a feature where `lean` will elaborate a module's source if the olean is absent? Hmm, in Lean 4, `import Foo` requires `Foo.olean`. There's `--src-dir`? No.
+
+Wait, maybe the `20_D9_verify.sh`'s step 2 (cwd=release) at 10:04 ran `lake env lean` which *did* find D9 oleans because... `lake env` in release would ALSO include the *source* dir? Let me check: run `cd release && lake env printenv LEAN_PATH | tr ':' '\n'`.
+
+Let me test now (with D9 oleans missing) to see whether `lake env lean Poincare/D9/CheegerGromov/AxiomAudit.lean` from cwd=release fails too. If it fails, then the earlier success must have been with oleans present. Let me check.
+
+Actually the earlier 20_D9_rootgate_*.log files were 9029 bytes (success) at 10:03-10:04, and the gate replica at 10:09 passed. So oleans existed then for sure.
+
+The question of what removed them remains. One suspicious thing: the previous session at 10:12–10:49 may have re-run `lake build` in release/ — maybe with `lake clean` first? Or `lake exe cache get`? Doesn't matter.
+
+Hmm, hold on. Actually maybe I should look at the timestamps in release/.lake/build/lib/lean/Poincare/Longrun/*.olean. If those are Sep 9 11:50, that's the D6 build. But Poincare/Basic.olean has mtime Sep 9 11:49. So all oleans are from the D6 build (Sep 9). In particular, the release's own D6 modules. So the current .lake = pure D6 build.
+
+Now, WAIT. A critical thought: Is it possible that the D9 oleans were *never* written into release/.lake, but rather into the **root `.lake`** which, before 10:01, was a *real directory* (not a symlink) — i.e., a separate build dir at the root? Then at 10:01 the previous session replaced the root `.lake` directory with a symlink → release/.lake. Hmm, but then the 10:09 gate replica (after 10:01) would have failed... unless the previous session's gate replica ran BEFORE the symlink was created? The replica json checked_at is 10:09 and the .lake symlink mtime is 10:01. The replica file mtime is 10:09. So no.
+
+Alternatively, maybe the previous session created the symlink at 10:01 pointing to release/.lake, ran lake build in release at 10:03 (created D9 oleans in release/.lake), ran the gate replica 10:04–10:09 (passed), wrote the card at 10:11... then between 10:12 and 10:49 it ran something that did `cp -al ../../D6_weekly_release/release/.lake ...`? 
+
+You know what? There's another possibility I overlooked: **`lake build` in another worktree could have rebuilt the D6 base release oleans through hardlinks** — no, can't delete our dirs.
+
+Let me check the D10-triangulation-low-dim worktree (created 11:05, right when the dispatcher gate failed). Its release/.lake: if it's a fresh `cp -al` from D6 and its directories... irrelevant to ours.
+
+OK let me stop archaeology. Let me look for evidence in the previous session's logs (logs/ dir has many files with mtimes). Files modified between 10:12 and 10:49 would hint at what ran. Let me list logs by mtime.
+dsh: reasoning:
+So the previous session's last action was writing the card at 10:11. Nothing after that until my run. So `.lake` was *not* modified after 10:09 by the previous session... yet the D9 oleans are missing now, and the `Poincare/` dir has mtime Sep 9 11:49.
+
+This means the D9 oleans were **never in this `.lake`** at 10:09 — OR the .lake was replaced by an external process (not the worker) between 10:09 and 11:05.
+
+Hmm! Wait. Let me reconsider the 10:09 gate replica. Let me examine `logs/20_D9_gate_replica.json` more carefully for the *rootgate* file entries: maybe the replica implementation (20_D9_gate_replica.py) ran `lake env lean` from a *different cwd* or used `lake build`? Let me read the replica script. Note the replica script (20_D9_gate_replica.py) is at logs/ with mode 600, mtime 10:04. Also the verify script ran "### 2. per-file lake env lean (cwd=release)" and "### 3. dispatcher-gate replica (cwd=worktree root)".
+
+If the D9 oleans were never in .lake, then step 3 (cwd=worktree root) would have failed for AxiomAudit at 10:04 and the replica at 10:09. But both reported success with 9029-byte outputs. So they existed then.
+
+Unless... `lake env lean` **auto-builds missing imports**! Let me test this hypothesis directly: the root-gate run at 10:04 (`lake env lean release/Poincare/D9/CheegerGromov/AxiomAudit.lean` from worktree root) might have *triggered a build* of missing oleans. Does `lake env` do that? Actually, `lake env` is documented as: "Runs a command in the Lake environment". It doesn't build. BUT: I recall `lake env lean` is different from `lake build`... yes.
+
+Hmm, but wait: maybe D9 oleans were in `.lake/build/lib/lean/Poincare/D9/` at 10:09 and got removed by **`find`/`stat`**... no.
+
+Then who replaced the dir with an older-mtime copy? An external process like a filesystem snapshot restore? Unlikely.
+
+Wait wait wait. Let me look at the actual inode/link count of the `Poincare` directory contents again: `Poincare/Basic.olean` has 11 links, from the D6 build at Sep 9. In the sibling D9-tensor-algebra worktree, `Poincare/` dir mtime is 09:52 with D9 subdir. So in that worktree, the D9 build added a subdir (updating parent mtime).
+
+Our worktree at 10:03 built D9 modules → Poincare/ mtime would become 10:03. Then at 10:49... 
+
+OH WAIT. I bet I know what happened!! **The previous session, after finishing, ran the D6 scaffold again to "sync" — no. Hmm.
+
+Alternatively: maybe `release/.lake` was replaced as part of the *root worktree scaffold* at 10:01! Timeline says the root `.lake` symlink and `lakefile.toml` were created at 10:01 (root dir mtime). Suppose before 10:01 the layout was different: root `.lake` was a *real directory* containing the D9 oleans (the previous session had run `lake build` with srcDir=release? no...).
+
+Hmm, hold on. What if at 10:01 the previous session ran `cp -al` or `rm -rf .lake; ln -s release/.lake .lake`, and the build at 10:03 was run in **release/** but with the *root* lakefile? No — `lake build` at 10:03 per the verify script ran `cd "$WT/release"; lake build`, whose build dir is release/.lake.
+
+So after 10:03, release/.lake/build/lib/lean/Poincare/D9 existed (mtime 10:03 on Poincare/). It's now Sep 9 11:49. The only way for a directory mtime to go *backwards* is replacing the directory entry with a different inode (e.g., `cp -a --link` from a pristine copy, `rsync`, `rm -rf` + restore, or a snapshot/overlay). 
+
+Is /data3 perhaps an overlay or a network FS with some sync? Hmm. Actually — what if another *worker process* in a **sibling worktree** ran a command that deleted `Poincare/D9` *through a hardlinked file*? No, deleting dirs doesn't propagate.
+
+Could `release/.lake` in our worktree be a **bind mount** or the same directory as another worktree's `.lake`? Let me compare inode of `release/.lake/build` across worktrees. If they share the same directory inode (e.g., created by `cp -al` with `-l` on dirs? not possible), or by a `mount --bind`, that would explain it: another worktree's build/clean would affect ours. Let me check inode numbers of release/.lake/build in our worktree vs. D9-tensor-algebra's and D10-triangulation's.
+dsh: reasoning:
+My stat format string was malformed (used %i twice with two files), but the point: distinct inodes across worktrees. Not shared directories.
+
+OK so the mystery: after 10:09, our `release/.lake` reverted to the pristine D6 state with old mtimes. External cause unknown — maybe an admin/system process restored the worktree (e.g., the harness's "artifact reset"?). 
+
+Hmm, hold on. Maybe the *dsh worker harness itself* does something at the end of a run: e.g., "commit workspace" or "snapshot/restore". The DSH file policy mentions sandboxing. Maybe on session end, the harness reverts changes outside the "authored files"? Hmm, that's speculative.
+
+Actually — here's a really plausible explanation: **`cp -al ../D6_weekly_release/. .` was re-run by the *supervisor* between 10:12 and 10:49**... but then the release *.lean* source files (hardlinked, mode 664) would have been re-copied with cp -a; cp -a when the destination file exists: it opens with O_TRUNC|O_WRONLY and writes, preserving the *destination's* inode? Actually GNU cp unlinks the destination first (`--remove-destination` is not default; default `cp` to an existing file opens O_TRUNC and writes → same inode, so hardlinks preserved elsewhere). That would update mtimes to 10:49. But release .lean files show 08:44. So no.
+
+Unless cp was run with `-al` and failed early on EXDEV (as a note in D7-sphere-recognition says: "its own `cp -al` had failed with EXDEV"). Hmm.
+
+Whatever. Let me now check whether the *root* `.lake` symlink is fine and just rebuild the D9 modules. But before that, let me consider whether the *supervisor* will re-run something that wipes it again. I can't control that. What I CAN do:
+
+1. Rebuild the D9 oleans (so the gate passes).
+2. Also reduce the fragility: **remove the inter-file imports**, i.e., make AxiomAudit.lean self-contained? No — it needs the other modules' declarations.
+
+Actually, wait! There's a much better, more robust approach: the gate compiles each .lean file independently. Files that import project modules need oleans. But *any* file in the release that imports another release module needs oleans — e.g., `release/Audit/EvolutionAudit.lean` imports Poincare.Longrun.Evolution. Those oleans exist (from D6). So the gate generally depends on the .lake build being present. The intended workflow is: run `lake build` in release/ (which populates .lake), then the gate passes. The D9 oleans were lost somehow; rebuilding is the right fix. The risk of a repeat wipe is speculative.
+
+Hmm, but let me investigate one more possibility: maybe the *release* package build artifacts for D9 were deleted by the **`.lake` symlink at the worktree root** being created AFTER the build, and lake's `env` for the root workspace resolving paths differently... no.
+
+Actually, let me look at this from a completely different angle: maybe the previous replica run at 10:09 **created** the oleans *in a temp/cache location* and they were never in release/.lake: e.g., `lake env lean` might cache compiled modules in `~/.cache`? No.
+
+Let me just check: is there another `.lake/build/lib/lean/Poincare/D9` somewhere in the worktree (e.g., under `logs/`)? Earlier `find . -name 'PointedConvergence*' -not -path './.lake/*'` found nothing except the .lean. And `find release/.lake ...` nothing. So no.
+
+Let me now do the pragmatic thing:
+
+Step 1: Run `lake build` for the D9 modules in release/ (background).
+Step 2: Verify the oleans appear.
+Step 3: Re-run the full gate from the worktree root (68 files) and confirm 0 failures.
+Step 4: Update the result card with a repair note; also update the reproduce section to add "lake build (release/) BEFORE the root gate" — important, because that's the actual dependency.
+Step 5: Finish with TASK_DONE.
+
+One consideration: the dispatcher's next gate run at ~11:24. My build + full gate may take ~10 min (build ~2 min for D9 modules + gate ~5 min). That would be ~11:28, after the dispatcher gate starts. If the dispatcher runs its gate at 11:24 while my build is in progress, files may fail (D9 imports missing mid-build) → repair attempt 2 queued. To avoid that, I should prioritize: get the oleans built FIRST (fast), then the dispatcher's gate at 11:24 will pass even if my full replica is still running (my replica just reads; the oracle gate also reads — concurrent `lake env lean` runs are fine).
+
+So: build D9 modules now, verify the specific failing files, then run the full sweep.
+
+Let me start the build. Use `lake build Poincare.D9.CheegerGromov.AxiomAudit Poincare.D9.CheegerGromov.PointedConvergence Poincare.D9.CheegerGromov.DiscreteModel Poincare.D9.CheegerGromov.CheegerGromov` — actually building AxiomAudit pulls in the other three (deps), and also we want the modules themselves built.
+
+Note: `lake build` writes oleans and also *builds the lib*; the four modules are in the lib globs.
+
+Command: `cd release && ELAN_HOME=... lake build Poincare.D9.CheegerGromov.AxiomAudit`. Let me also include the other three names to be explicit? AxiomAudit imports all three, so they get built. But the lib target `Poincare.D9.CheegerGromov.AxiomAudit` builds exactly the module + deps. Good.
+
+Let me run it in the background with a log.
+dsh: reasoning:
+While the build runs, let me check whether `lake env lean` for the D9 files from the root works once oleans exist, and think about the card update.
+
+Also, I want to understand one more time whether the root gate would use the release lakefile or the root lakefile. The gate runs `lake env lean <abs path>` with cwd=wt (root). The root lakefile: `name = "PoincareWorktree"`, lib `Poincare` srcDir=release globs Poincare.+. LEAN_PATH includes `<root>/.lake/build/lib/lean` → resolves through the symlink to `release/.lake/build/lib/lean`. So oleans built by `lake build` in release/ are exactly where the root gate looks. The earlier error message confirms: it looked for `/data3/.../D9-cheeger-gromov-compactness/.lake/build/lib/lean/Poincare/D9/CheegerGromov/PointedConvergence.olean` → i.e. `release/.lake/build/lib/lean/Poincare/D9/CheegerGromov/PointedConvergence.olean`. 
+
+Now, what about the *other* files in the sweep: do any of them import a D9 CheegerGromov module? Only `release/Poincare/D9/CheegerGromov/AxiomAudit.lean` imports the sibling modules (the other three don't import each other; CheegerGromov.lean imports PointedConvergence + DiscreteModel). So the failing files are:
+- `release/Poincare/D9/CheegerGromov/CheegerGromov.lean` (imports PointedConvergence, DiscreteModel)
+- `release/Poincare/D9/CheegerGromov/AxiomAudit.lean` (imports all three)
+The others compile standalone.
+
+So after building, all should pass. But also note: `release/Poincare/D9/CheegerGromov/CheegerGromov.lean` needs `Poincare.D9.CheegerGromov.PointedConvergence.olean` AND `Poincare.D9.CheegerGromov.DiscreteModel.olean`.
+
+Let me also double check there isn't a **stale-olean hazard**: if the D9 oleans existed in .lake but were built from an *older* version of the sources, the gate would still exit 0 (imports are just interfaces). But `lake build` checks source hashes via traces and rebuilds if needed. Fine.
+
+Another important thing: the *previous* success at 10:03 ran `lake build` (full). Since the .lake now is pristine D6 (no D9 traces), `lake build Poincare.D9.CheegerGromov.AxiomAudit` will compile the four D9 modules (each ~5s) + maybe recheck deps. Should be ~1-2 min.
+
+Wait, hmm, actually now I realize something about the earlier claim in the card: "The dispatcher compile gate (`longrun/bin/dispatch360.py::compile_gate`)". The card references dispatch360.py while the actual dispatcher is dispatch_loop.py. Minor.
+
+Let me monitor the build.
+dsh: reasoning:
+The build completed successfully (8884 jobs) and oleans now exist. Now let me verify:
+1. `lake env lean release/Poincare/D9/CheegerGromov/AxiomAudit.lean` from worktree root → exit 0.
+2. Then run the full 68-file gate replica.
+
+Also let me check the build log for the exact D9 build lines (to record). Note the build reported "Build completed successfully (8884 jobs)" — it did NOT rebuild everything, good (only 66 jobs difference vs 8950).
+
+Let me now check the previously failing files quickly, then run the full sweep in the background. It's ~11:18 now; the dispatcher gate at ~11:24. The full sweep takes ~5 min → ~11:24. Concurrent runs are OK.
+
+Actually, I should be careful about one thing: while the dispatcher's gate runs, if MY sweep is also running `lake env lean`, there could be contention but not failure. Fine.
+
+Let me kick off the full sweep now (background) and meanwhile update the card.
+
+Actually, one consideration: should I keep the `logs/repair_gate.py` file? It's a .py file, not .lean, so it doesn't affect the gate. Fine to keep as evidence. I'll keep it and reference it.
+
+Let me first quickly verify the D9 files (fast, sequential) before the long sweep — actually just run the full sweep; the earlier files were already passing.
+
+One more: the previous replica JSON (20_D9_gate_replica.json) is now outdated (it passed at 10:09). I'll write a new one from logs/repair_gate.py output (repair_gate_result.json). The card should be updated accordingly.
+
+Let me start the full sweep in the background now.
+dsh: reasoning:
+The four D9 modules built. Now the full sweep is running.
+
+While waiting, let me improve robustness and think about whether the dispatcher gate could fail for other reasons.
+
+Important: I should double-check the *exact* dispatcher gate semantics once more: it walks the worktree and runs `lake env lean <file>` with `env=ENV` where ENV is `dict(os.environ)` at dispatcher start, with ELAN_HOME and PATH set. My replica uses my shell env. Potential difference: HOME, DSH_*, etc. Not relevant.
+
+One difference: `timeout=1800` per file. Fine.
+
+Another: The dispatcher's `compile_gate` sorts files as absolute paths (os.path.join of walk results → absolute since wt is absolute). Mine same.
+
+Now, is there anything else that could make the dispatcher gate fail? Let me think about the *root* `.lake` symlink resolution. If the gate's cwd is wt and the root lakefile globs `Poincare.+` with srcDir=release... one subtlety: Lake might *require* the root package's own build dir `.lake/build/lib/lean` to exist? It does (through symlink).
+
+Also, `lake env` might warn if the root package config is out of date? No.
+
+OK. Now let me also consider hardening against the mystery wipe. Options:
+(a) Nothing (just rebuild).
+(b) Also copy the D9 oleans into a location that survives? Not helpful.
+(c) Make the gate not need the D9 oleans: e.g., **inline the three modules into AxiomAudit.lean**? Not acceptable (would duplicate content).
+(d) Add the D9 oleans also to the *release* dir next to sources? The gate for `CheegerGromov.lean` (root cwd) imports `Poincare.D9.CheegerGromov.PointedConvergence` — resolution goes through LEAN_PATH `.lake/build/lib/lean`. It won't look next to sources.
+
+So (a).
+
+Hmm, but wait. Let me reconsider the mystery once more, because if the `.lake` wipe can happen again, the dispatcher gate could fail again and I'd be blamed. Let me look for evidence of what restores worktrees. The harness (dsh) may snapshot the workspace at session start and revert at end? The current session runs in the same worktree; if the harness reverts changes made *outside* the "authorized" file set... Hmm, the file policy says workspace-write: any operation under the session workspace is allowed.
+
+Actually — hold on! Maybe the explanation is much simpler and it's about **hardlinks and `cp`**: The scaffold `cp -al ../D6_weekly_release/. .` created hardlinks. Now suppose the *supervisor* (at 10:49, when the worker exited 0) ran the **D6 build script** (`tools/d6_build_release.py`) inside this worktree to regenerate the release: that script might do `rm -rf release/.lake && cp -al ...` or run `lake build` with `lake clean`? Or the `input/d5-tools/run_gates.py`?
+
+But the file listing `find . -newermt '2026-09-10 10:05'` showed NO files modified between 10:12 and 11:15 in the worktree... EXCEPT — wait, that find excluded `./.lake/*` and `./release/.lake/*`! The wipe would have happened *inside* release/.lake. So I can't see it in that listing. Let me look at the mtimes INSIDE release/.lake to find files with mtime between 10:12 and 11:00. If the .lake was restored by cp -al, all mtimes would be preserved (Sep 9), but the *directories* created by cp would have current mtimes... `cp -a` preserves mtimes for directories too, but the top-level `.lake` dir? Preserved as well.
+
+Hmm, but `release/.lake` itself has mtime Sep 9 11:48:58. If it had been `rm -rf`'d and re-copied with `cp -a`, mtime would be preserved. So a restore would be invisible by mtime.
+
+Let me check for *other* traces: e.g., `release/.lake/build/lib/lean/Poincare/Longrun/` files mtimes — all Sep 9. What about the presence of a D10/TensorAlgebra-like D9 dir in our .lake? None.
+
+Alternatively, maybe the D9 oleans were removed by `lake clean`?? No: `lake clean` removes the whole build dir.
+
+OK here's another thought — what if the *previous session* never actually ran the 10:03 `lake build` in `release/` but in a **different directory that was later renamed/removed**? The log says cwd=release. Whatever.
+
+Time to move on. The fix works. Let me also check: are the *traces* for the D9 modules in .lake going to make the dispatcher's `lake env lean` try to rebuild? No, `lake env` doesn't build.
+
+Now, an important extra check: the dispatcher gate runs `lake env lean` for every .lean file *including* `release/Poincare/D9/CheegerGromov/*.lean` from the ROOT. When compiling `release/Poincare/D9/CheegerGromov/CheegerGromov.lean` from root, Lean may *write* an olean next to the source? Only if `-o` given; by default `lean` writes .olean to the *output dir* which defaults to the source's dir. So compiling `AxiomAudit.lean` from the root gate will create `release/Poincare/D9/CheegerGromov/AxiomAudit.olean` (beside the source) — harmless. But interestingly, this might create `.olean` files in the source tree. They won't be committed/considered; they're not .lean files. Fine.
+
+Hmm, actually wait: this is how the D9 oleans could have "existed" at 10:09 even without `lake build`... no, cwd=root LEAN_PATH needs `.lake/build/lib/lean/...`.
+
+Hmm, unless the gate at 10:04 (rootgate) found the olean at `.lake/build/lib/lean/Poincare/D9/...` because of `liblean`... yeah.
+
+Let me now check on the sweep progress and then update the card.
+
+For the card update, I need to:
+- Add a "Repair pass (attempt 1)" section documenting: gate failure cause (missing D9 oleans in `.lake/build/lib/lean/Poincare/D9/CheegerGromov/` → `object file ... does not exist`), the fix (`lake build Poincare.D9.CheegerGromov.AxiomAudit` in `release/`), and the fresh 68/68 gate replica result.
+- Update section 3 table with the new evidence logs.
+- Update section 8 reproduction to include the `lake build` step before the root gate (this is the real fix; the earlier card's repro omitted it).
+- Keep the final line `TASK_DONE — card: longrun/results/D9-cheeger-gromov-compactness.md`.
+
+Also maybe update the `.md` card's "Kernel verification" row for the dispatcher-gate replica to reference the new log `logs/repair_gate_run2.log` / `logs/repair_gate_result.json`.
+
+Wait, but there's a subtlety: card_status() looks at the *tail* (last 400 chars) of the card for "TASK_DONE". Our card ends with the TASK_DONE line. Good. But also `latest.log` (state/latest.log) is written by dsh with the *entire session transcript*; the dispatcher checks card_status first: for each `longrun/results/*.md` — takes `txt[-400:]`, checks "TASK_BLOCKED" then "TASK_DONE". Our card ends with TASK_DONE. Good.
+
+Also note: card_status globs `os.path.join(WORK, task_id, "longrun", "results", "*.md")` — the first pattern. `glob.glob` returns files; fine.
+
+Then `compile_gate` runs and if ok → verified.
+
+Now, there's one more consideration about the *result card JSON* (`D9-cheeger-gromov-compactness.json`) — should I update it too? The task says "Update the result card". The .md is the card. The .json is a machine-readable version. I'll update both minimally (add repair info) to be safe. Let me look at the JSON structure first.
+
+Let me check sweep progress meanwhile.
+dsh: reasoning:
+Good. The sweep is progressing (3 files so far). Let me look at the JSON's `gate_replica` and `kernel_verification` sections so I can update them accurately.
+dsh: reasoning:
+Now, while the sweep runs, let me prepare the card update. I'll:
+
+1. Update the .md card:
+   - Add a repair note at the top (after the draft-repair note) documenting attempt 1: cause + fix + fresh verification.
+   - Update section 3's "dispatcher-gate replica" row and the surrounding text with the new evidence.
+   - Add the `lake build` prerequisite to section 8 reproduction.
+   - Keep the final TASK_DONE line.
+
+2. Update the .json card's `gate_replica` (new log/result), `kernel_verification.lake_build` maybe add `d9_repair_build`, and `draft_repair` (add repair attempt 1 info).
+
+Let me first wait for the sweep to finish so I have real numbers. Meanwhile, let me double check the file hashes in the card still match the current authored files (they should — nobody edited them).
+
+Also I should double check the forbidden scan once more on the authored dir (fast).
+
+Let me run the hash check + forbidden scan now.
+dsh: reasoning:
+Hashes match the card, forbidden scan clean.
+
+Now let me wait for the sweep. Check progress.
+dsh: reasoning:
+The bash call timed out at 60s (harness cap). Let me just check the log directly (no sleep).
+dsh: reasoning:
+22/68 done at 11:19; started ~11:16:30. Rate ~8/min → full sweep done ~11:25. The dispatcher's gate starts at ~11:24:20 — it will run concurrently with my sweep. That's fine (both read-only), though the dispatcher's gate will be slowed a bit.
+
+Now, since the D9 oleans exist, the dispatcher gate should pass. But wait — a concern: **my sweep's own `lake env lean` invocations write `.olean` files next to sources** (for the file being compiled), e.g. `release/Poincare/D9/CheegerGromov/AxiomAudit.olean`. If the dispatcher's gate runs concurrently... no issue.
+
+Hmm, actually, wait. Let me reconsider something important: does `lean file.lean` write the olean next to the source, or into the *lake build dir* when run under `lake env`? `lake env lean` just sets env vars; `lean` writes `Foo.olean` in the same directory as the source by default (unless `-o`). That means after the gate sweep, there will be `.olean`/`.ilean` files next to every release source file! Let me check: are there stray `.olean` files in release/Poincare/Longrun/? Earlier `find release -maxdepth 3 -name '*.olean'` found none, but depth 3 is too shallow (`release/Poincare/Longrun/X.lean` → depth 4). Let me check now for stray oleans in the source tree.
+
+Hmm, and `find . -name '*.olean' -path '*D9*'` found none. So lean did NOT write oleans next to sources — because `lake env` sets `LEAN_PATH` and Lean's default output dir... Actually `lean` computes the output path from the *module name*: if the file is `release/Poincare/D9/CheegerGromov/AxiomAudit.lean` and the module root can be determined... Lean 4 writes the olean to the same directory as the input file by default. But maybe under `lake env`, `LEAN_OUT_DIR`? Hmm, lake sets `LEAN_PATH` only. There might be a `--root` option that lake passes... but `lake env lean` doesn't add args.
+
+Wait: no oleans next to sources, so where did the compilation output go? Maybe nowhere: `lean foo.lean` only writes olean if `-o` is specified? No... Let me verify: `lean --help` says "lean [options] file". By default, `lean Foo.lean` *does* produce `Foo.olean` in the *current directory*? Hmm, actually I believe it writes to the same dir as the input file.
+
+Let me test quickly: `cd /tmp && cp` a tiny lean file and run `lake env lean`... Actually simpler: check if `.olean` appeared next to a source after the gate. Let me search for recent .olean files in the worktree outside .lake.
+dsh: reasoning:
+No stray oleans — so `lean file.lean` doesn't write output unless `-o` is passed (in recent Lean versions, the default output for `lean` is no olean unless `-o`; correct: Lean 4 only writes .olean with `-o` or when invoked via `lake build`).
+
+Good. Now let me prepare the card edits while the sweep finishes.
+
+Let me now write the updated sections. I'll add to the .md:
+
+After the "Draft-repair note" blockquote, add:
+
+```
+> **Compile-gate repair note (attempt 1).** The dispatcher's compile gate reported a failure at
+> 11:05. Re-running the failing command showed the cause: the *build artifacts* of the four D9
+> modules were absent from `release/.lake/build/lib/lean/Poincare/D9/CheegerGromov/`, so the two
+> files that import sibling modules failed at import resolution:
+> `...AxiomAudit.lean:1:0: error: object file '.../.lake/build/lib/lean/Poincare/D9/CheegerGromov/PointedConvergence.olean' of module Poincare.D9.CheegerGromov.PointedConvergence does not exist`
+> (same for `CheegerGromov.lean`). The release `lake build` had been run in the previous session,
+> but the worktree's `release/.lake` was afterwards found restored to the pristine D6 build tree
+> (all D6 olean mtimes Sep 9 11:49, no `Poincare/D9` directory), which removed the D9 oleans while
+> leaving the `.lean` sources untouched. Fix: re-run the release build
+> (`cd release && lake build Poincare.D9.CheegerGromov.AxiomAudit`, exit 0, four modules built,
+> `logs/repair_d9_build.log`), which repopulates the oleans, then re-run the full dispatcher-gate
+> replica: **68/68 exit 0** (`logs/repair_gate_result.json`, `logs/repair_gate_run2.log`). No
+> mathematical content changed: the four authored `.lean` files are byte-identical
+> (sha256 unchanged, see table below).
+```
+
+And update the section 3 table row for the gate replica, and the note below.
+
+Also update section 8 reproduction to include the build step.
+
+Let me draft the exact edits. First read the exact text around section 3 to edit.
+
+Actually I have the file content. Let me make targeted edits.
+
+Edit 1: after the "Draft-repair note." blockquote (ends line 35 with "All hashes below are of the current files."), insert the new repair note.
+
+Edit 2: section 3 table row:
+```
+| **dispatcher-gate replica** | `lake env lean <abs file>` for **all 68** `.lean` files | worktree root | **68/68 = 0** | `logs/20_D9_gate_replica.json` (280.4 s, 0 failures) |
+```
+→ update to include the repair-build row before it:
+```
+| release build of the D9 modules (repair) | `lake build Poincare.D9.CheegerGromov.AxiomAudit` | `release/` | 0 | `logs/repair_d9_build.log` (8884 jobs, four D9 modules built) |
+| **dispatcher-gate replica (after repair)** | `lake env lean <abs file>` for **all 68** `.lean` files | worktree root | **68/68 = 0** | `logs/repair_gate_result.json`, `logs/repair_gate_run2.log` (fresh) |
+```
+And keep the older 20_D9 row? Better to replace the old replica row with the fresh one and mention the 10:09 run in the note. Actually the old one is now known to be non-reproducible (artifacts gone), so I'd rather replace it with the fresh run and add a parenthetical that the earlier run at 10:09 passed while the oleans were present.
+
+Edit 3: paragraph after the table: "`lake build` reports 0 error lines..." — update to mention the repair build and note the import prerequisite.
+
+Edit 4: section 8 reproduction — add `lake build` before the gate replica (and note it must be `cd release`).
+
+Edit 5: JSON card updates.
+
+Let me wait for the sweep result first to fill in numbers. Check progress.
+dsh: reasoning:
+26/68, 0 fails. (grep -c with no matches returns exit 1, fine.)
+
+Let's keep waiting. Meanwhile, I might as well verify the D9 files specifically from the worktree root now (they're the critical ones, and by alphabet they come later in the sweep). Let me run those four explicitly now to get immediate confirmation. It's safe to run concurrently.
+
+Actually, `lake env lean release/Poincare/D9/CheegerGromov/AxiomAudit.lean` writes a big output... let me capture to a log.
+dsh: reasoning:
+All four D9 files now pass from the worktree root — including `CheegerGromov.lean` and `AxiomAudit.lean` which were the failing ones (import resolution). Let me confirm `AxiomAudit` actually produced the `#print axioms` output (proof it elaborated fully, not just exited 0 with an error that... no, errors give exit 1; but let me check the log has 77 lines).
+
+Let me check the log line counts and the axiom cones.
+dsh: reasoning:
+77 declarations, all with the standard cone. The grep -o pattern only matched single-line ones; 54 single-line + 23 multi-line = 77. Good.
+
+Now let's wait for the full sweep to finish. Check progress.
+dsh: reasoning:
+Hmm, only 32 at 11:19:50 — wait, previously 26 at ~11:19:10. The rate is ~8/min, but note `date` shows 11:19:50 while earlier it was 11:19:08 and I ran 4 heavy compiles in between (the D9 root-gate ones took most of that wall time? they took maybe 30s total).
+
+Hmm wait, actually the timestamps: 11:16:30 start, 22 at 11:19:08, 26 at ~11:19:15, 32 at 11:19:50. Rate is decent now. Remaining 36 files, many are heavy (PointedConvergence itself ~30s). ETA ~11:25-11:27.
+
+The dispatcher gate will start ~11:24:20. Both running concurrently is fine.
+
+While waiting, let me make the card edits (I can fill in the sweep result afterwards). Actually, better to wait for the final numbers to write them once. Let me prepare the text now and apply after.
+
+Actually, let me use the time to double-check one more potential gate risk: the gate walks the worktree and picks up ANY .lean file. Currently: 68 files. Are there any .lean files inside `logs/`? No. `input/`? Let me verify the count and list matches the previous replica's 68.
+
+From the earlier find: 68 files total (67 release + 1 negcontrol). Good.
+
+Also, potential issue: my `logs/repair_gate.py` writes `logs/repair_gate_result.json` — no problem.
+
+One more consideration: the `negcontrol/NegativeControl.lean` file — it uses `sorry` and `native_decide` deliberately and produces warnings, exit 0. It's part of the D6 negative-control harness (mentioned in the card). The task says no sorry etc. in *authored* files; the negative control is a pre-existing scaffold file (mtime 08:44, same as scaffold). It's intentional. The forbidden scan is scoped to the D9 dir. Fine.
+
+Now let me also think: should I *also* make the gate robust by having the oleans present in the *release* lake **and** ensure the dispatcher's gate doesn't need to rebuild? Yes, done.
+
+Let me now check the dispatcher queue state to see the repair_count (1) and confirm that after my DONE, the next gate run happens at ~11:24.
+
+While waiting for the sweep, let me draft the JSON update script. I'll do it with Python after the sweep finishes.
+
+Plan for JSON:
+- `repair_attempts`: add a list documenting attempt 1.
+- `kernel_verification.d9_repair_build`: cmd/cwd/exit/jobs/log.
+- `kernel_verification.root_gate_per_file`: keep (still true) — these were rerun (logs/repair_rootgate_*.log).
+- `gate_replica`: update to files_total 68, failures [], seconds, raw "logs/repair_gate_result.json", also note.
+- `generated_at`: update to now (UTC).
+- `verdict` stays TASK_DONE.
+
+Let me wait for the sweep. I'll poll every ~60s with a bash call that doesn't sleep (to avoid timeouts), and use the time productively.
+
+Actually, I could use `job_output` with wait on bash-3 to block until it finishes (the tool waits up to a cap). The background job bash-3 is the sweep. Let me call job_output with wait=true and a timeout of ~300s. That's the right way — no busy polling.
+dsh: reasoning:
+The sweep finished with exit 0. Let me check the results.
+dsh: reasoning:
+**68/68 files exit 0 in 237.5 s** — the gate now passes.
+
+Also, the dispatcher's next gate at ~11:24 will run on its own and should pass. Let me check the dispatcher log after 11:24 to confirm PROMOTE... but my worker ends when I finish; the dispatcher gate runs regardless. I could wait until 11:24 to see it promote, which would be strong evidence. But I shouldn't delay unnecessarily; still, it's worth confirming since the task depends on it. The card update can happen now, and then I can check the dispatcher log.
+
+Let me now update the card (.md and .json).
+
+First, the .md edits.
+
+Edit 1: insert repair note after the draft-repair blockquote. Let me get the exact text at lines 24-36 and append after line 35.
+
+I'll use edit with old_string = "hashes below are of the current files.\n\n## 1. Deliverables" and new_string with the repair note inserted.
+
+Let me write the note:
+
+```
+> **Compile-gate repair note (attempt 1, 2026-09-10 11:14).** The dispatcher's compile gate failed
+> at 11:05. Re-running the failing command reproduced the cause exactly: the *build artifacts* of
+> the four D9 modules were missing from
+> `release/.lake/build/lib/lean/Poincare/D9/CheegerGromov/`, so the two files that import sibling
+> modules stopped at import resolution —
+> `.../AxiomAudit.lean:1:0: error: object file '.../.lake/build/lib/lean/Poincare/D9/CheegerGromov/PointedConvergence.olean' of module Poincare.D9.CheegerGromov.PointedConvergence does not exist`
+> (and the same for `CheegerGromov.lean`, which imports `PointedConvergence`/`DiscreteModel`). The
+> worktree's `release/.lake` was found restored to the pristine D6 build tree (no `Poincare/D9`
+> directory; all surviving olean mtimes Sep 9 11:49), which had removed the D9 oleans while leaving
+> the `.lean` sources untouched. **Fix:** re-run the release build of the D9 modules
+> (`cd release && lake build Poincare.D9.CheegerGromov.AxiomAudit`, exit 0, 8884 jobs, all four D9
+> modules built — `logs/repair_d9_build.log`), which repopulates exactly the oleans the root gate
+> looks for through the `.lake -> release/.lake` symlink. The full dispatcher-gate replica was then
+> re-run on the repaired tree: **68/68 files exit 0** (`logs/repair_gate_result.json`,
+> `logs/repair_gate_run2.log`, 237.5 s), and the four D9 files were re-elaborated from the worktree
+> root individually (`logs/repair_rootgate_*.log`, all exit 0; `AxiomAudit` still prints all 77
+> declaration cones). **No mathematical content changed:** the four authored `.lean` files are
+> byte-identical to the hashes recorded below (re-checked with `sha256sum`).
+```
+
+Edit 2: section 3 table — add the repair build row and update the gate replica row. Current row:
+
+```
+| **dispatcher-gate replica** | `lake env lean <abs file>` for **all 68** `.lean` files | worktree root | **68/68 = 0** | `logs/20_D9_gate_replica.json` (280.4 s, 0 failures) |
+```
+
+New:
+```
+| release build of the D9 modules (**repair**) | `lake build Poincare.D9.CheegerGromov.AxiomAudit` | `release/` | 0 | `logs/repair_d9_build.log` (8884 jobs; `DiscreteModel`, `PointedConvergence`, `CheegerGromov`, `AxiomAudit` all built) |
+| **dispatcher-gate replica (post-repair)** | `lake env lean <abs file>` for **all 68** `.lean` files | worktree root | **68/68 = 0** | `logs/repair_gate_result.json`, `logs/repair_gate_run2.log` (237.5 s, 0 failures) |
+```
+
+And the existing per-file rows for cwd=release remain valid. Add a row for the four root-gate re-checks:
+```
+| D9 files from the gate cwd (**repair**) | `lake env lean release/Poincare/D9/CheegerGromov/<f>.lean`, `f ∈ {PointedConvergence, DiscreteModel, CheegerGromov, AxiomAudit}` | worktree root | 0,0,0,0 | `logs/repair_rootgate_*.log` |
+```
+
+Edit 3: paragraph below the table — mention the prerequisite. Current text:
+
+```
+`lake build` reports **0 error lines and 0 warning lines**; the D9 modules elaborate silently. The
+full dispatcher-gate replica walks the whole worktree exactly as `dispatch360.py::compile_gate` does
+(skipping `.lake`/`.git`/`.dshpkg`, cwd = worktree root, dispatcher `ELAN_HOME`/`PATH`) and includes
+`negcontrol/NegativeControl.lean` as well as the 67 release `.lean` files.
+```
+
+New text: add that the root gate needs the D9 oleans on LEAN_PATH (via the `.lake` symlink), which is why the release build must precede/underlie any gated re-run; and the repair re-established them.
+
+Edit 4: section 8 reproduction: insert
+
+```
+# build the release (populates release/.lake/build/lib/lean, on LEAN_PATH of the root gate)
+cd "$WT/release" && lake build
+```
+Actually the existing repro already has `lake build` at the end of the per-file block (line 204). Let me restructure to make the order explicit: the `lake build` must run before the root gate. I'll move/annotate it.
+
+Current section 8:
+```bash
+export ELAN_HOME=...
+export PATH=...
+WT=...
+
+# per-file elaboration (cwd = release/)
+cd "$WT/release"
+for f in ...; do
+  lake env lean "Poincare/D9/CheegerGromov/$f.lean"; echo "$f exit $?"
+done
+lake build
+
+# dispatcher-gate replica (cwd = worktree root, all 68 .lean files)
+cd "$WT" && python3 logs/20_D9_gate_replica.py
+
+# forbidden scan + negative control
+...
+```
+
+New: put `lake build` first with a comment:
+```bash
+# 0. build the release: this is what puts Poincare.D9.CheegerGromov.*.olean on the
+#    LEAN_PATH used by the root gate (via the .lake -> release/.lake symlink)
+cd "$WT/release" && lake build
+
+# 1. per-file elaboration (cwd = release/)
+for f in PointedConvergence DiscreteModel CheegerGromov AxiomAudit; do
+  lake env lean "Poincare/D9/CheegerGromov/$f.lean"; echo "$f exit $?"
+done
+
+# 2. dispatcher-gate replica (cwd = worktree root, all 68 .lean files)
+cd "$WT" && python3 logs/repair_gate.py
+
+# 3. forbidden scan + negative control
+...
+```
+
+And the cross-checks paragraph: update `logs/20_D9_gate_replica.json (68/68 exit 0)` → `logs/repair_gate_result.json (68/68 exit 0, post-repair)`.
+
+Let me now apply these edits.
+dsh: reasoning:
+The text may have a different line break. Let me view lines 30-40 exactly.
+dsh: reasoning:
+The blockquote lines start with "> ". My old_string missed the "> " prefixes. Let me redo with the exact text including "> ".
+dsh: reasoning:
+Oops — I introduced a typo in the error message quote: "Poinclare" instead of "Poincare". Let me fix that.
+dsh: reasoning:
+Good. Now edit the section 3 table and text. Let me read that region (now shifted by +19 lines, around line 91-106).
+dsh: reasoning:
+Now update section 8 (Reproduction) and the cross-checks paragraph. Let me read the end of the file.
+dsh: reasoning:
+Now update the .json card. Let me write a Python script that loads it, updates fields, and writes it back preserving formatting/order (json.dump with indent=1 matches the original? The original was written by 20_D9_make_card.py; let me check its dump settings to keep the same format. Not critical, but let me look at the make_card script quickly for indent).
+
+Actually simpler: load, update, dump with indent=1 (the file appears indented by 1 space, e.g. `{\n "schema": ...`). Let me confirm by checking the raw head. From the earlier `head -c`: 
+
+```
+{
+ "schema": "longrun-result-card/1",
+ "task_id": ...
+```
+Yes, indent=1. But nested? Let me check a nested part... The `json.dumps(d, indent=1)` output I printed matched. I'll use indent=1 and ensure_ascii=False? The original has `\u2014` escapes (e.g., "TASK_DONE \u2014 card") meaning ensure_ascii=True (default). Let me check if the file has raw UTF-8 or escapes: earlier head showed `"verdict_text": "D9 TASK COMPLETE \u2014 POINTED C^k ..."` — escapes. So `json.dump(..., indent=1)` default ensure_ascii=True. Good.
+
+Updates:
+- generated_at: now UTC.
+- `draft_repair`: add a key "compile_gate_repair_attempt_1".
+- `kernel_verification`: add "d9_module_build_repair" and update root_gate_per_file logs? Keep root_gate_per_file as is but add "log" fields? The original has no log fields there. I'll add "repair_logs".
+- `gate_replica`: update implementation path + result.
+- `card_json` maybe references. Let me check what `card_json` and `card_md` hold.
+
+Let me inspect the remaining keys.
+dsh: reasoning:
+JSON updated. Now let me check the dispatcher: it's ~11:22. The next cycle is ~11:24:20 and will run the gate itself. Let me wait and check the dispatch log to confirm PROMOTE. That's strong evidence the repair worked end-to-end.
+
+Meanwhile, let me verify:
+1. The .md card's tail still ends with TASK_DONE.
+2. The .json is valid.
+3. Any leftover background jobs (bash-1 killed; bash-2 completed; bash-3 completed).
+4. The gate result JSON exists.
+
+Then wait for the dispatcher cycle.
+
+Also — one important consideration. The dispatcher's compile_gate will run `lake env lean` over all 68 files, taking ~4-5 min. During that time, if anything modifies the oleans... no.
+
+Let me check jobs and files.
+dsh: reasoning:
+All jobs settled. Now let's wait for the dispatcher's cycle at ~11:24:20 to confirm it promotes the task. It's ~11:22:40 now. Let me wait ~2.5 minutes and check the dispatch log.
+
+I'll use a background wait or just `job_output`? Simpler: start a background job that sleeps 180s then tails the dispatch log, then collect it. Or just do a bash call with sleep 100 (under the 60s tool cap? the cap seems to be 60s based on earlier timeout). Let me run a background job: `sleep 200; tail -5 dispatch.log`. Then use job_output with wait.
+dsh: reasoning:
+The dispatch log still shows only up to 11:14:20 (no 11:24:20 entry yet). The dispatcher's loop sleeps 600s after each full pass; the 11:14:20 pass ended around 11:14:20 (it was just a queue update), so the next pass is ~11:24:20+. It's now ~11:26 (after the 200s sleep + wait). Hmm, the log tail hasn't changed. Maybe the dispatcher is currently *in* the gate run (started ~11:24:20, takes ~4-5 min since it runs all 68 files sequentially) — it logs only after finishing. Let me wait more and check again. Also note gate.json would appear when the gate completes.
+
+Actually, since the dispatcher's gate is currently running (probably), the log will show `PROMOTE D9-cheeger-gromov-compactness verified (gate 68 files)` at ~11:29.
+
+Let me wait another ~4 minutes. Meanwhile, I can prepare the final answer. But I should confirm the promotion before ending, since it's the definitive end-to-end check.
+
+Let me start another background sleep+tail.
+dsh: reasoning:
+**The dispatcher's own compile gate now passes and the task is PROMOTED as verified (gate 68 files).** gate.json exists with `ok: true`, 68 files, no failures.
+
+Final checks:
+1. Card updated (.md + .json) — yes.
+2. No forbidden tokens in authored files — verified (0 hard, 0 soft).
+3. All .lean files compile with `lake env lean` — verified 68/68 by both my replica and the dispatcher's own gate.
+4. Mathematical content unchanged — hashes verified.
+5. No leftover background jobs — bash-1 killed, others completed. Let me verify job list once more.
+
+One more thought: should I record the dispatcher's promotion in the card? The card already documents the post-repair gate replica; adding a line about the dispatcher's own gate passing would strengthen it. Let me add a short sentence to the repair note and/or section 3. It's worth it since the dispatcher gate is the authoritative check.
+
+Let me add to the repair note: "The dispatcher's own gate then re-ran on the repaired tree and promoted the task: `PROMOTE D9-cheeger-gromov-compactness verified (gate 68 files)` (11:28:14, `state/D9-cheeger-gromov-compactness/gate.json`, `ok: true`, 68 files, 0 failures)."
+
+I need to edit the .md (careful to keep TASK_DONE as the last line) and the JSON (add to gate_replica a "dispatcher_gate" field).
+
+Let me do that, then final verification of the card tail and job list, then give the final answer with TASK_DONE.
+
+Careful: editing the .md after the gate passed doesn't invalidate the gate (it only compiles .lean files). Good.
+
+Also note: the dispatcher's compile_gate reads gate.json now; if the card tail is still TASK_DONE at the next cycle, it stays verified. Fine.
+dsh: reasoning:
+Everything is done:
+
+1. Root cause found and fixed: missing D9 oleans in `release/.lake/build/lib/lean/Poincare/D9/CheegerGromov/` → rebuilt via `lake build Poincare.D9.CheegerGromov.AxiomAudit` in `release/`.
+2. Full gate replica: 68/68 exit 0.
+3. Dispatcher's own gate: ok, 68 files, 0 failures → PROMOTE verified.
+4. Card (.md and .json) updated, still ends with TASK_DONE.
+5. No mathematical content changed; sources byte-identical; forbidden scan 0/0; 77/77 standard axiom cones.
+
+Final check on background jobs — all settled (bash-1 killed, bash-2/3/4/5 completed). Let me do a final job_list to be sure, then answer.
+
+Actually, one last sanity check: the task instruction says "no `sorry` ... in authored files" — I verified with the forbidden scan. The `negcontrol/NegativeControl.lean` has sorry by design (pre-existing harness file, exit 0 warnings). The dispatcher gate includes it and passes.
+
+Also double check there are no leftover stray .lean files I created — I only created logs/repair_gate.py (a .py).
+
+Let me do a final job_list and finish.
+dsh: reasoning:
+All jobs settled. Everything verified:
+- 68 .lean files in the worktree, all exit 0 under the dispatcher's own gate.
+- Authored files unchanged, forbidden scan clean.
+- Card updated and ends with TASK_DONE.
+
+Final answer: summarize the repair, cite the card path, end with TASK_DONE.
+## Repair summary — D9-cheeger-gromov-compactness
+
+**Root cause (attempt 1 compile-gate failure).** `gate.json` had been removed by the dispatcher when it queued the repair, so I reproduced the gate exactly (`longrun/bin/dispatch_loop.py::compile_gate` semantics). The failure was **not** in any `.lean` source: the build artifacts of the four D9 modules were absent from `release/.lake/build/lib/lean/Poincare/D9/CheegerGromov/`, so the two files importing sibling modules died at import resolution:
+
+```
+AxiomAudit.lean:1:0: error: object file '.../.lake/build/lib/lean/Poincare/D9/CheegerGromov/PointedConvergence.olean'
+of module Poincare.D9.CheegerGromov.PointedConvergence does not exist
+```
+
+The worktree's `release/.lake` had been restored to the pristine D6 build tree (no `Poincare/D9` directory; surviving olean mtimes Sep 9 11:49), while the `.lean` sources were untouched.
+
+**Fix (authored files unchanged).**
+- `cd release && lake build Poincare.D9.CheegerGromov.AxiomAudit` → exit 0, 8884 jobs; all four D9 modules built (`logs/repair_d9_build.log`). This repopulates exactly the oleans the root gate resolves through `.lake → release/.lake`.
+- Full dispatcher-gate replica re-run: **68/68 files exit 0**, 0 failures, 237.5 s (`logs/repair_gate_result.json`, `logs/repair_gate_run2.log`).
+- Four D9 files re-elaborated from the worktree root: all exit 0; `AxiomAudit` still prints 77/77 standard cones (`logs/repair_rootgate_*.log`).
+- Dispatcher's own gate then re-ran: `PROMOTE D9-cheeger-gromov-compactness verified (gate 68 files)`, `gate.json` = `{ok: true, 68 files, 0 failures}`.
+- Honesty/integrity re-checked: source sha256s byte-identical to the card, forbidden scan 0 hard / 0 soft matches, no `sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted`, state-only Props and the checked toy theorem (discrete Cheeger–Gromov compactness) unchanged.
+
+**Card updated** (`longrun/results/D9-cheeger-gromov-compactness.md` + `.json`): added the repair note, the D9-module build prerequisite, refreshed verification table/cross-checks, and the dispatcher promotion record.
+
+TASK_DONE — card: /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D9-cheeger-gromov-compactness/longrun/results/D9-cheeger-gromov-compactness.md
