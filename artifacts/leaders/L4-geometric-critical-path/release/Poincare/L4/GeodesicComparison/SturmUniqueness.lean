@@ -10,10 +10,12 @@ gap in the two-sided count is the equality case: when `k = K` on `(a,c)`, can a 
 solution still vanish at `c` before `π/√K`?  This file closes that gap with the Wronskian, and
 removes the "first zero" hypothesis from the sharp statement.
 
-* `wronskian_sturmModel_eq_zero_of_pos` — if `k = K` on `(a,c)`, `u > 0` on `(a,c)` with
-  `u a = u c = 0`, then the Wronskian `W = u·m' − m·u'` (with `m = sturmModel K a`) vanishes
-  on all of `[a,c]`.  Both endpoints give `W = 0` (at `c` via the endpoint derivative sign
-  lemma), and the Wronskian is antitone because the two curvatures agree.
+* `wronskian_sturmModel_eq_zero_of_curvature_eq` — if `k = K` on `(a,c)` and `u a = 0`, then
+  the Wronskian `W = u·m' − m·u'` (with `m = sturmModel K a`) vanishes on all of `[a,c]`, with
+  no sign or first-zero hypothesis: `W` has zero derivative on the open interval and continuity
+  at `a` evaluates the constant to `W a = 0`.  From `W ≡ 0` the proportionality
+  `u = λ·m` follows on `(a,c)` (`exists_smul_sturmModel_of_wronskian_eq_zero`,
+  `exists_smul_sturmModel_of_curvature_eq`).
 * `eq_zero_of_wronskian_sturmModel_eq_zero` — if `W ≡ 0` on `[a,c]` and `√K (c-a) < π`, then
   `u ≡ 0` on `(a,c)`: `W = 0` makes `(u/m)' = 0`, so `u = λ·m` on `(a,c)`; continuity extends
   the identity to `c`, and `m c > 0` forces `λ = 0`.
@@ -22,10 +24,13 @@ removes the "first zero" hypothesis from the sharp statement.
   first zero of `u` after `a`.  In particular a *nonzero* solution has no zero strictly before
   `a + π/√K`.  The strict inequality is necessary: `strict_span_necessary` exhibits the model
   itself, whose first zero sits exactly at `π/√K`.
+* `no_zero_of_curvature_le_of_deriv_ne` — the global form: with `u' a ≠ 0` and
+  `√K (b-a) ≤ π`, a nonzero solution has no zero in the open interval `(a,b)`.  Here the
+  non-strict bound suffices, because a zero inside `(a,b)` would be strictly below `b`.
 * `no_first_zero_before_pi_sqrt_of_curvature_le` — anchored form at `0`.
 
 Everything is scalar ODE data.  No manifold, geodesic, exponential map or curvature-tensor
-statement is constructed or claimed; the existence of a first zero (equivalently `u' a ≠ 0`)
+statement is constructed or claimed; the existence of a first zero (which classically follows from `u' a ≠ 0`)
 is a hypothesis, not a conclusion.
 -/
 import Poincare.L4.GeodesicComparison.TwoSidedSturm
@@ -58,68 +63,7 @@ theorem sturmModel_eq_zero_at_pi_sqrt {K a : ℝ} (hK : 0 < K) :
     rw [add_sub_cancel_left, mul_div_cancel₀ Real.pi hsqrt]
   rw [harg, Real.sin_pi]
 
-/-! ## 2. The Wronskian vanishes in the equality case -/
-
-/-- **The Wronskian vanishes identically when the curvatures agree.**  Let `k = K` on `(a,c)`,
-let `u > 0` on `(a,c)` be a Jacobi solution on `[a,b]` with `a < c < b` and `u a = u c = 0`.
-Then `W = u·m' − m·u'` (with `m = sturmModel K a`) vanishes on `[a,c]`.
-
-At `a` and `c` both `W`-values are `0`: at `a` because `u a = m a = 0`, at `c` because
-`u c = 0` and the endpoint derivative `u' c` is `≤ 0` while `m c > 0`.  Since `k = K`, the
-Wronskian is antitone on `[a,c]`, so it is squeezed between its two endpoint values. -/
-theorem wronskian_sturmModel_eq_zero_of_pos {k : ℝ → ℝ} {K a b c : ℝ} {u du ddu : ℝ → ℝ}
-    (hK : 0 < K) (hspan : Real.sqrt K * (c - a) < Real.pi)
-    (hk : ∀ t ∈ Ioo a c, k t = K)
-    (h : JacobiSolutionOn k u du ddu a b) (hca : c ∈ Ioo a b)
-    (hua : u a = 0) (huc : u c = 0)
-    (hupos : ∀ t ∈ Ioo a c, 0 < u t) (hduc : HasDerivAtR u (du c) c) :
-    ∀ t ∈ Icc a c,
-      wronskian (sturmModel K a) (sturmModelDeriv K a) u du t = 0 := by
-  have hac : a < c := hca.1
-  have hmono : JacobiSolutionOn k u du ddu a c :=
-    jacobiSolutionOn_mono_Icc h hac.le hca.2.le
-  have hmodel : JacobiSolutionOn (fun _ : ℝ => K) (sturmModel K a) (sturmModelDeriv K a)
-      (sturmModelSecondDeriv K a) a c :=
-    sturmModel_jacobiSolutionOn (K := K) (a := a) (b := c) hK.le
-  have hspanle : Real.sqrt K * (c - a) ≤ Real.pi := le_of_lt hspan
-  have hmpos : ∀ t ∈ Ioo a c, 0 < sturmModel K a t :=
-    fun _ ht => sturmModel_pos_of_le hK hspanle ht
-  have hAnti : AntitoneOn
-      (wronskian (sturmModel K a) (sturmModelDeriv K a) u du) (Icc a c) := by
-    refine wronskian_antitoneOn_of_le hac.le ?_ ?_ hmodel hmono
-    · intro t ht
-      rw [hk t ht]
-    · intro t ht
-      exact le_of_lt (mul_pos (hmpos t ht) (hupos t ht))
-  have hWa : wronskian (sturmModel K a) (sturmModelDeriv K a) u du a = 0 := by
-    simp [wronskian, hua, sturmModel]
-  have hmc_pos : 0 < sturmModel K a c := sturmModel_pos_at_right hK hac hspan
-  have hdu_le : du c ≤ 0 :=
-    deriv_nonpos_of_posOn_Ioo_of_eq_at_right hac hupos huc hduc
-  have hWc_eq : wronskian (sturmModel K a) (sturmModelDeriv K a) u du c
-      = -(sturmModel K a c * du c) := by
-    simp only [wronskian, huc, zero_mul, zero_sub]
-  have hWc_nonneg : 0 ≤ wronskian (sturmModel K a) (sturmModelDeriv K a) u du c := by
-    rw [hWc_eq]
-    exact neg_nonneg.mpr (mul_nonpos_of_nonneg_of_nonpos hmc_pos.le hdu_le)
-  have hWc_le : wronskian (sturmModel K a) (sturmModelDeriv K a) u du c
-      ≤ wronskian (sturmModel K a) (sturmModelDeriv K a) u du a :=
-    hAnti (left_mem_Icc.mpr hac.le) (right_mem_Icc.mpr hac.le) hac.le
-  rw [hWa] at hWc_le
-  have hWc : wronskian (sturmModel K a) (sturmModelDeriv K a) u du c = 0 :=
-    le_antisymm hWc_le hWc_nonneg
-  intro t ht
-  have h1 : wronskian (sturmModel K a) (sturmModelDeriv K a) u du t
-      ≤ wronskian (sturmModel K a) (sturmModelDeriv K a) u du a :=
-    hAnti (left_mem_Icc.mpr hac.le) ht ht.1
-  have h2 : wronskian (sturmModel K a) (sturmModelDeriv K a) u du c
-      ≤ wronskian (sturmModel K a) (sturmModelDeriv K a) u du t :=
-    hAnti ht (right_mem_Icc.mpr hac.le) ht.2
-  rw [hWa] at h1
-  rw [hWc] at h2
-  linarith
-
-/-! ## 3. Proportionality in the equality case -/
+/-! ## 2. Proportionality in the equality case -/
 
 /-- **A vanishing Wronskian makes `u` proportional to the model.**  If
 `W = u·m' − m·u' ≡ 0` on `[a,c]` with `√K (c-a) ≤ π`, then `u = λ·m` on `(a,c)` for some
@@ -212,7 +156,7 @@ theorem exists_smul_sturmModel_of_curvature_eq {k : ℝ → ℝ} {K a b c : ℝ}
     (fun _ ht => (jacobiSolutionOn_mono_Icc h hca.1.le hca.2.le).hasDerivAt_u ht)
     (wronskian_sturmModel_eq_zero_of_curvature_eq hK hk h hca hua)
 
-/-! ## 4. A vanishing Wronskian forces `u` to vanish -/
+/-! ## 3. A vanishing Wronskian forces `u` to vanish -/
 
 /-- **A vanishing Wronskian with `√K(c-a) < π` forces `u ≡ 0`.**  If `W = u·m' − m·u' ≡ 0`
 on `[a,c]`, then the ratio `u/m` has zero derivative on `(a,c)`, hence is constant there;
@@ -271,17 +215,18 @@ theorem eq_zero_of_wronskian_sturmModel_eq_zero {K a c : ℝ} {u du : ℝ → �
   intro t ht
   simp [hEqOn ht, hlam_eq]
 
-/-! ## 5. The sharp first-zero bound -/
+/-! ## 4. The sharp first-zero bound -/
 
 /-- **No first zero strictly before the model's first zero when `k ≤ K`.**  If `k ≤ K` on
 `[a,c]`, `u` is a Jacobi solution on `[a,b]` with `a < c < b` and `u a = u c = 0`, and
 `√K (c-a) < π`, then `c` cannot be the *first* zero of `u` after `a`.
 
 Proof: `TwoSidedSturm.eq_curvature_of_first_jacobi_zero_of_curvature_le` forces `k = K` on
-`(a,c)`; the sign-constant solution then has a vanishing Wronskian against the model
-(`wronskian_sturmModel_eq_zero_of_pos`), so `eq_zero_of_wronskian_sturmModel_eq_zero` makes `u`
-vanish on all of `(a,c)`, contradicting the first-zero hypothesis.  In particular a nonzero
-Jacobi solution with `u a = 0` has no zero strictly before `a + π/√K`. -/
+`(a,c)`; then `wronskian_sturmModel_eq_zero_of_curvature_eq` makes the Wronskian against the
+model vanish identically on `[a,c]` (no sign hypothesis is needed), so
+`eq_zero_of_wronskian_sturmModel_eq_zero` makes `u` vanish on all of `(a,c)`, contradicting the
+first-zero hypothesis.  In particular a nonzero Jacobi solution with `u a = 0` has no zero
+strictly before `a + π/√K`. -/
 theorem no_first_zero_of_curvature_le_of_lt_pi {k : ℝ → ℝ} {K a b c : ℝ} {u du ddu : ℝ → ℝ}
     (hK : 0 < K) (hspan : Real.sqrt K * (c - a) < Real.pi)
     (hk : ∀ t ∈ Icc a c, k t ≤ K)
@@ -292,21 +237,11 @@ theorem no_first_zero_of_curvature_le_of_lt_pi {k : ℝ → ℝ} {K a b c : ℝ}
   have heq : ∀ t ∈ Ioo a c, k t = K :=
     eq_curvature_of_first_jacobi_zero_of_curvature_le hK hspanle hk h hca hua huc hfirst
   have hmono : JacobiSolutionOn k u du ddu a c := jacobiSolutionOn_mono_Icc h hac.le hca.2.le
-  have hcont : ContinuousOn u (Ioo a c) :=
-    h.continuousOn_u.mono fun t ht => ⟨ht.1.le, (ht.2.trans hca.2).le⟩
-  have hduc : HasDerivAtR u (du c) c := h.hasDerivAt_u hca
+  have hW := wronskian_sturmModel_eq_zero_of_curvature_eq hK heq h hca hua
+  have hzero := eq_zero_of_wronskian_sturmModel_eq_zero hK hspan hac hmono.continuousOn_u
+    (fun _ ht => hmono.hasDerivAt_u ht) huc hW
   obtain ⟨t, ht⟩ := exists_between hac
-  rcases sign_constant_of_no_zero hcont hfirst with hpos | hneg
-  · have hW := wronskian_sturmModel_eq_zero_of_pos hK hspan heq h hca hua huc hpos hduc
-    have hzero := eq_zero_of_wronskian_sturmModel_eq_zero hK hspan hac hmono.continuousOn_u
-      (fun _ ht => hmono.hasDerivAt_u ht) huc hW
-    exact hfirst t ht (hzero t ht)
-  · have hW := wronskian_sturmModel_eq_zero_of_pos (u := -u) (du := -du) (ddu := -ddu)
-      hK hspan heq h.neg hca (by simp [hua]) (by simp [huc])
-      (fun _ ht => neg_pos.mpr (hneg ht)) hduc.neg
-    have hzero := eq_zero_of_wronskian_sturmModel_eq_zero (u := -u) (du := -du) hK hspan hac
-      hmono.neg.continuousOn_u (fun _ ht => hmono.neg.hasDerivAt_u ht) (by simp [huc]) hW
-    exact (ne_of_lt (hneg ht)) (by simpa using hzero t ht)
+  exact hfirst t ht (hzero t ht)
 
 /-- **Anchored form at `0`.**  For `k ≤ K` on `[0,c]`, a Jacobi solution with `u 0 = u c = 0`
 and `√K · c < π` cannot have `c` as its first zero after `0`. -/
@@ -334,14 +269,17 @@ theorem nonvanishing_near_left_of_deriv_ne {u : ℝ → ℝ} {a m : ℝ}
 
 /-- **The global sharp first-zero bound.**  If `k ≤ K` on `[a,b]`, `u` is a Jacobi solution on
 `[a,b]` with `u a = 0` and `u' a ≠ 0` (the endpoint derivative is a hypothesis, as in the
-initial data of a Jacobi field), and `√K (b-a) < π`, then `u` has **no** zero in `(a,b)`:
-a nonzero solution vanishing at `a` cannot return to zero before `a + π/√K`.
+initial data of a Jacobi field), and `√K (b-a) ≤ π`, then `u` has **no** zero in the open
+interval `(a,b)`: a nonzero solution vanishing at `a` cannot return to zero strictly before
+`a + π/√K`.  At the boundary `√K (b-a) = π` the model `k ≡ K` does vanish at `b` itself
+(`sturmModel_eq_zero_at_pi_sqrt`), which is outside the open interval.  (The non-strict
+inequality is enough because a zero `c₁ ∈ (a,b)` is strictly below `b`.)
 
 Proof: `u` is nonzero on a right-neighbourhood of `a`; if `u c = 0` with `c ∈ (a,b)`, the
 zero set in `[a+ε/2, c]` is compact and nonempty, so it has a least element `c₁`, which is a
 genuine *first* zero; `no_first_zero_of_curvature_le_of_lt_pi` then gives a contradiction. -/
 theorem no_zero_of_curvature_le_of_deriv_ne {k : ℝ → ℝ} {K a b : ℝ} {u du ddu : ℝ → ℝ}
-    (hK : 0 < K) (hspan : Real.sqrt K * (b - a) < Real.pi)
+    (hK : 0 < K) (hspan : Real.sqrt K * (b - a) ≤ Real.pi)
     (hk : ∀ t ∈ Icc a b, k t ≤ K)
     (h : JacobiSolutionOn k u du ddu a b)
     (ha : HasDerivAtR u (du a) a) (hua : u a = 0) (hdua : du a ≠ 0) :
@@ -376,14 +314,14 @@ theorem no_zero_of_curvature_le_of_deriv_ne {k : ℝ → ℝ} {K a b : ℝ} {u d
         linarith [ht.2]
     have hspan₁ : Real.sqrt K * (c₁ - a) < Real.pi := by
       have hsqrt : 0 < Real.sqrt K := Real.sqrt_pos_of_pos hK
-      have hle : c₁ - a ≤ b - a := by linarith [hc₁b]
-      calc Real.sqrt K * (c₁ - a) ≤ Real.sqrt K * (b - a) :=
-            mul_le_mul_of_nonneg_left hle hsqrt.le
-        _ < Real.pi := hspan
+      have hlt : c₁ - a < b - a := by linarith [hc₁b]
+      calc Real.sqrt K * (c₁ - a) < Real.sqrt K * (b - a) :=
+            mul_lt_mul_of_pos_left hlt hsqrt
+        _ ≤ Real.pi := hspan
     exact no_first_zero_of_curvature_le_of_lt_pi hK hspan₁
       (fun t ht => hk t ⟨ht.1, ht.2.trans hc₁b.le⟩) h ⟨hac₁, hc₁b⟩ hua hc₁zero hfirst
 
-/-! ## 6. The strict inequality is necessary -/
+/-! ## 5. The strict inequality is necessary -/
 
 /-- **Sharpness: the strict inequality `√K (c-a) < π` cannot be relaxed to `≤`.**  For
 `K = 1`, `k ≡ K`, `u = sin` on `(0, 2π)` and `c = π`, every hypothesis of
@@ -392,11 +330,12 @@ theorem no_zero_of_curvature_le_of_deriv_ne {k : ℝ → ℝ} {K a b : ℝ} {u d
 equality case genuinely admits a first zero at the model's first zero. -/
 theorem strict_span_necessary :
     ∃ (k : ℝ → ℝ) (u du ddu : ℝ → ℝ),
-      (∀ t ∈ Ioo (0 : ℝ) Real.pi, k t = 1) ∧
+      (∀ t ∈ Icc (0 : ℝ) Real.pi, k t ≤ 1) ∧
+        (∀ t ∈ Ioo (0 : ℝ) Real.pi, k t = 1) ∧
         JacobiSolutionOn k u du ddu 0 (2 * Real.pi) ∧ u 0 = 0 ∧ u Real.pi = 0 ∧
         (∀ t ∈ Ioo (0 : ℝ) Real.pi, u t ≠ 0) ∧ Real.sqrt 1 * Real.pi = Real.pi := by
   refine ⟨fun _ : ℝ => 1, sturmModel 1 0, sturmModelDeriv 1 0, sturmModelSecondDeriv 1 0,
-    fun _ _ => rfl,
+    fun _ _ => le_rfl, fun _ _ => rfl,
     sturmModel_jacobiSolutionOn (K := 1) (a := 0) (b := 2 * Real.pi) (by norm_num),
     by simp [sturmModel], ?_, ?_, by rw [Real.sqrt_one, one_mul]⟩
   · simp only [sturmModel, Real.sqrt_one, one_mul, sub_zero]

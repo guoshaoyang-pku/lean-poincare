@@ -108,21 +108,23 @@ EXPECTED = [
     "Poincare.L4.GeodesicComparison.wronskian_sturmModel_eq_zero_of_curvature_eq",
     "Poincare.L4.GeodesicComparison.exists_smul_sturmModel_of_curvature_eq",
     "Poincare.L4.GeodesicComparison.sturmModel_eq_zero_at_pi_sqrt",
-    "Poincare.L4.GeodesicComparison.wronskian_sturmModel_eq_zero_of_pos",
     "Poincare.L4.GeodesicComparison.eq_zero_of_wronskian_sturmModel_eq_zero",
     "Poincare.L4.GeodesicComparison.no_first_zero_of_curvature_le_of_lt_pi",
     "Poincare.L4.GeodesicComparison.no_first_zero_before_pi_sqrt_of_curvature_le",
     "Poincare.L4.GeodesicComparison.nonvanishing_near_left_of_deriv_ne",
     "Poincare.L4.GeodesicComparison.no_zero_of_curvature_le_of_deriv_ne",
-    "Poincare.L4.GeodesicComparison.no_first_zero_before_pi_sqrt_of_curvature_le",
     "Poincare.L4.GeodesicComparison.strict_span_necessary",
+    "Poincare.L4.GeodesicComparison.zero_spacing_lt_of_curvature_gt",
+    "Poincare.L4.GeodesicComparison.zero_spacing_ge_of_curvature_le",
+    "Poincare.L4.GeodesicComparison.sturmModel_zero_spacing",
+    "Poincare.L4.GeodesicComparison.sturmModel_spacing_boundary",
     "Poincare.L4.ManifoldIBP.metricInnerInverse_self_nonneg",
     "Poincare.L4.ManifoldIBP.gradInnerInverse_self_nonneg",
     "Poincare.L4.ManifoldIBP.halfSpaceAtlas_dirichletEnergy_nonneg",
     "Poincare.L4.ManifoldIBP.halfSpaceAtlas_weightedLaplacian_selfAdjoint",
     "Poincare.L4.ManifoldIBP.smoothOverlapAtlas_transition_mem_source",
     "Poincare.L4.ManifoldIBP.halfSpaceAtlas_coherence_derived",
-    "Poincare.L4.ManifoldIBP.globalWeightedIBP_of_cover_partial_ae'",
+    "Poincare.L4.ManifoldIBP.globalWeightedIBP_of_cover_partial_ae_no_coherence",
     "Poincare.L4.Compactness.coveringNumber_le_of_ghDist_lt",
     "Poincare.L4.Compactness.IsCover.finset_biUnion",
     "Poincare.L4.Compactness.exists_finset_isCover_card_le",
@@ -144,6 +146,153 @@ EXPECTED = [
     "Poincare.L4.Compactness.measure_closedBall_le_pow_mul",
     "Poincare.L4.Compactness.coveringNumber_le_of_measure_doubling_allScales",
     "Poincare.L4.Compactness.coveringNumber_le_floor_of_measure_doubling_allScales",
+    "Poincare.L4.Compactness.UniformMeasureGrowth.coveringNumber_le",
+    "Poincare.L4.Compactness.UniformMeasureGrowth.doublingConstant",
+    "Poincare.L4.Compactness.UniformMeasureGrowth.coveringNumber_le_doublingConstant",
+    "Poincare.L4.Compactness.totallyBounded_of_uniformMeasureGrowth",
+    "Poincare.L4.Compactness.isCompact_of_uniformMeasureGrowth",
+    "Poincare.L4.Compactness.exists_pointed_subseq_of_uniformMeasureGrowth",
+    "Poincare.L4.Compactness.subsingletonGHSpaceRepPUnit",
+    "Poincare.L4.Compactness.dirac_closedBall_of_subsingleton",
+    "Poincare.L4.Compactness.punitGrowth",
+    "Poincare.L4.Compactness.punitGrowth_measure_varies",
+    "Poincare.L4.Compactness.totallyBounded_punit",
+    "Poincare.L4.Compactness.isCompact_punit",
+    "Poincare.L4.Compactness.exists_pointed_subseq_punit",
+    "Poincare.L4.Compactness.totallyBounded_of_uniformDoubling",
+    "Poincare.L4.Compactness.isCompact_of_uniformDoubling",
+    "Poincare.L4.PointedGH.pointed_subseq_of_compact",
+    "Poincare.L4.PointedGH.exists_dist_optimalGHInjl_optimalGHInjr_lt",
+    "Poincare.L4.Compactness.dZero",
+    "Poincare.L4.Compactness.dOne",
+    "Poincare.L4.Compactness.dZero_ne_dOne",
+    "Poincare.L4.Compactness.twoPointZero_ne_one",
+    "Poincare.L4.Compactness.dist_twoPointZero_twoPointOne",
+    "Poincare.L4.Compactness.twoPoint_eq_zero_or_one",
+    "Poincare.L4.Compactness.twoPointMeasure_apply",
+    "Poincare.L4.Compactness.twoPointMeasure_closedBall",
+    "Poincare.L4.Compactness.twoPointMeasureOf_apply_member",
+    "Poincare.L4.Compactness.twoPointGrowth",
+    "Poincare.L4.Compactness.twoPointGrowth_nondegenerate",
+    "Poincare.L4.Compactness.twoPointGrowth_doublingConstant",
+    "Poincare.L4.Compactness.totallyBounded_twoPoint",
+    "Poincare.L4.Compactness.isCompact_twoPoint",
+    "Poincare.L4.Compactness.exists_pointed_subseq_twoPoint",
+    "Poincare.L4.Compactness.circleEquiv",
+    "Poincare.L4.Compactness.circleZero",
+    "Poincare.L4.Compactness.circleMeasure",
+    "Poincare.L4.Compactness.circleMeasure_closedBall",
+    "Poincare.L4.Compactness.circleMeasure_univ",
+    "Poincare.L4.Compactness.circleMeasureOf",
+    "Poincare.L4.Compactness.circleMeasureOf_apply_member",
+    "Poincare.L4.Compactness.circle_norm_le_one",
+    "Poincare.L4.Compactness.circle_dist_le_one",
+    "Poincare.L4.Compactness.circle_m_pos",
+    "Poincare.L4.Compactness.circle_toNNReal_eq_of_pos",
+    "Poincare.L4.Compactness.circleGrowth",
+    "Poincare.L4.Compactness.circleGrowth_measure_varies",
+    "Poincare.L4.Compactness.totallyBounded_circle",
+    "Poincare.L4.Compactness.isCompact_circle",
+    "Poincare.L4.Compactness.exists_pointed_subseq_circle",
+    "Poincare.L4.Compactness.instMeasurableSpaceGHSpaceRep",
+    "Poincare.L4.Compactness.instBorelSpaceGHSpaceRep",
+    "Poincare.L4.Compactness.UniformMeasureGrowth",
+    "Poincare.L4.Compactness.twoPointEquiv",
+    "Poincare.L4.Compactness.twoPointZero",
+    "Poincare.L4.Compactness.twoPointOne",
+    "Poincare.L4.Compactness.twoPointEquiv_twoPointZero",
+    "Poincare.L4.Compactness.twoPointEquiv_twoPointOne",
+    "Poincare.L4.Compactness.twoPointMeasure",
+    "Poincare.L4.Compactness.twoPointMeasureOf",
+    "Poincare.L4.Compactness.two_mul_half",
+    "Poincare.L4.Compactness.half_le_two_mul_half",
+    "Poincare.L4.Compactness.one_le_two_mul_half",
+    "Poincare.L4.Compactness.one_le_two_mul_one",
+    "Poincare.L4.Compactness.coe_half",
+    "Poincare.L4.Compactness.half_le_two_mul_half_nn",
+    "Poincare.L4.Compactness.one_le_two_mul_half_nn",
+    "Poincare.L4.Compactness.circleEquivT",
+    "Poincare.L4.Compactness.circleMeasureT",
+    "Poincare.L4.Compactness.circleMeasureT_closedBall",
+    "Poincare.L4.Compactness.circleMeasureT_univ",
+    "Poincare.L4.Compactness.circleMeasureTOf",
+    "Poincare.L4.Compactness.circleMeasureTOf_apply_member",
+    "Poincare.L4.Compactness.circleT_norm_le",
+    "Poincare.L4.Compactness.circleT_dist_le",
+    "Poincare.L4.Compactness.circleGrowthT",
+    "Poincare.L4.Compactness.circleGrowthT_constants",
+    "Poincare.L4.Compactness.circleGrowthT_measure_varies",
+    "Poincare.L4.Compactness.totallyBounded_circleT",
+    "Poincare.L4.Compactness.isCompact_circleT",
+    "Poincare.L4.Compactness.exists_pointed_subseq_circleT",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.A_nonneg",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.intervalIntegrable_A",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_eq_zero_of_nonpos",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_nonneg",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_mono",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_eq_of_ge",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_pos",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_halving",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.doublingNNReal",
+    "Poincare.L4.Compactness.UniformRicciBallGrowth.toUniformMeasureGrowth",
+    "Poincare.L4.Compactness.totallyBounded_of_uniformRicciBallGrowth",
+    "Poincare.L4.Compactness.isCompact_of_uniformRicciBallGrowth",
+    "Poincare.L4.Compactness.exists_pointed_subseq_of_uniformRicciBallGrowth",
+    "Poincare.L4.Compactness.FlatTorus",
+    "Poincare.L4.Compactness.torusEquiv",
+    "Poincare.L4.Compactness.torusZero",
+    "Poincare.L4.Compactness.torusMeasure",
+    "Poincare.L4.Compactness.torusMeasureOf",
+    "Poincare.L4.Compactness.torusMeasureOf_apply_member",
+    "Poincare.L4.Compactness.torusMeasure_closedBall",
+    "Poincare.L4.Compactness.torusMeasure_univ",
+    "Poincare.L4.Compactness.torusA",
+    "Poincare.L4.Compactness.torusA_of_mem",
+    "Poincare.L4.Compactness.torusA_of_notMem",
+    "Poincare.L4.Compactness.torusA_of_nonpos",
+    "Poincare.L4.Compactness.torusA_of_gt",
+    "Poincare.L4.Compactness.torusA_half",
+    "Poincare.L4.Compactness.torusA_eq_of_mem_Icc",
+    "Poincare.L4.Compactness.torusA_pos",
+    "Poincare.L4.Compactness.torusA_nonneg",
+    "Poincare.L4.Compactness.torusA_abs_le_four",
+    "Poincare.L4.Compactness.torusA_cont",
+    "Poincare.L4.Compactness.torusA_hasDerivAt",
+    "Poincare.L4.Compactness.torusA_zero",
+    "Poincare.L4.Compactness.torusA_measurable",
+    "Poincare.L4.Compactness.torusA_intervalIntegrable",
+    "Poincare.L4.Compactness.torusRadialVolume_of_le_half",
+    "Poincare.L4.Compactness.torusRadialVolume_of_ge_half",
+    "Poincare.L4.Compactness.torusRadialVolume_of_nonpos",
+    "Poincare.L4.Compactness.torusRadialVolume_eq",
+    "Poincare.L4.Compactness.torusMeasure_closedBall_eq_ofReal",
+    "Poincare.L4.Compactness.circle_norm_le_half",
+    "Poincare.L4.Compactness.circle_dist_le_half",
+    "Poincare.L4.Compactness.torus_dist_le_half",
+    "Poincare.L4.Compactness.torusRicciBallGrowth",
+    "Poincare.L4.Compactness.torusGrowth_measure_varies",
+    "Poincare.L4.Compactness.torus_nondegenerate",
+    "Poincare.L4.Compactness.totallyBounded_torus",
+    "Poincare.L4.Compactness.isCompact_torus",
+    "Poincare.L4.Compactness.exists_pointed_subseq_torus",
+    "Poincare.L4.GeodesicComparison.geodesicLine",
+    "Poincare.L4.GeodesicComparison.geodesicLine_zero",
+    "Poincare.L4.GeodesicComparison.geodesicLine_flow",
+    "Poincare.L4.GeodesicComparison.dist_geodesicLine",
+    "Poincare.L4.GeodesicComparison.expMap",
+    "Poincare.L4.GeodesicComparison.expMap_eq",
+    "Poincare.L4.GeodesicComparison.expMap_injective",
+    "Poincare.L4.GeodesicComparison.radialJacobi",
+    "Poincare.L4.GeodesicComparison.radialJacobi_zero",
+    "Poincare.L4.GeodesicComparison.radialJacobi_eq_zero_iff",
+    "Poincare.L4.GeodesicComparison.radialJacobi_hasDerivAt",
+    "Poincare.L4.GeodesicComparison.radialJacobi_hasDerivAt_deriv",
+    "Poincare.L4.GeodesicComparison.radialJacobi_deriv",
+    "Poincare.L4.GeodesicComparison.radialJacobi_second_deriv",
+    "Poincare.L4.GeodesicComparison.scalarRadialJacobiSolutionOn",
+    "Poincare.L4.GeodesicComparison.euclidModelA_one_eq",
+    "Poincare.L4.GeodesicComparison.torusA_eq_eight_mul_radialJacobi",
 ]
 
 D13_HEADLINES = [
@@ -167,18 +316,43 @@ AUTHORED = [
     "Poincare/L4/GeodesicComparison/SturmZeroCount.lean",
     "Poincare/L4/GeodesicComparison/TwoSidedSturm.lean",
     "Poincare/L4/GeodesicComparison/SturmUniqueness.lean",
+    "Poincare/L4/GeodesicComparison/ZeroSpacing.lean",
     "Poincare/L4/ManifoldIBP/WeightedSelfAdjointness.lean",
     "Poincare/L4/ManifoldIBP/AtlasHypothesisRedundancy.lean",
     "Poincare/L4/ManifoldIBP/D13HeadlineAudit.lean",
     "Poincare/L4/Compactness/CoveringStability.lean",
     "Poincare/L4/Compactness/DoublingToCovers.lean",
     "Poincare/L4/Compactness/MeasureGrowthCovers.lean",
+    "Poincare/L4/Compactness/MeasureGrowthChain.lean",
+    "Poincare/L4/Compactness/MeasureGrowthChainWitness.lean",
+    "Poincare/L4/Compactness/MeasureGrowthChainCircle.lean",
+    "Poincare/L4/Compactness/MeasureGrowthChainCircleFamily.lean",
+    "Poincare/L4/Compactness/RicciGrowthChain.lean",
+    "Poincare/L4/Compactness/FlatTorusGrowth.lean",
+    "Poincare/L4/GeodesicComparison/FlatGeodesicExpModel.lean",
     "Poincare/L4/AxiomAudit.lean",
+]
+
+# Child artifacts staged byte-identically into this release tree and *consumed* by
+# Compactness/MeasureGrowthChain.lean.  They are scanned for forbidden tokens and hashed, but
+# their declarations are audited by their own audit drivers (the consumed headlines are also
+# re-audited in AxiomAudit.lean).
+CONSUMED = [
+    "Poincare/L4/Compactness/FamilyCovers.lean",
+    "Poincare/L4/Compactness/FamilyCoversWitness.lean",
+    "Poincare/L4/Compactness/RicciToDoubling.lean",
+    "Poincare/L4/Compactness/RicciToDoublingHyperbolic.lean",
+    "Poincare/L4/Compactness/RicciToDoublingHyperbolicClosedForm.lean",
+    "Poincare/L4/PointedGH/Transport.lean",
+    "Poincare/L4/PointedGH/Family.lean",
+    "Poincare/L4/PointedGH/Instances.lean",
+    "Poincare/L4/PointedGH/AxiomAudit.lean",
 ]
 
 FORBIDDEN = ["sorry", "admit", "axiom", "unsafe", "native_decide", "proof_wanted"]
 
 AXIOM_RE = re.compile(r"'([^']+)' depends on axioms: \[(.*?)\]", re.S)
+NO_AXIOM_RE = re.compile(r"'([^']+)' does not depend on any axioms")
 
 
 def strip_comments(src: str) -> str:
@@ -204,10 +378,12 @@ def strip_comments(src: str) -> str:
 
 
 def parse_axioms(text: str) -> dict[str, list[str]]:
-    return {
+    found = {name: [] for name in NO_AXIOM_RE.findall(text)}
+    found.update({
         name: [a.strip() for a in ax.split(",") if a.strip()]
         for name, ax in AXIOM_RE.findall(text)
-    }
+    })
+    return found
 
 
 def audit_reports(text: str, expected: list[str]) -> tuple[list[str], dict[str, list[str]]]:
@@ -310,8 +486,24 @@ def main() -> int:
     if forbidden_hits:
         report["violations"].append(f"forbidden tokens found: {forbidden_hits}")
 
+    consumed_hits: dict[str, list[str]] = {}
+    for rel in CONSUMED:
+        p = RELEASE / rel
+        src = strip_comments(p.read_text())
+        hits = []
+        for tok in FORBIDDEN:
+            for m in re.finditer(rf"\b{re.escape(tok)}\b", src):
+                line = src[: m.start()].count("\n") + 1
+                hits.append(f"{rel}:{line}:{tok}")
+        if hits:
+            consumed_hits[rel] = hits
+    report["consumed_forbidden_tokens"] = consumed_hits
+    if consumed_hits:
+        report["violations"].append(f"forbidden tokens in consumed child artifacts: {consumed_hits}")
+
     # --- 5. Source hashes. -------------------------------------------------------------
     report["source_sha256"] = {rel: sha256(RELEASE / rel) for rel in AUTHORED}
+    report["consumed_sha256"] = {rel: sha256(RELEASE / rel) for rel in CONSUMED}
 
     report["verdict"] = "PASS" if not report["violations"] else "FAIL"
     print(json.dumps(report, indent=2))

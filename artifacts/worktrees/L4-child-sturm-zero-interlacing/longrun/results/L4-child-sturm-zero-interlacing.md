@@ -2,7 +2,7 @@
 
 - **Task id:** `L4-child-sturm-zero-interlacing`
 - **Worktree:** `/data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/L4-child-sturm-zero-interlacing`
-- **Generated:** `2026-09-12T02:40:24.731958+00:00`
+- **Generated:** `2026-09-12T03:25:19.448550+00:00`
 - **Verdict:** **TASK_DONE — ENGINE CONSUMED WITH CONSTRUCTED DATA; LITERAL BRANCH (1) REFUTED AND REPLACED BY THE OFFERED SHARPER INTERLACING; ZERO-COUNTING AND WRONSKIAN ITEMS DELIVERED; ALL GATES PASS**
 - **Semantic class:** unconditional scalar ODE comparison (Sturm). This is **not** a Poincaré
   proof and makes no manifold-level claim: no Jacobi field, conjugate point, Rauch or
@@ -296,15 +296,15 @@ The two structural points of the review:
 
 | gate step | command | exit | seconds | log |
 |---|---|---|---|---|
-| `clean_deliverable_rebuild` | `lake build Poincare.L4.GeodesicComparison.SturmInterlacing Poincare.L4.GeodesicComparis...` | 0 | 11.23 | `logs/09_clean_rebuild.log` |
-| `lake_build` | `lake build Poincare.L4.GeodesicComparison.SturmInterlacing Poincare.L4.GeodesicComparis...` | 0 | 1.82 | `logs/10_lake_build.log` |
-| `per_file_SturmInterlacing.lean` | `lake env lean Poincare/L4/GeodesicComparison/SturmInterlacing.lean` | 0 | 3.77 | `logs/11_per_file_SturmInterlacing.lean.log` |
-| `per_file_SturmInterlacingConjugateCrossCheck.lean` | `lake env lean Poincare/L4/GeodesicComparison/SturmInterlacingConjugateCrossCheck.lean` | 0 | 3.57 | `logs/12_per_file_SturmInterlacingConjugateCrossCheck.lean.log` |
-| `per_file_SturmInterlacingAxiomAudit.lean` | `lake env lean Poincare/L4/GeodesicComparison/SturmInterlacingAxiomAudit.lean` | 0 | 3.72 | `logs/13_per_file_SturmInterlacingAxiomAudit.lean.log` |
-| `negative_control_math` | `lake env lean ../negcontrol/SturmInterlacingNegativeControl.lean` | 0 | 3.42 | `logs/20_negcontrol_math.log` |
-| `negative_control_soundness` | `lake env lean ../negcontrol/NegativeControl.lean` | 0 | 1.42 | `logs/21_negcontrol_soundness.log` |
+| `clean_deliverable_rebuild` | `lake build Poincare.L4.GeodesicComparison.SturmInterlacing Poincare.L4.GeodesicComparis...` | 0 | 7.92 | `logs/09_clean_rebuild.log` |
+| `lake_build` | `lake build Poincare.L4.GeodesicComparison.SturmInterlacing Poincare.L4.GeodesicComparis...` | 0 | 1.22 | `logs/10_lake_build.log` |
+| `per_file_SturmInterlacing.lean` | `lake env lean Poincare/L4/GeodesicComparison/SturmInterlacing.lean` | 0 | 2.82 | `logs/11_per_file_SturmInterlacing.lean.log` |
+| `per_file_SturmInterlacingConjugateCrossCheck.lean` | `lake env lean Poincare/L4/GeodesicComparison/SturmInterlacingConjugateCrossCheck.lean` | 0 | 2.22 | `logs/12_per_file_SturmInterlacingConjugateCrossCheck.lean.log` |
+| `per_file_SturmInterlacingAxiomAudit.lean` | `lake env lean Poincare/L4/GeodesicComparison/SturmInterlacingAxiomAudit.lean` | 0 | 2.22 | `logs/13_per_file_SturmInterlacingAxiomAudit.lean.log` |
+| `negative_control_math` | `lake env lean ../negcontrol/SturmInterlacingNegativeControl.lean` | 0 | 2.02 | `logs/20_negcontrol_math.log` |
+| `negative_control_soundness` | `lake env lean ../negcontrol/NegativeControl.lean` | 0 | 0.82 | `logs/21_negcontrol_soundness.log` |
 | `forbidden_token_scan` | `python3 input/d5-tools/scan_forbidden.py release` | 0 | 0.31 | `logs/22_forbidden_scan.log` |
-| `axiom_audit` | `lake env lean Poincare/L4/GeodesicComparison/SturmInterlacingAxiomAudit.lean` | 0 | 3.12 | `logs/23_axiom_audit.log` |
+| `axiom_audit` | `lake env lean Poincare/L4/GeodesicComparison/SturmInterlacingAxiomAudit.lean` | 0 | 2.22 | `logs/23_axiom_audit.log` |
 | `input_hash_verification` | `sha256 byte-identity check of 13 copied inputs vs leader release` | 0 | 0.0 | `evidence/input-hash-verification.json` |
 
 ### Fail-closed axiom audit
@@ -325,14 +325,313 @@ The two structural points of the review:
   it refutes the naive `k₂ = 0` conclusion and records the true Wronskian consequence.
 - `negcontrol/NegativeControl.lean` (soundness negative control): compiles, exit 0.
 
+## 8b. Independent acceptance re-verification (separate pass)
+
+- verdict: **PASS**; artifact `evidence/independent-acceptance.json`
+
+- [OK] **gate_driver_rerun** — tools/run_sturm_gates.py re-run in this acceptance pass: verdict PASS, failures [], 62 declarations audited, clean-rebuild exit 0, all per-file/negcontrol/scan exits 0
+- [OK] **full_project_closure_rebuild** — every project-module artifact under release/.lake/build/lib/lean was deleted; `lake build` of the three deliverable modules then rebuilt 2774 jobs from source, exit 0 (mathlib package artifacts untouched, pinned revision)
+- [OK] **kernel_cones_during_rebuild** — the freshly rebuilt SturmInterlacingAxiomAudit emitted all 62 cones; every cone is a subset of {propext, Classical.choice, Quot.sound}; no sorryAx / trustCompiler
+- [OK] **input_byte_identity_direct_sha256** — 13/13 read-only inputs byte-identical to ../leaders/L4-geometric-critical-path/release by a direct sha256sum loop (independent of the gate driver)
+- [OK] **signature_evidence_fresh** — `#check @...` regenerated for all 62 audited declarations from the freshly rebuilt oleans is byte-identical (after whitespace normalization) to evidence/signatures.txt
+- [OK] **engine_consumption_and_non_duplication** — sturm_zero_comparison / wronskian_deriv / wronskian_antitoneOn_of_le are referenced 20 times in SturmInterlacing.lean; neither sin_no_zero_in_Ioo_zero_pi nor conjugate_point_bound is redefined; conjugate_point_bound is invoked only as a theorem in the cross-check, never assumed as a hypothesis and never re-proved as the main statement
+- [OK] **independent_probe** — tmp/independent_acceptance_probe.lean proves 6 new theorems on data the deliverable never uses; compiles exit 0 and all probe cones are in the allowed cone
+
+- independent probe: `tmp/independent_acceptance_probe.lean` (sha256 `54cf4dda5bb13fc36df8635de12b93b67901cb528ff6d9effa2257caf9660ab5`), `cd release && lake env lean ../tmp/independent_acceptance_probe.lean`, compile exit **0**, log `logs/40_independent_probe.log`
+
+  - `probe_interlacing_k3_k1` — general interlacing with (k1,k2)=(3,1): jacobiSol 3 has a zero strictly inside (0,pi), the gap between the consecutive zeros 0 and pi of sin (cone `['Classical.choice', 'Quot.sound', 'propext']`)
+  - `probe_firstZero_k3_lt_sin` — same instance in first-zero form: firstPositiveZero (jacobiSol 3) = pi/sqrt 3 < pi = firstPositiveZero sin (cone `['Classical.choice', 'Quot.sound', 'propext']`)
+  - `probe_zero_count_equality_K4` — equality case k = K = 4 of the zero-counting corollary: a zero in (0, pi/sqrt 4] (Wronskian-constancy endpoint zero) (cone `['Classical.choice', 'Quot.sound', 'propext']`)
+  - `probe_firstZero_bound_K4` — first-positive-zero bound at K = 4: firstPositiveZero (jacobiSol 4) <= pi/sqrt 4 (cone `['Classical.choice', 'Quot.sound', 'propext']`)
+  - `probe_horizon_K1` — horizon form at K = 1, H = 4: a zero in (0, pi/sqrt 1] from data given only on (0,4) (cone `['Classical.choice', 'Quot.sound', 'propext']`)
+  - `probe_mul_cos_le_sin_at_three_pi_div_four` — the Wronskian inequality t*cos t <= sin t at t = 3*pi/4 (cone `['Classical.choice', 'Quot.sound', 'propext']`)
+
+- signature evidence: `#check @...` regenerated for all 62 declarations from the freshly rebuilt oleans is identical to `evidence/signatures.txt`
+
+## 8c. Independent acceptance pass 2 (post-checkpoint re-verification)
+
+- verdict: **PASS**; artifact `evidence/acceptance-pass2.json`
+- generated: `2026-09-12T02:52:10.455819+00:00`; driver `tools/acceptance_pass2.py`
+
+- [OK] **deliverable_hashes_unchanged_since_cp16** — { "release/Poincare/L4/GeodesicComparison/SturmInterlacing.lean": "970349ad43bdd66a49d578eb10d176d76f5f0185d9e06ce25f15ed4f264c931a", "release/Poincare/L4/GeodesicComparison/SturmInterlacingConjugateCrossCheck.lean": "7db50d7205a3b75f3c2e7189475e275d0f5964d8a22d0741edbe19db6b8516aa", "release/Poincare/L4/GeodesicComparison/SturmInterlacingAxiomAudit.lean": "39b1475c0ac839afbaec902140bde5d0aca27145a9f48900ee764557a0681392", "negcontrol/SturmInterlacingNegativeControl.lean": "7a583105170e1dae0c0aa15706abf96b2d8b64d59eca13dbac3f114c22f3c4d9" }
+- [OK] **input_byte_identity_direct_sha256** — 13/13 byte-identical; mismatches=[]
+- [OK] **gate_driver_verdict_and_steps** — verdict=PASS failures=[] nonpassing_steps=[] generated=2026-09-12T02:48:31.735500+00:00
+- [OK] **gate_source_hashes_match_current** — verification.json hashes current=True
+- [OK] **fail_closed_axiom_audit** — 62/62 declarations, missing=[], violations=[], out_of_cone=[]
+- [OK] **forbidden_token_scan_clean** — hard=0 soft=0 files=79
+- [OK] **full_project_closure_rebuild** — exit=0 seconds=24.65 jobs=2774 oleans_deleted=16 log=logs/50_acceptance_closure_rebuild.log
+- [OK] **independent_probe_r2** — exit=0 seconds=2.57 theorems=11/11 missing=[] out_of_cone=[] forbidden=[]
+- [OK] **signature_evidence_reproduced** — exit=0 whitespace-normalised identical=True declarations_checked=63 log=logs/52_acceptance_signatures.log
+
+- pass-2 full project-closure rebuild: `lake build Poincare.L4.GeodesicComparison.SturmInterlacing Poincare.L4.GeodesicComparison.SturmInterlacingConjugateCrossCheck Poincare.L4.GeodesicComparison.SturmInterlacingAxiomAudit` exit **0**, 2774 jobs, 24.65s (16 project oleans deleted first), log `logs/50_acceptance_closure_rebuild.log`
+- independent probe: `tmp/acceptance_probe_r2.lean` (sha256 `3453756a42c254075aef4c047e2dba7a3eec21332e16b9932a9a3c2774cc15c3`), `cd release && lake env lean ../tmp/acceptance_probe_r2.lean`, compile exit **0**, log `logs/51_acceptance_probe_r2.log`
+- the pass-2 probe exercises the delivered theorems on data the deliverable never uses: a Mathlib-only re-derivation of the literal-branch refutation, the necessity of the curvature hypothesis, a shifted-model interlacing on `(2π, 5π)` with `(k₁,k₂) = (1/4, 1/9)`, zero-counting and first-zero forms at `(K,k) = (9,16)` and `(16,5,25)`, first-zero ordering `(9,1/16)`, the equality case at `K = 25`, and Wronskian values at new points.
+
+  - `Poincare.L4.GeodesicComparison.probe2_sin_no_zero_in_Ioo_zero_pi` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_zero_counting_needs_curvature_bound` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_interlacing_shifted` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_interlacing_shifted_witness` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_zero_count_K9` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_firstZero_bound_K9_interior` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_firstZero_ordering` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_horizon_K16` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_equality_case_K25_negated` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_wronskian_deriv_at_pi_div_six` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.probe2_mul_cos_le_sin_at_five_pi_div_six` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+
+- signatures: `#check @...` (evidence/signatures.txt) reproduced from the freshly rebuilt oleans, identical after whitespace normalisation = **True** (output `tmp/signatures_pass2.out`)
+
+## 8d. Independent acceptance pass 3 (post-completion re-verification)
+
+- verdict: **PASS**; artifact `evidence/acceptance-pass3.json`
+- generated: `2026-09-12T03:03:06.683868+00:00`; driver `tools/acceptance_pass3.py`
+
+- [OK] **deliverable_hashes_match_checkpoint** — cp18 mismatches=[]
+- [OK] **input_byte_identity_direct_sha256** — 13/13 identical
+- [OK] **no_declaration_name_collisions_with_leader** — own=50 leader=5255 collisions=[]
+- [OK] **shared_queue_manifest_input_preserved** — files=34 modified_since_cp1=[] (all mtimes predate 2026-09-12T02:16:02.323079+00:00)
+- [OK] **leader_complementary_files_compile_here** — exits=0 hashes_identical=True
+- [OK] **probe_r3_fail_closed_axiom_audit** — declarations=41/41 missing=[] out_of_cone=[] forbidden=[]
+- [OK] **release_tree_restored_to_gate_recorded_state** — files=79 expected=79 extra=[] missing=[] differing=[]
+- [OK] **project_closure_rebuild_exit0** — exit=0 jobs=2774 oleans_deleted=48 seconds=29.85
+- [OK] **deliverable_axiom_audit_after_closure_rebuild** — declarations=62/62 missing=[] violations=[]
+
+- what pass 3 adds beyond passes 1-2: the delivered theorems are exercised on **hand-rolled data the deliverable never uses** (`p3u = sin(4t)/4` with curvature `16`, `p3u2 = sin(2t)/2` with curvature `4`), and the one-sided zero counting is cross-validated against the leader's **newest complementary** theorem `no_first_zero_before_pi_sqrt_of_curvature_le` (`TwoSidedSturm.lean` / `SturmUniqueness.lean`, staged and compiled in this tree, then removed): the probe proves the two-sided bracket `π/5 ≤ firstPositiveZero p3u ≤ π/3` with the exact value `π/4` (`p3_two_sided_bracket`, `p3_bracket_sharp`).
+
+- full project-closure rebuild: exit **0**, 2774 jobs, 48 project oleans deleted first, log `logs/62_closure_rebuild.log`; deliverable axiom audit re-run on the freshly rebuilt oleans: 62/62 declarations, violations=[]
+- release tree restoration verified against the gate-recorded manifest: 79 files, byte-exact = **True**
+- name-collision scan vs the current leader release: own 50 declarations, leader 5255, collisions = **[]**
+
+- independent probe: `tmp/acceptance_probe_r3.lean` (sha256 `b4793b07317dbb58ec1e631c260714c0b1ef3e5d2590520f602722f2374a9d20`), `lake env lean ../tmp/acceptance_probe_r3_audit.lean`, compile exit **0**, log `logs/61_probe_r3_audit.log`; 41 declarations audited fail-closed, out-of-cone = []
+
+  - `p3_hasDerivAtR_sin` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_hasDerivAtR_cos` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3du` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3ddu` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_hasDerivAt_u` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_hasDerivAt_du` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_jacobiSolutionOn` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u_zero` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3du_zero` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u_pi_div_four` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u_pos_of_lt_pi_div_four` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_zero_exists_K9` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_zero_exists_K9_normalized` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_firstZero_le_K9` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_firstZero_mem` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_zero_exists_horizon_K9` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_firstZero_eq_pi_div_four` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_firstZero_le_pi_div_three` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_firstZero_ge_pi_div_five` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_two_sided_bracket` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_bracket_sharp` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u2` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3du2` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3ddu2` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_hasDerivAt_u2` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_hasDerivAt_du2` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u2_jacobiSolutionOn` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u2_zero` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u2_zero_at_pi_div_two` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3u2_pos` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_interlacing_sin4_sin2` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_firstZero_lt_half_pi` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_wronskian_antitone` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_cos_four_le_cos_sq` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_wronskian_deriv` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_wronskian_deriv_at_pi_div_eight` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_zero_counting_needs_curvature` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `p3_firstZero_linear_is_zero` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `no_first_zero_before_pi_sqrt_of_curvature_le` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `eq_curvature_of_first_jacobi_zero_before_pi_sqrt` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+
+- the pass-3 probe additionally records the honest nuance that `firstPositiveZero_le_pi_sqrt` read **without** the existence theorem is trivially satisfied by a zero-free solution (`sInf ∅ = 0`, witness `p3_firstZero_linear_is_zero`); the substantive content is the nonemptiness proved by `exists_jacobi_zero_on_Ioc_pi_sqrt`, which the deliverable proves.
+
+## 8e. Independent acceptance pass 4 (second invocation, fresh probe)
+
+- verdict: **PASS**; artifact `evidence/gs-independent-acceptance.json`
+- generated: `2026-09-12T03:10:41.425849+00:00`; driver `tools/gs_independent_check.py`
+
+- this pass was run by a separate invocation of the task on the frozen tree; its probe `tmp/gs_independent_probe.lean` was written from scratch (it does not import or reuse the pass-1/2/3 probes) and exercises the delivered theorems on data none of the earlier probes uses: `jacobiSol 3` against the shifted `k = 1/4` model on `(0, 2π)`, the bounds `K = 2, k = 5` and `K = 4, k = 5`, the equality case `k ≡ 3`, the Wronskian at `π/3`, and the leader cross-check at `k = 3, K = 1, T = 3/2`.
+
+- [OK] **closure_rebuild_exit0_jobs** — exit=0 jobs=2774 oleans_deleted=48 seconds=25.35 log=logs/70_gs_closure_rebuild.log
+- [OK] **closure_rebuild_left_sources_unchanged** — lean_files=79 differing=[]
+- [OK] **probe_compiles_clean** — exit=0, seconds=2.52, log=logs/70_gs_independent_probe.log
+- [OK] **probe_axiom_cones_reported_once** — expected=15 reported=15 missing=[]
+- [OK] **probe_axiom_cones_in_allowed_set** — allowed=['Classical.choice', 'Quot.sound', 'propext'] out_of_cone={} sorryAx=[]
+- [OK] **probe_source_no_forbidden_tokens** — tokens=[]
+- [OK] **audit_rerun_all_62_in_cone** — exit=0 expected=62 reported=62 missing=[] out_of_cone={} seconds=2.32 log=logs/71_gs_axiom_audit.log
+- [OK] **deliverable_hashes_match_card** — mismatched=[] core=970349ad43bdd66a...
+- [OK] **inputs_byte_identical_to_leader** — files=13 mismatched=[]
+- [OK] **main_module_does_not_import_conjugate_point_bound** — imports=['Poincare.L4.GeodesicComparison.SturmZeroCount', 'Poincare.D12.ComparisonGeodesics.SturmComparison', 'Poincare.D10.JacobiConstantCurvature.Comparison']
+- [OK] **main_module_code_never_mentions_conjugate_point_bound** — identifier absent from code (only in doc comments)
+- [OK] **no_prior_art_name_collisions** — []
+- [OK] **no_leader_name_collisions** — []
+- [OK] **axiom_audit_covers_every_own_declaration** — own=47 audited_own=47 uncovered=[]
+- [OK] **signature_transcript_covers_every_own_declaration** — own=47 missing_from_signatures_txt=[]
+
+- pass-4 full project-closure rebuild: `lake build Poincare.L4.GeodesicComparison.SturmInterlacing Poincare.L4.GeodesicComparison.SturmInterlacingConjugateCrossCheck Poincare.L4.GeodesicComparison.SturmInterlacingAxiomAudit` exit **0**, 2774 jobs, 48 project oleans deleted first, 25.35s, log `logs/70_gs_closure_rebuild.log`; the 79 `release/**/*.lean` sources are byte-identical before and after the rebuild
+- axiom-audit module re-run on the freshly rebuilt oleans: exit **0**, 62/62 declarations reported, missing=[], out-of-cone={}, log `logs/71_gs_axiom_audit.log`
+
+- independent probe: `tmp/gs_independent_probe.lean` (sha256 `6147678cba51ddbfd1f53f0573b3bc4d08114b7b49638d63566776ab31b96d0e`), `lake env lean ../tmp/gs_independent_probe.lean (cwd release)`, compile exit **0**, log `logs/70_gs_independent_probe.log`; 15 declarations audited fail-closed, out-of-cone = {}
+
+  - `Poincare.L4.GeodesicComparison.gs1_interlacing_instance` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs1b_engine_route` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs2_first_zero_bound` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs2b_closed_form` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs2c_horizon_instance` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs2d_attainment` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs3_equality_case` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs4_mul_cos_le_sin` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs4b_wronskian_deriv_value` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs5_literal_branch_false` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs5b_sin_first_zero` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs6_pos` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs6_engine_route` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs6b_engine_route_full` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.gs6c_leader_route` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+
+- the pass-4 driver additionally re-derived from disk (not from earlier evidence): the five deliverable hashes against the card, the 13 read-only inputs against the leader release, the absence of `ConjugatePointBound` from the main module's imports and code, the absence of any declaration-name collision with the prior art or the leader tree, and the audit driver's coverage of all 47 own declarations.
+
+## 8f. Independent acceptance pass 5 (continuation invocation, fresh probe)
+
+- verdict: **PASS**; artifact `evidence/acceptance-pass5.json`
+- generated: `2026-09-12T03:17:45.460922+00:00`; driver `tools/acceptance_pass5.py`
+
+- this pass was run by a further continuation invocation on the frozen tree; its probe `tmp/acceptance_probe_r5.lean` was written from scratch (it does not import or reuse the pass-1/2/3/4 probes) and adds a check the earlier passes do not perform: **proof-term provenance**.  `#print` of the seven engine-consuming declarations is parsed out of the elaboration output and each declaration's elaborated proof term must mention the D12 engine declaration it is advertised to consume — stronger than a source grep, since it inspects what the kernel elaborated.
+
+- [OK] **closure_rebuild_exit0_jobs** — exit=0 jobs=2774 oleans_deleted=48 seconds=23.95 log=logs/74_pass5_closure_rebuild.log
+- [OK] **closure_rebuild_left_sources_unchanged** — lean_files=79 differing=[]
+- [OK] **probe_compiles_clean** — exit=0, seconds=3.32, log=logs/75_pass5_probe.log
+- [OK] **probe_axiom_cones_reported_once** — expected=10 reported=10 missing=[]
+- [OK] **probe_axiom_cones_in_allowed_set** — allowed=['Classical.choice', 'Quot.sound', 'propext'] out_of_cone={} sorryAx=[]
+- [OK] **proof_term_provenance_engine_consumption** — declarations=7 printed_blocks=7 failures=[]
+- [OK] **probe_source_no_forbidden_tokens** — tokens=[]
+- [OK] **audit_rerun_all_in_cone** — exit=0 expected=62 reported=62 missing=[] out_of_cone={} sorryAx=[] seconds=2.87 log=logs/76_pass5_audit.log
+- [OK] **audit_covers_every_own_declaration** — own=47 audited_own=47 uncovered=[]
+- [OK] **deliverable_hashes_match_card** — mismatched=[]
+- [OK] **inputs_byte_identical_to_leader** — files=13 mismatched=[]
+- [OK] **main_module_does_not_assume_conjugate_point_bound** — imports=['Poincare.L4.GeodesicComparison.SturmZeroCount', 'Poincare.D12.ComparisonGeodesics.SturmComparison', 'Poincare.D10.JacobiConstantCurvature.Comparison'] conjugate_point_bound_in_code=0
+- [OK] **no_prior_art_or_leader_name_collisions** — own=47 prior_collisions=[] leader_collisions=[]
+- [OK] **card_verdict_task_done** — json_verdict=TASK_DONE md_ends_task_done=True
+- [OK] **checkpoint_history_intact_latest_gates_pass** — entries=21 unique=21 latest=cp21 gates=PASS
+- [OK] **inherited_files_not_modified_during_task** — files=2842 modified_since_cp1=[]
+
+- pass-5 full project-closure rebuild: `lake build Poincare.L4.GeodesicComparison.SturmInterlacing Poincare.L4.GeodesicComparison.SturmInterlacingConjugateCrossCheck Poincare.L4.GeodesicComparison.SturmInterlacingAxiomAudit` exit **0**, 2774 jobs, 48 project oleans deleted first, 23.95s, log `logs/74_pass5_closure_rebuild.log`; the 79 `release/**/*.lean` sources are byte-identical before and after the rebuild
+- axiom-audit module re-run on the freshly rebuilt oleans: exit **0**, 62/62 declarations reported, missing=[], out-of-cone={}, log `logs/76_pass5_audit.log`
+
+- independent probe: `tmp/acceptance_probe_r5.lean` (sha256 `adac3b43521114c3e555526d92cdd815057b0565988826af47b006ee36a9dd78`), `lake env lean ../tmp/acceptance_probe_r5.lean (cwd release/)`, compile exit **0**, log `logs/75_pass5_probe.log`; 10 declarations audited fail-closed, out-of-cone = {}
+
+  - `Poincare.L4.GeodesicComparison.p5_literal_branch_refuted` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_sharper_interlacing` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_infinite_interlacing_n1` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_zero_counting_normalized` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_horizon_and_attainment` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_equality_case_five` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_wronskian_consequences` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_hypotheses_satisfiable` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_cross_check_sin_engine` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p5_cross_check_sin_leader` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+
+- proof-term provenance (declaration → engine name, hit counts):
+
+  - `exists_zero_of_curvature_lt` → `sturm_zero_comparison`×1 — OK
+  - `exists_jacobi_zero_on_Ioc_pi_sqrt` → `sturm_zero_comparison`×1 — OK
+  - `sturm_dichotomy_of_interior_bound` → `sturm_zero_comparison_of_pos`×2, `sign_constant_of_no_zero`×1 — OK
+  - `eq_zero_at_pi_sqrt_of_curvature_eq` → `wronskian_deriv`×1, `wronskian_continuousOn`×1, `wronskian_differentiableOn`×1 — OK
+  - `wronskian_sin_linear_antitoneOn` → `wronskian_antitoneOn_of_le`×1 — OK
+  - `wronskian_deriv_sin_linear` → `wronskian_deriv`×1 — OK
+  - `no_positive_solution_past_pi_sqrt` → `sturm_dichotomy_of_interior_bound`×1 — OK
+
+- the pass-5 probe additionally exercises the acceptance data directly: the literal branch refutation with the exact value `firstPositiveZero sin = π`; the sharper `sin` vs `k = 1/2` interlacing with its explicit witness `π`; the infinite interlacing at `n = 1` with the explicit zero `3π`; zero counting under `u 0 = 0`, `u' 0 = 1` on `jacobiSol 2` against `K = 1`; horizon/attainment data `K = 9`, `k = 10`, `H = 2`; the equality case `k ≡ K = 5`; the Wronskian at `π/4`; a hypothesis-satisfiability bundle in which **every** hypothesis of `exists_zero_of_curvature_lt` holds simultaneously on the acceptance data together with an explicit interior zero; and the `conjugate_point_bound` cross-check on fresh equality-case data (`k ≡ K = 1`, `u = sin`, `T = π/2`).
+
+## 8g. Independent acceptance pass 6 (continuation invocation, fresh probe, gate mutation tests)
+
+- verdict: **PASS**; artifact `evidence/acceptance-pass6.json`
+- generated: `2026-09-12T03:24:54.768000+00:00`; driver `tools/acceptance_pass6.py`
+
+- this pass was run by a further continuation invocation on the frozen tree.  Its probe `tmp/acceptance_probe_r6.lean` was written from scratch (it does not import or reuse the pass-1/2/3/4/5 probes) and uses fresh data: the negative shift `a = -3` with `(k₁,k₂) = (9,4)`; zero counting at `(K,k) = (4,9)`; the horizon form `H = 3` and attainment on `jacobiSol 9`; the interior-bound form `(K,k) = (16,25)`; the equality case `k ≡ K = 7`; and Wronskian data `(9, jacobiSol 9)` versus `(4, jacobiSol 4)` on `[0,π/6]`.  It adds two things the earlier passes do not:
+  1. **machine-checked non-restatement**: the raw engine is invoked directly on the acceptance data, producing its two-sided alternative `A ∨ B`; the probe proves `¬B` at the point `π/4` and the delivered theorem supplies `A`, so on this data the delivered statement is strictly more informative than the engine's own conclusion;
+  2. **gate mutation (sensitivity) testing**: the fail-closed machinery is shown to *reject* poisoned artifacts, not merely to accept the pristine one.
+
+- [OK] **closure_rebuild_exit0_jobs** — exit=0 jobs=2774 oleans_deleted=48 seconds=22.69 log=logs/82_pass6_closure_rebuild.log
+- [OK] **closure_rebuild_left_sources_unchanged** — lean_files=79 differing=[]
+- [OK] **probe_compiles_clean** — exit=0, seconds=2.52, log=logs/80_pass6_probe.log
+- [OK] **probe_axiom_cones_reported_once** — expected=8 reported=8 missing=[]
+- [OK] **probe_axiom_cones_in_allowed_set** — allowed=['Classical.choice', 'Quot.sound', 'propext'] out_of_cone={} sorryAx=[]
+- [OK] **probe_source_no_forbidden_tokens** — tokens=[]
+- [OK] **probe_check_surface_parsed** — expected=9 parsed=9 missing=[]
+- [OK] **type_nonrestatement_strict_gap** — delivered_has_or=False engine_has_or=True types_equal=False delivered_arrows=12 engine_arrows=13
+- [OK] **type_nonduplication_zero_counting** — delivered_arrows=5 prior_arrows=7 delivered_Ioc=True prior_Ioo=True types_equal=False
+- [OK] **type_engine_instantiated_wronskian** — types_equal=False delivered_arrows=0 engine_arrows=8
+- [OK] **type_hypotheses_weaker_than_leader** — delivered_arrows=7 leader_arrows=15 leader_only_B=True leader_only_t0=True
+- [OK] **audit_rerun_all_in_cone** — exit=0 expected=62 reported=62 missing=[] out_of_cone={} sorryAx=[] seconds=2.37 log=logs/81_pass6_audit.log
+- [OK] **audit_covers_every_own_declaration** — own=47 audited_own=47 uncovered=[]
+- [OK] **deliverable_hashes_match_checkpoint_cp22** — checkpoint=cp22 checked=4 mismatched=[]
+- [OK] **inputs_byte_identical_to_leader** — files=13 mismatched=[]
+- [OK] **release_forbidden_scan_still_clean** — exit=0 hard=0 soft=0 files=79 log=logs/86_pass6_release_scan.log
+- [OK] **mutation_axiom_audit_rejects_new_axiom** — exit=0 poison_cone=['Poincare.L4.GeodesicComparison.p6_mutation_axiom'] violations=2 pristine_cone=['propext', 'Classical.choice', 'Quot.sound'] log=logs/83_pass6_mutation_poisoned.log
+- [OK] **mutation_coverage_detector_rejects_truncation** — exit=0 reported=2 source_expected=2 naive_would_pass=True uncovered_own_declarations=46 examples=['conjugate_point_bound_cross_check', 'conjugate_point_bound_via_engine', 'eq_zero_at_pi_sqrt_of_curvature_eq', 'exists_jacobi_zero_of_horizon'] log=logs/84_pass6_mutation_truncated.log
+- [OK] **mutation_forbidden_scan_rejects_sorry_not_comments** — exit=1 hard=1 hard_files=['real_sorry.lean'] soft_files=[] log=logs/85_pass6_mutation_scan.log
+- [OK] **card_verdict_task_done** — json_verdict=TASK_DONE md_ends_task_done=True
+- [OK] **checkpoint_history_intact_latest_gates_pass** — entries=22 unique=22 latest=cp22 gates=PASS
+- [OK] **inherited_files_not_modified_during_task** — files=2842 modified_since_cp1=[]
+
+- pass-6 full project-closure rebuild: `lake build Poincare.L4.GeodesicComparison.SturmInterlacing Poincare.L4.GeodesicComparison.SturmInterlacingConjugateCrossCheck Poincare.L4.GeodesicComparison.SturmInterlacingAxiomAudit` exit **0**, 2774 jobs, 48 project oleans deleted first, 22.69s, log `logs/82_pass6_closure_rebuild.log`; the 79 `release/**/*.lean` sources are byte-identical before and after the rebuild
+- axiom-audit module re-run on the freshly rebuilt oleans: exit **0**, 62/62 declarations reported, missing=[], out-of-cone={}, log `logs/81_pass6_audit.log`
+
+- independent probe: `tmp/acceptance_probe_r6.lean` (sha256 `49f532737a436c48fd924f29e0cec33a58ba6e6bee81455d65d0e2a47ebe0b0b`), `lake env lean ../tmp/acceptance_probe_r6.lean (cwd release/)`, compile exit **0**, log `logs/80_pass6_probe.log`; 8 declarations audited fail-closed, out-of-cone = {}
+
+  - `Poincare.L4.GeodesicComparison.p6_literal_branch_status` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p6_negative_shift_interlacing` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p6_zero_count_strict_inside` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p6_horizon_attainment` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p6_interior_bound_K16` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p6_equality_K7` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p6_wronskian_fresh_data` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+  - `Poincare.L4.GeodesicComparison.p6_engine_vs_delivered_strictness` — cone `['propext', 'Classical.choice', 'Quot.sound']`
+
+- **gate mutation tests** (artifacts under `tmp/mutation/`, never in `release/`):
+  - poisoned audit (`tmp/mutation/poisoned_audit.lean`, sha256 `9b232b597a727ea56266502439ace7561605a7efd891d7773a053619eb888905`): a new axiom `p6_mutation_axiom` is introduced; compile exit **0**, the poisoned cone `['Poincare.L4.GeodesicComparison.p6_mutation_axiom']` is out of the allowed set, violations reported = **2**.  The gate driver's own parser and allow-list are reused (`import run_sturm_gates`), so this exercises the production detector rather than a copy;
+  - truncated audit (`tmp/mutation/truncated_audit.lean`, sha256 `bb747fff74bbd5163030930849bca5f00ead30a38aea6e0fbb7cd4e5a5311113`): reports only 2 declarations — the naive expected-vs-reported check would pass (**True**) because the expected list shrinks together with the audited source; the fail-closed coverage check catches it with **46 own declarations uncovered**;
+  - scanner sensitivity (`tmp/mutation/scan_targets`, scanner exit 1): hard matches = **1**, flagged files = ['real_sorry.lean'], soft flags = [] — `real_sorry.lean` (a genuine `sorry` in code) is caught while `comment_only.lean` (the same tokens only in comments and a string literal) is not, so sensitivity is not bought with false positives;
+  - the released tree itself remains clean under the same scanner: hard = **0** over 79 Lean files.
+
+- **statement-level (type) checks** parsed from the probe's `#check @...` surface (arrow counts are top-level `→` counts, a heuristic proxy for hypothesis count):
+
+  - `delivered_gap` — 12 arrows
+  - `engine_gap` — 13 arrows
+  - `delivered_firstzero` — 5 arrows
+  - `delivered_zerocount` — 5 arrows
+  - `prior_zerocount` — 7 arrows
+  - `delivered_bound` — 7 arrows
+  - `leader_bound` — 15 arrows
+  - `delivered_wronskian` — 0 arrows
+  - `engine_wronskian` — 8 arrows
+
+- the type surface confirms non-restatement structurally as well: the delivered strict-gap type is not the engine's type and contains no `∨` while the engine's does; the delivered closed-interval zero-counting type is not the prior-art type (`Ioc` versus `Ioo`) and drops the prior art's strict-excess hypothesis; the engine-derived positivity bound carries strictly fewer hypotheses than `conjugate_point_bound` and mentions neither `B` nor `t₀`.
+
 ## 9. Provenance, queue and checkpoints
 
 - `checkpoint.json` at the worktree root holds the full checkpoint history (never rewritten);
-  the latest entry at card-generation time was `cp12` at
-  `2026-09-12T02:39:24.619083+00:00` with `gates=PASS`.  The final
+  the latest entry at card-generation time was `cp22` at
+  `2026-09-12T03:18:11.722864+00:00` with `gates=PASS`.  The final
   checkpoint written after this card records the card's own sha256.
 - Shared queue files were **not modified**: `longrun/queue.updated.json` and
-  `manifest/*` remain as inherited. This card and `evidence/*` are the task's only outputs.
+  `manifest/*` remain as inherited (their mtimes, 2026-09-09, predate the first checkpoint at
+  2026-09-12T02:16Z; a `find -newermt` scan over `longrun/queue.updated.json`, `manifest`
+  and `input` finds no file modified during the task). This card, `evidence/*` and the
+  independent acceptance probes `tmp/independent_acceptance_probe.lean` (§8b),
+  `tmp/acceptance_probe_r2.lean` (§8c, driven by `tools/acceptance_pass2.py`) and
+  `tmp/acceptance_probe_r3.lean` / `tmp/acceptance_probe_r3_audit.lean`
+  (§8d, driven by `tools/acceptance_pass3.py`), `tmp/gs_independent_probe.lean`
+  (§8e, driven by `tools/gs_independent_check.py`) and `tmp/acceptance_probe_r5.lean`
+  (§8f, driven by `tools/acceptance_pass5.py`) are this task's outputs; §8g adds
+  `tmp/acceptance_probe_r6.lean` and the gate-sensitivity artifacts
+  `tmp/mutation/poisoned_audit.lean`, `tmp/mutation/truncated_audit.lean` and
+  `tmp/mutation/scan_targets/*` (driven by `tools/acceptance_pass6.py`); `tools/*` are
+  this task's own gate, card, checkpoint and acceptance drivers.
 - **Revision note.**  After the first complete pass, the two local statements that duplicated the
   read-only prior art were removed in favour of importing `SturmZeroCount.lean` (the local
   `sin_no_zero_in_Ioo_zero_pi` additionally collided with the leader declaration of the same
@@ -362,7 +661,20 @@ export ELAN_HOME=/data3/guoshaoyang/workdir/lean_poincare/elan
 export PATH="$ELAN_HOME/bin:$PATH"
 cd /data3/guoshaoyang/workdir/lean_poincare/longrun/worktrees/L4-child-sturm-zero-interlacing
 python3 tools/run_sturm_gates.py        # compile + axiom audit + forbidden scan + hashes
+python3 tools/acceptance_pass2.py       # pass-2 fail-closed acceptance (closure rebuild,
+                                        # probe r2, signature re-diff, input byte-identity)
+python3 tools/acceptance_pass3.py       # pass-3 independent acceptance (hand-rolled probe,
+                                        # leader two-sided cross-check, closure rebuild)
+python3 tools/gs_independent_check.py   # pass-4 independent acceptance (fresh probe from a
+                                        # separate invocation, fail-closed cones/hashes/names)
+python3 tools/acceptance_pass5.py       # pass-5 independent acceptance (continuation
+                                        # invocation; fresh probe plus proof-term provenance
+                                        # of the engine consumption)
+python3 tools/acceptance_pass6.py       # pass-6 independent acceptance (continuation
+                                        # invocation; fresh probe, statement-level type
+                                        # checks, and gate mutation/sensitivity tests)
 python3 tools/make_result_card.py       # regenerate this card and its JSON
+python3 tools/final_integrity_check.py  # card/checkpoint/hash consistency
 ```
 
 **TASK_DONE**

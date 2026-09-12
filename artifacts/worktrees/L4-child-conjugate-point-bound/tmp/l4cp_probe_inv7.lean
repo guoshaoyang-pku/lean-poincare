@@ -34,7 +34,7 @@ open Poincare.D12.ComparisonGeodesics Poincare.D10
 order of the acceptance text; `hzero` of `rauch_upper_of_jacobi_constCurv` removed and
 replaced by `0 < K`). -/
 def Inv7HeadlineType : Prop :=
-  ∀ (k u du ddu : ℝ → ℝ) (T B t₀ K : ℝ),
+  ∀ {k u du ddu : ℝ → ℝ} {T B t₀ K : ℝ},
     0 < T → 0 ≤ B → 0 < t₀ → t₀ ≤ T → B * t₀ ≤ 1 / 2 →
     JacobiSolutionOn k u du ddu 0 T → ContinuousOn ddu (Icc 0 T) →
     (∀ t ∈ Ioo 0 T, |ddu t| ≤ B) → u 0 = 0 → du 0 = 1 →
@@ -48,7 +48,7 @@ theorem inv7_statement_fidelity : Inv7HeadlineType := conjugate_point_bound
 
 /-! ## A non-constant-coefficient Jacobi solution on `(0,2)` -/
 
-/-- A coefficient that is non-constant near `2` and satisfies `1/2 ≤ inv7k t` on `(0,2)`. -/
+/-- A coefficient that is non-constant and satisfies `1/2 ≤ inv7k t` on `(0,2)`. -/
 def inv7k (t : ℝ) : ℝ := 2 / (t * (4 - t))
 
 /-- The exact solution `t - t²/4 = t(4-t)/4` of `u'' = -inv7k · u` with `u 0 = 0`,
@@ -63,21 +63,30 @@ def inv7ddu (_ : ℝ) : ℝ := -(1 / 2)
 theorem inv7_k_nonconstant : inv7k 1 ≠ inv7k 2 := by
   norm_num [inv7k]
 
-theorem inv7_hasDerivAt_u (t : ℝ) : HasDerivAtR inv7u (inv7du t) t := by
-  have h2 : HasDerivAt (fun s : ℝ => s ^ 2 / 4) (t / 2) t := by
-    have h := ((hasDerivAt_id t).pow 2).div_const 4
-    convert h using 1
+theorem inv7_hasDerivAt_u ⦃t : ℝ⦄ (_ht : t ∈ Ioo (0 : ℝ) 2) :
+    HasDerivAtR inv7u (inv7du t) t := by
+  change HasDerivAtR (fun s : ℝ => s - s ^ 2 / 4) (1 - t / 2) t
+  have h2 : HasDerivAtR (fun s : ℝ => s ^ 2 / 4) (t / 2) t := by
+    have h : HasDerivAtR (fun s : ℝ => s ^ 2) (2 * t) t := by
+      have h0 := hasDerivAtR_pow 2 t
+      convert h0 using 1
+      ring
+    have h' : HasDerivAtR (fun s : ℝ => s ^ 2 / 4) (2 * t / 4) t := h.div_const 4
+    convert h' using 1
     ring
-  have h : HasDerivAt (fun s : ℝ => s - s ^ 2 / 4) (1 - t / 2) t :=
-    (hasDerivAt_id t).sub h2
-  simpa only [inv7u, inv7du] using h
+  have h : HasDerivAtR (fun s : ℝ => s - s ^ 2 / 4) (1 - t / 2) t :=
+    (hasDerivAtR_id t).sub h2
+  exact h
 
-theorem inv7_hasDerivAt_du (t : ℝ) : HasDerivAtR inv7du (inv7ddu t) t := by
-  have h : HasDerivAt (fun s : ℝ => 1 - s / 2) (0 - 1 / 2) t :=
-    (hasDerivAt_const (x := t) (c := (1 : ℝ))).sub ((hasDerivAt_id t).div_const 2)
-  simpa only [inv7du, inv7ddu] using h
+theorem inv7_hasDerivAt_du ⦃t : ℝ⦄ (_ht : t ∈ Ioo (0 : ℝ) 2) :
+    HasDerivAtR inv7du (inv7ddu t) t := by
+  change HasDerivAtR (fun s : ℝ => 1 - s / 2) (-(1 / 2)) t
+  have h : HasDerivAtR (fun s : ℝ => 1 - s / 2) (0 - 1 / 2) t :=
+    (hasDerivAtR_const (1 : ℝ) t).sub ((hasDerivAtR_id t).div_const 2)
+  convert h using 1
+  ring
 
-theorem inv7_eq_secondDeriv (t : ℝ) (ht : t ∈ Ioo (0 : ℝ) 2) :
+theorem inv7_eq_secondDeriv ⦃t : ℝ⦄ (ht : t ∈ Ioo (0 : ℝ) 2) :
     inv7ddu t = -(inv7k t) * inv7u t := by
   have ht0 : t ≠ 0 := ne_of_gt ht.1
   have h4t : 4 - t ≠ 0 := by linarith [ht.2]
@@ -86,9 +95,13 @@ theorem inv7_eq_secondDeriv (t : ℝ) (ht : t ∈ Ioo (0 : ℝ) 2) :
   field_simp [hden]
   ring
 
-theorem inv7_continuousOn_u : ContinuousOn inv7u (Icc (0 : ℝ) 2) := by fun_prop
+theorem inv7_continuousOn_u : ContinuousOn inv7u (Icc (0 : ℝ) 2) := by
+  change ContinuousOn (fun s : ℝ => s - s ^ 2 / 4) (Icc (0 : ℝ) 2)
+  fun_prop
 
-theorem inv7_continuousOn_du : ContinuousOn inv7du (Icc (0 : ℝ) 2) := by fun_prop
+theorem inv7_continuousOn_du : ContinuousOn inv7du (Icc (0 : ℝ) 2) := by
+  change ContinuousOn (fun s : ℝ => 1 - s / 2) (Icc (0 : ℝ) 2)
+  fun_prop
 
 /-- The explicit solution is a `JacobiSolutionOn` for the non-constant coefficient
 `inv7k` on `(0,2)`. -/
@@ -106,24 +119,28 @@ theorem inv7_u_pos : ∀ t ∈ Ioc (0 : ℝ) 2, 0 < inv7u t := by
     simp only [inv7u]
     ring
   rw [h]
-  have h1 : 0 < t := ht.1
-  have h2 : 0 < 4 - t := by linarith [ht.2]
-  positivity
+  exact div_pos (mul_pos ht.1 (by linarith [ht.2])) (by norm_num)
 
 /-- The non-constant coefficient dominates `K = 1/2` on all of `(0,2)`. -/
 theorem inv7_k_ge : ∀ t ∈ Ioo (0 : ℝ) 2, (1 / 2 : ℝ) ≤ inv7k t := by
   intro t ht
   have hden : 0 < t * (4 - t) := mul_pos ht.1 (by linarith [ht.2])
   have hle : t * (4 - t) ≤ 4 := by nlinarith [sq_nonneg (t - 2)]
-  rw [inv7k, le_div_iff₀ hden]
-  nlinarith
+  have h1 : (1 : ℝ) / 2 ≤ 2 / (t * (4 - t)) := by
+    rw [le_div_iff₀ hden]
+    have h2 : (1 / 2 : ℝ) * (t * (4 - t)) ≤ (1 / 2 : ℝ) * 4 :=
+      mul_le_mul_of_nonneg_left hle (by norm_num)
+    linarith
+  simpa only [inv7k] using h1
 
 theorem inv7_ddu_bound : ∀ t ∈ Ioo (0 : ℝ) 2, |inv7ddu t| ≤ 1 := by
   intro t _
-  simp [inv7ddu]
+  norm_num [inv7ddu]
 
 /-- Second-derivative continuity of the constant `inv7ddu`. -/
-theorem inv7_ddu_continuous : ContinuousOn inv7ddu (Icc (0 : ℝ) 2) := by fun_prop
+theorem inv7_ddu_continuous : ContinuousOn inv7ddu (Icc (0 : ℝ) 2) := by
+  change ContinuousOn (fun _ : ℝ => -(1 / 2)) (Icc (0 : ℝ) 2)
+  fun_prop
 
 /-- **First non-constant-coefficient witness.**  The general endpoint bound applied to the
 non-constant coefficient `inv7k t = 2/(t(4-t)) ≥ 1/2` and the exact solution `inv7u`

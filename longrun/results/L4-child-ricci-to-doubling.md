@@ -9,7 +9,10 @@ open and is not claimed. Independent verification: all gates PASS; adversarial s
 review #1 (Euclidean/interface file) and review #2 (hyperbolic file) both complete, with
 no BLOCKER and no MAJOR finding; every review item has been addressed. A round-2 independent
 acceptance invocation re-verified the frozen bytes with a forced recompilation, fresh axiom
-audits, a separate 9-gate checker and a third adversarial review — see §8.
+audits, a separate 9-gate checker and a third adversarial review — see §8. A round-3
+invocation (post-quota resume) re-confirmed the same frozen bytes with a forced rebuild,
+fresh 34/34 axiom cones, a round-3 9-gate checker, 160/160 independent numeric model checks
+and two fresh adversarial module reviews — see §9.
 
 ---
 
@@ -263,3 +266,198 @@ new-file hashes are unchanged: `9b17c673…`, `be50ae25…`, `3e8510bc…`, `dc9
 Verdict of the round-2 invocation: **TASK_DONE** at the scalar/model + documented conditional
 metric–measure interface level, unchanged and independently confirmed; **U9 is not closed** and
 no manifold measure is claimed.
+
+## 9. Addendum — round-3 independent acceptance re-verification (post-quota resume)
+
+A third, independently dispatched acceptance invocation (resumed after the recorded provider
+quota pause, `PAUSED.resumed-1789178261`) re-verified the **same frozen bytes**:
+`9b17c673…`, `be50ae25…`, `3e8510bc…`, `dc9b2638…` (4/4 equal the checkpoint; the module
+mtimes `10:32:25`/`10:32:35` predate the round-3 rebuild, so no mathematical artifact was
+touched in this round). Evidence:
+
+* **Forced recompilation from source**: `.olean/.ilean/.trace/.hash` of both new modules
+  deleted, then `lake build` of the 7 targets from `release/`:
+  `✔ [3453/3454] … (3.1s)`, `✔ [3454/3454] … (3.2s)`,
+  `Build completed successfully (3454 jobs)`, exit 0, **zero warnings**
+  (`logs/round3-rebuild.log`, sha256 `1f03a86a…`; identical copy at
+  `evidence/round3-audit-full.log`, which contains the full compiled `#check` signatures).
+* **Fresh fail-closed axiom audits**: 13 + 21 = 34 declarations, every cone **exactly**
+  `{propext, Classical.choice, Quot.sound}`, 0 violations, `AUDIT1-EXIT=0`,
+  `AUDIT2-EXIT=0`. The hyperbolic reviewer additionally re-elaborated the module and its
+  audit driver independently via `lean --stdin` and reproduced the 21 cones byte-identically.
+* **Round-3 9-gate checker** (`tools/round3_acceptance_check.py`, sha256 `395c87f7…`):
+  hash freeze, cone subsets, conclusion-equivalence, manifold-overclaim, 36/36 labels,
+  informal-witness arithmetic, no Rauch/conjugate-point duplication, canonical
+  forbidden-token scan, statement fidelity — **9/9 PASS**
+  (`evidence/round3-acceptance.json`, sha256 `6f89dee4…`; `INDEPENDENT-ACCEPTANCE: PASS`).
+* **160/160 independent numeric model checks** (`tools/round3_numeric_checks.py`,
+  `evidence/round3-numeric-checks.json`): Euclidean closed form/doubling/Riccati for
+  d = 1,2,3,5; hyperbolic Riccati, log-derivative, normalization and the evaluated
+  `d = 1, κ = 1` forms; snowflake joint-witness arithmetic.
+* **Two fresh adversarial module reviews** (one per mathematical module; raw reports in
+  `evidence/round3-review-euclidean.md`, `evidence/round3-review-hyperbolic.md`):
+  **no BLOCKER, no MAJOR**; criteria (1)–(4) met at the scalar/model + documented
+  conditional interface level; no conclusion-equivalent hypothesis; no manifold overclaim;
+  Bishop–Gromov instantiated (not assumed). Four **MINOR** documentation/scope items were
+  recorded and deliberately **not** edited into the frozen modules (M1 header wording on the
+  `hdouble` discharge, `RicciToDoubling.lean:52-56`; M2 the informal usual-metric no-go
+  should read "A = λ a.e. + continuity", `:572-574`; M3 the general-`d` hyperbolic constant
+  is the explicit model integral ratio, evaluated elementarily only for `d = 1, κ = 1`
+  (disclosed at `:34-35, :360-361, :470-471`) — the one residual strict-reading scope caveat
+  of criterion (1) for `d ≥ 2`; M4 the hyperbolic header quotes the normalization as
+  `≤ dκ` while the theorem proves `≤ C` under `dκ ≤ C`, `RicciToDoublingHyperbolic.lean:26`).
+  Keeping the frozen hashes valid for the parent's recorded state was preferred over
+  cosmetic edits; the full disposition is in
+  `evidence/round3-semantic-review.md` (sha256 `e463d501…`).
+
+**Direction note (reader guidance, not a defect).** Criterion (1)'s "for `k <= K <= 0`" is
+read as the standard curvature-bounded-below direction (`k ≥ K = −dκ²`, sectional curvature
+`≥ −κ²`) — the only direction in which the hyperbolic model bounds the volume ratio from
+above (the comparison needs `k̄ ≤ k`). The file documents this convention explicitly.
+
+Verdict of the round-3 invocation: **TASK_DONE** at the scalar/model + documented conditional
+metric–measure interface level, re-confirmed on unchanged bytes; **U9's manifold half remains
+open** and no manifold measure is claimed.
+
+## 10. Addendum — round-4 independent acceptance + elementary hyperbolic closed form
+
+A fourth invocation performed an independent acceptance re-verification of the **frozen bytes**
+(4/4 hashes unchanged: `9b17c673…`, `be50ae25…`, `3e8510bc…`, `dc9b2638…`) and, in addition,
+closed the one residual strict-reading caveat of criterion (1) (round-3 finding **M3**: the
+general-`d` hyperbolic constant was the explicit model *integral* ratio, evaluated elementarily
+only at `d = 1`, `κ = 1`) by an **additive** module that leaves every frozen file untouched.
+
+### 10.1 New artifact
+
+| file | sha256 | decls | content |
+| --- | --- | --- | --- |
+| `release/Poincare/L4/Compactness/RicciToDoublingHyperbolicClosedForm.lean` | `1064815e…` | 15 | explicit elementary recursive antiderivative `sinhPowIntegral`, its derivative/integral theorems, `radialVolume (hypModelA d κ) s = (κ⁻¹)^(d+1)·J_d(κ s)`, elementary model ratio, closed-form Bishop–Gromov and doubling statements |
+| `release/Audit/RicciToDoublingHyperbolicClosedFormAudit.lean` | `cb1dba76…` | — | `#check` signatures + fail-closed `collectAxioms` audit for the 15 new declarations |
+
+Mathematical content: with `J_d(x) = ∫₀ˣ sinh(u)^d du` and the integration-by-parts recursion
+
+    J_0(x) = x,    J_1(x) = cosh x − 1,
+    J_{d+2}(x) = (sinh(x)^{d+1}·cosh x − (d+1)·J_d(x))/(d+2),
+
+the module *proves* `J_d' = sinh^d` (`sinhPowIntegral_hasDerivAt`, strong induction; no integral
+used in the induction) and the integral identity `∫₀ˢ sinh^d = J_d(s)`
+(`sinhPowIntegral_integral`, FTC). The substitution `u = κt` (change of variables
+`intervalIntegral.integral_comp_mul_deriv`) then yields
+
+    radialVolume (hypModelA d κ) s = (κ⁻¹)^(d+1) · J_d(κ·s)          (κ ≠ 0, all real s),
+
+so `V̄ R/V̄ r = J_d(κR)/J_d(κr)` (`hypModel_volumeRatio_closedForm`) — an explicit elementary
+expression for **every** `d`, with no integral left. The closed-form composites
+
+* `hyp_volume_ratio_le_of_ricci_ge_closedForm`:
+  `radialVolume A R ≤ (J_d(κR)/J_d(κr))·radialVolume A r`, and
+* `hyp_volume_doubling_closedForm`:
+  `radialVolume A (2s) ≤ (J_d(2κs)/J_d(κs))·radialVolume A s`
+
+carry **exactly** the same 27 top-level hypotheses as the frozen `hyp_volume_ratio_le_of_ricci_ge`
+/ `hyp_volume_doubling_of_ricci_ge` (machine-compared, gate K below) and consume those frozen
+theorems; Bishop–Gromov is still proved through D12, never assumed. Low-dimension evaluations are
+kernel-checked: `J_2 = (sinh·cosh − x)/2`, `J_3 = (sinh²·cosh − 2(cosh − 1))/3`,
+`hypModelA_one_one_volume_closedForm` (`cosh s − 1`, agreeing with the frozen
+`hypModelA_one_one_volume`), and the fully elementary `d = 2` ratio
+`(sinh(κR)cosh(κR) − κR)/(sinh(κr)cosh(κr) − κr)` (`hypModel_volumeRatio_d2_closedForm`).
+Non-vacuity transfers from the frozen witnesses because the hypothesis lists are identical.
+
+Every one of the 15 declarations is labelled `**Class:** model (scalar ODE)`; the module contains
+no manifold, metric, measure or curvature-tensor content, and **no manifold measure is
+constructed or claimed**. The general-`d` constant is now an explicit finite elementary
+expression (a recursion that unfolds to `sinh`/`cosh` monomials for each fixed `d`), not an
+unevaluated integral.
+
+### 10.2 Round-4 verification evidence (all gates PASS)
+
+* **Forced recompilation of the frozen pair** (oleans deleted, `lake build` of the 7 targets):
+  `✔ [3453/3454]`, `✔ [3454/3454]`, `Build completed successfully (3454 jobs)`, exit 0,
+  **zero warnings** (`logs/round4-rebuild.log`, sha256 `ffad3194…`; copy with the full compiled
+  `#check` signatures at `evidence/round4-audit-full.log`, sha256 `6a924d1f…`).
+* **Forced recompilation of the new module** (olean/ilean/trace deleted, rebuilt from source):
+  `Build completed successfully (3461 jobs)`, `CF-BUILD-EXIT=0`, zero warnings
+  (`logs/round4-closedform-build.log`, sha256 `6d8bc1e1…`).
+* **Fresh fail-closed axiom audits**: 34 (frozen) + 15 (new) = **49 cones, every one exactly
+  `{propext, Classical.choice, Quot.sound}`**, 0 violations; `BUILD-EXIT=0`, `AUDIT1-EXIT=0`,
+  `AUDIT2-EXIT=0`, `AUDIT3-EXIT=0`; no `warning` in either log
+  (`logs/round4-closedform-audit.log`, sha256 `49c7458d…`).
+* **Round-4 12-gate checker** (`tools/round4_acceptance_check.py`, sha256 `8eb340d2…`, a fresh
+  implementation): hash freeze (frozen 4 + new 2), axiom cones, conclusion-equivalence
+  (14 headline declarations, arrow-depth-aware), manifold-overclaim (0 tokens in 49 declaration
+  types and in the stripped sources of the 3 modules), 51/51 classification labels, numeric
+  evidence, no Rauch/conjugate duplication, canonical forbidden-token scan (0 hard matches over
+  **6/6 files actually scanned**), statement fidelity to the acceptance text, round-4 consumption
+  of the frozen instantiation, **closed-form hypotheses byte-identical to the frozen ones**, and
+  exact symbolic evidence — **12/12 PASS** (`evidence/round4-acceptance.json`,
+  sha256 `a6210ea9…`). *Gate correction (honest reporting):* the round-1/round-3 wrappers passed
+  individual file paths to the canonical D5 scanner, which walks directories (`os.walk`) and
+  therefore reported `lean_files_scanned = 0` — a vacuous pass (the substantive scan was
+  nevertheless separately performed by the round-3/round-4 reviewers, both 0 hard matches). The
+  round-4 gate now copies the six files into an isolated temporary directory and asserts
+  `lean_files_scanned = 6` with `hard_match_count = 0` and `soft_match_count = 0`; the corrected
+  gate passes non-vacuously.
+* **387/387 independent numeric checks** (`tools/round4_numeric_checks.py`, sha256 `7716db9a…`,
+  `evidence/round4-numeric-checks.json`, sha256 `06c058f9…`): Euclidean closed form / doubling /
+  Riccati; hyperbolic Riccati / log-derivative / normalization and the `d = 1, κ = 1` values; the
+  recursion `J_d` against quadrature of `sinh^d` for `d = 1..8` (max rel. err `1.65e-14`); the
+  substitution identity for `κ ∈ {0.3, −0.8, 1, −2.5}` and signed radii
+  `s ∈ {−1.5, −0.7, 0, 0.45, 1.6}` (max rel. err `2.25e-14`); the elementary `J_2`, `J_3` and
+  `d = 2` ratio forms; snowflake joint-witness arithmetic.
+* **26/26 exact symbolic (computer-algebra) checks** (`tools/round4_symbolic_checks.py`,
+  sha256 `f4bd7ebf…`, `evidence/round4-symbolic-checks.json`, sha256 `40f98a59…`): after
+  rewriting to exponentials, sympy proves exactly `J_d(x) = ∫₀ˣ sinh^d` and `J_d'(x) = sinh(x)^d`
+  for `d = 0..9` and `∫₀ˢ (sinh(κt)/κ)^d dt = (κ⁻¹)^{d+1} J_d(κs)` for `d = 0..5` symbolically in
+  `κ, s > 0`.
+* **Authoring driver re-run** on the frozen bytes after the round-4 work:
+  `tools/ricci_to_doubling_verify.py` → `OVERALL: PASS` (6/6 gates).
+
+### 10.3 Adversarial reviews (round 4)
+
+* **Frozen-set re-verification review** (`evidence/round4-review-frozen.md`, sha256 `08ad1e3c…`;
+  independent subagent `92419d8c…`, read-only): **OVERALL PASS — no BLOCKER, no MAJOR**. All six
+  hashes recomputed twice; all three axiom audits re-elaborated from source with
+  `lake env lean --stdin`, **exit 0** and **byte-identical** to the recorded logs; the reviewer's
+  own signature parser confirmed zero conclusion symbols in every headline hypothesis list
+  (Bishop–Gromov only ever *applied*, never a hypothesis); zero manifold tokens in code; frozen
+  integrity confirmed (empty declaration-name intersection, no shadowing, no attribute/notation
+  side effects); forbidden-token scan clean; non-vacuity witnesses and the snowflake arithmetic
+  (sympy) re-verified; new-module spot-checks against the frozen `d = 1, κ = 1` results pass.
+  Two MINOR documentation-level findings recorded: (i) `hypModelA_one_one_volume_closedForm`
+  deliberately restates the frozen `hypModelA_one_one_volume` as a consistency corollary (not a
+  Rauch/conjugate-point duplication); (ii) `hypModel_doubling_witness`'s conclusion is immediate
+  from positivity — its evidential value is joint satisfiability of the hypothesis package, with
+  Euclidean sharpness covered separately.
+* **Closed-form module review** (`evidence/round4-review-closedform.md`, sha256 `fb1541d6…`;
+  independent subagent `597e923d…`, read-only): **CLEAN — no BLOCKER, no MAJOR, no MINOR
+  mathematical defect**. The recursion was re-derived by hand and verified exactly with sympy
+  (`d/dx J_d = sinh^d`, `d = 0..8`) and with mpmath quadrature (max rel. err `2.6e-73`, and
+  `1.0e-458` in 600-digit tests at extreme small arguments); the compiled statements were checked
+  by `#check` (all real `s`, only `κ ≠ 0`; `κ = 0` genuinely falsifies the un-hypothesized
+  statement, kernel-checked); the binder lists are mechanically identical to the frozen theorems
+  and the conclusion is *derived* from `hyp_volume_ratio_le_of_ricci_ge`; 15/15 cones reproduced
+  with a **live negative control** proving the audit fails closed; every falsification attempt
+  (`d = 0`, `κ < 0`, `s = 0`, `s < 0`, even/odd `d`, `|κs|` from `1e-18` to `60`, a genuine
+  non-model instance, `r = 0`) failed; and the reviewer independently **re-proved the closed form
+  in the kernel by FTC** without using the module's proof (exit 0).
+  Three INFO notes recorded, none affecting the formalized statements: (1) the two-step recursion
+  is an exact closed form but a numerically ill-conditioned *evaluation recipe* near `x = 0` for
+  large `d` (floating-point cancellation; the Lean proofs are symbolic and exact — downstream
+  numeric consumers should not evaluate it naively at tiny arguments); (2) the deliberate `d = 1,
+  κ = 1` consistency corollary; (3) audit-helper labelling convention.
+
+### 10.4 Honest scope (unchanged)
+
+**U9's manifold half remains open and is not claimed.** The round-4 addition is strictly inside
+the scalar/model lane: it replaces an unevaluated model integral by an explicit elementary
+expression. No Riemannian manifold, Riemannian volume measure, geodesic sphere density, coarea
+formula or curvature→Riccati derivation is formalized, and no manifold measure is constructed.
+The `IsRadialBallMeasure` interface remains a documented conditional interface, and the manifold
+realization is the named open input (a separate child task, `L4-child-bishop-gromov-interface`,
+addresses the metric–measure packaging).
+
+Verdict of the round-4 invocation: **TASK_DONE** at the scalar/model + documented conditional
+metric–measure interface level, re-verified on unchanged frozen bytes and strengthened by an
+additive elementary hyperbolic closed form; **U9's manifold half remains open**.
+
+TASK_DONE

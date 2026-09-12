@@ -79,6 +79,10 @@ Per host (ophis-gpu, 360-1, 360-2):
    `api_proxy_preload.js`); ophis-gpu calls the API directly. Artifacts flow back to
    ophis via `bin/relay_push.sh` (rsync over tunnel port 10022); the central gate
    re-verifies everything on ophis before promotion.
+6. **Bulk archives come from GitHub Release, not git** (repo stays clone-lean):
+   `gh release download artifacts-2026-09-12 --repo guoshaoyang-pku/lean-poincare`.
+   Optional — only for full build-log visualization / lineage; a cold start needs
+   nothing beyond the repo (see `ARTIFACTS.md`).
 
 Expected behavior after key swap: within one tick the dispatcher resumes queued launches
 (adaptive concurrency, lane limits in `queue.json`). Tasks paused with a `provider quota`

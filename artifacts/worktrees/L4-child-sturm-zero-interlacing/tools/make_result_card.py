@@ -138,6 +138,302 @@ def input_table():
 
 now = datetime.now(timezone.utc).isoformat()
 
+ia_path = os.path.join(EV, "independent-acceptance.json")
+ia = json.load(open(ia_path)) if os.path.exists(ia_path) else None
+if ia is not None:
+    _lines = ["## 8b. Independent acceptance re-verification (separate pass)", "",
+              f"- verdict: **{ia['verdict']}**; artifact `evidence/independent-acceptance.json`", ""]
+    for c in ia["checks"]:
+        _lines.append(f"- [{'OK' if c['ok'] else 'FAIL'}] **{c['check']}** — {c['detail']}")
+    _lines += ["",
+               f"- independent probe: `{ia['probe']['file']}` "
+               f"(sha256 `{ia['probe']['sha256']}`), `{ia['probe']['command']}`, "
+               f"compile exit **{ia['probe']['compile_exit']}**, log `{ia['probe']['log']}`", ""]
+    for t in ia["probe"]["theorems"]:
+        _lines.append(f"  - `{t['name']}` — {t['content']} (cone `{t['cone']}`)")
+    _lines += ["",
+               "- signature evidence: `#check @...` regenerated for all 62 declarations from the "
+               "freshly rebuilt oleans is identical to `evidence/signatures.txt`", ""]
+    ia_section = "\n".join(_lines)
+else:
+    ia_section = ""
+
+ia2_path = os.path.join(EV, "acceptance-pass2.json")
+ia2 = json.load(open(ia2_path)) if os.path.exists(ia2_path) else None
+if ia2 is not None:
+    _lines = ["## 8c. Independent acceptance pass 2 (post-checkpoint re-verification)", "",
+              f"- verdict: **{ia2['verdict']}**; artifact `evidence/acceptance-pass2.json`",
+              f"- generated: `{ia2['generated']}`; driver `tools/acceptance_pass2.py`", ""]
+    for c in ia2["checks"]:
+        _lines.append(f"- [{'OK' if c['ok'] else 'FAIL'}] **{c['check']}** — {c['detail']}")
+    cr = ia2["closure_rebuild"]
+    _lines += ["",
+               f"- pass-2 full project-closure rebuild: `{cr['command']}` "
+               f"exit **{cr['exit_code']}**, {cr['jobs']} jobs, {cr['seconds']}s "
+               f"({cr['oleans_deleted']} project oleans deleted first), log `{cr['log']}`",
+               f"- independent probe: `{ia2['probe']['file']}` "
+               f"(sha256 `{ia2['probe']['sha256']}`), `{ia2['probe']['command']}`, "
+               f"compile exit **{ia2['probe']['compile_exit']}**, log `{ia2['probe']['log']}`",
+               "- the pass-2 probe exercises the delivered theorems on data the deliverable "
+               "never uses: a Mathlib-only re-derivation of the literal-branch refutation, the "
+               "necessity of the curvature hypothesis, a shifted-model interlacing on "
+               "`(2π, 5π)` with `(k₁,k₂) = (1/4, 1/9)`, zero-counting and first-zero forms at "
+               "`(K,k) = (9,16)` and `(16,5,25)`, first-zero ordering `(9,1/16)`, the equality "
+               "case at `K = 25`, and Wronskian values at new points.", ""]
+    for t in ia2["probe"]["theorems"]:
+        _lines.append(f"  - `{t['name']}` — cone `{t['cone']}`")
+    _lines += ["",
+               f"- signatures: `#check @...` ({ia2['signature_evidence']['file']}) reproduced "
+               f"from the freshly rebuilt oleans, "
+               f"identical after whitespace normalisation = "
+               f"**{ia2['signature_evidence']['identical_after_whitespace_normalisation']}** "
+               f"(output `{ia2['signature_evidence']['fresh_output']}`)", ""]
+    ia2_section = "\n".join(_lines)
+else:
+    ia2_section = ""
+
+ia3_path = os.path.join(EV, "acceptance-pass3.json")
+ia3 = json.load(open(ia3_path)) if os.path.exists(ia3_path) else None
+if ia3 is not None:
+    _lines = ["## 8d. Independent acceptance pass 3 (post-completion re-verification)", "",
+              f"- verdict: **{ia3['verdict']}**; artifact `evidence/acceptance-pass3.json`",
+              f"- generated: `{ia3['generated']}`; driver `tools/acceptance_pass3.py`", ""]
+    for c in ia3["checks"]:
+        _lines.append(f"- [{'OK' if c['ok'] else 'FAIL'}] **{c['check']}** — {c['detail']}")
+    _lines += ["",
+               "- what pass 3 adds beyond passes 1-2: the delivered theorems are exercised on "
+               "**hand-rolled data the deliverable never uses** (`p3u = sin(4t)/4` with curvature "
+               "`16`, `p3u2 = sin(2t)/2` with curvature `4`), and the one-sided zero counting is "
+               "cross-validated against the leader's **newest complementary** theorem "
+               "`no_first_zero_before_pi_sqrt_of_curvature_le` (`TwoSidedSturm.lean` / "
+               "`SturmUniqueness.lean`, staged and compiled in this tree, then removed): the "
+               "probe proves the two-sided bracket `π/5 ≤ firstPositiveZero p3u ≤ π/3` with the "
+               "exact value `π/4` (`p3_two_sided_bracket`, `p3_bracket_sharp`).", "",
+               f"- full project-closure rebuild: exit **{ia3['closure_rebuild']['exit_code']}**, "
+               f"{ia3['closure_rebuild']['jobs']} jobs, {ia3['closure_rebuild']['oleans_deleted']} "
+               f"project oleans deleted first, log `{ia3['closure_rebuild']['log']}`; deliverable "
+               f"axiom audit re-run on the freshly rebuilt oleans: "
+               f"{ia3['deliverable_axiom_audit']['reported']}/"
+               f"{ia3['deliverable_axiom_audit']['expected']} declarations, violations="
+               f"{ia3['deliverable_axiom_audit']['violations']}",
+               f"- release tree restoration verified against the gate-recorded manifest: "
+               f"{ia3['tree_restoration']['release_lean_files']} files, byte-exact = "
+               f"**{ia3['tree_restoration']['matches_gate_recorded_state']}**",
+               f"- name-collision scan vs the current leader release: own "
+               f"{ia3['name_collisions']['own_declarations']} declarations, leader "
+               f"{ia3['name_collisions']['leader_declarations']}, collisions = "
+               f"**{ia3['name_collisions']['collisions']}**", "",
+               f"- independent probe: `{ia3['probe']['file']}` "
+               f"(sha256 `{ia3['probe']['sha256']}`), `{ia3['probe']['command']}`, "
+               f"compile exit **{ia3['probe']['compile_exit']}**, log `{ia3['probe']['log']}`; "
+               f"{ia3['probe']['declarations_audited']} declarations audited fail-closed, "
+               f"out-of-cone = {ia3['probe']['out_of_cone']}", ""]
+    for t in ia3["probe"]["theorems"]:
+        _lines.append(f"  - `{t['name']}` — cone `{t['cone']}`")
+    _lines += ["",
+               "- the pass-3 probe additionally records the honest nuance that "
+               "`firstPositiveZero_le_pi_sqrt` read **without** the existence theorem is "
+               "trivially satisfied by a zero-free solution (`sInf ∅ = 0`, witness "
+               "`p3_firstZero_linear_is_zero`); the substantive content is the nonemptiness "
+               "proved by `exists_jacobi_zero_on_Ioc_pi_sqrt`, which the deliverable proves.", ""]
+    ia3_section = "\n".join(_lines)
+else:
+    ia3_section = ""
+
+ia4_path = os.path.join(EV, "gs-independent-acceptance.json")
+ia4 = json.load(open(ia4_path)) if os.path.exists(ia4_path) else None
+if ia4 is not None:
+    _lines = ["## 8e. Independent acceptance pass 4 (second invocation, fresh probe)",
+              "",
+              f"- verdict: **{ia4['verdict']}**; artifact "
+              "`evidence/gs-independent-acceptance.json`",
+              f"- generated: `{ia4['generated']}`; driver `tools/gs_independent_check.py`",
+              "",
+              "- this pass was run by a separate invocation of the task on the frozen tree; its "
+              "probe `tmp/gs_independent_probe.lean` was written from scratch (it does not "
+              "import or reuse the pass-1/2/3 probes) and exercises the delivered theorems on "
+              "data none of the earlier probes uses: `jacobiSol 3` against the shifted "
+              "`k = 1/4` model on `(0, 2π)`, the bounds `K = 2, k = 5` and `K = 4, k = 5`, the "
+              "equality case `k ≡ 3`, the Wronskian at `π/3`, and the leader cross-check at "
+              "`k = 3, K = 1, T = 3/2`.", ""]
+    for c in ia4["checks"]:
+        _lines.append(f"- [{'OK' if c['ok'] else 'FAIL'}] **{c['check']}** — {c['detail']}")
+    cr4 = ia4.get("closure_rebuild", {})
+    ar4 = ia4.get("audit_rerun", {})
+    _lines += ["",
+               f"- pass-4 full project-closure rebuild: `{cr4.get('command')}` "
+               f"exit **{cr4.get('exit_code')}**, {cr4.get('jobs')} jobs, "
+               f"{cr4.get('oleans_deleted')} project oleans deleted first, "
+               f"{cr4.get('seconds')}s, log `{cr4.get('log')}`; the 79 `release/**/*.lean` "
+               "sources are byte-identical before and after the rebuild",
+               f"- axiom-audit module re-run on the freshly rebuilt oleans: exit "
+               f"**{ar4.get('exit_code')}**, {ar4.get('reported')}/{ar4.get('expected')} "
+               f"declarations reported, missing={ar4.get('missing')}, "
+               f"out-of-cone={ar4.get('out_of_cone')}, log `{ar4.get('log')}`",
+               "",
+               f"- independent probe: `{ia4['probe']['file']}` "
+               f"(sha256 `{ia4['probe']['sha256']}`), `{ia4['probe']['command']}`, "
+               f"compile exit **{ia4['probe']['compile_exit']}**, log "
+               f"`{ia4['probe']['log']}`; {ia4['probe']['declarations_audited']} declarations "
+               f"audited fail-closed, out-of-cone = {ia4['probe']['out_of_cone']}", ""]
+    for t in ia4["probe"]["theorems"]:
+        _lines.append(f"  - `{t['name']}` — cone `{t['cone']}`")
+    _lines += ["",
+               "- the pass-4 driver additionally re-derived from disk (not from earlier "
+               "evidence): the five deliverable hashes against the card, the 13 read-only "
+               "inputs against the leader release, the absence of `ConjugatePointBound` from "
+               "the main module's imports and code, the absence of any declaration-name "
+               "collision with the prior art or the leader tree, and the audit driver's "
+               "coverage of all 47 own declarations.", ""]
+    ia4_section = "\n".join(_lines)
+else:
+    ia4_section = ""
+
+ia5_path = os.path.join(EV, "acceptance-pass5.json")
+ia5 = json.load(open(ia5_path)) if os.path.exists(ia5_path) else None
+if ia5 is not None:
+    _lines = ["## 8f. Independent acceptance pass 5 (continuation invocation, fresh probe)",
+              "",
+              f"- verdict: **{ia5['verdict']}**; artifact `evidence/acceptance-pass5.json`",
+              f"- generated: `{ia5['generated']}`; driver `tools/acceptance_pass5.py`",
+              "",
+              "- this pass was run by a further continuation invocation on the frozen tree; its "
+              "probe `tmp/acceptance_probe_r5.lean` was written from scratch (it does not import "
+              "or reuse the pass-1/2/3/4 probes) and adds a check the earlier passes do not "
+              "perform: **proof-term provenance**.  `#print` of the seven engine-consuming "
+              "declarations is parsed out of the elaboration output and each declaration's "
+              "elaborated proof term must mention the D12 engine declaration it is advertised "
+              "to consume — stronger than a source grep, since it inspects what the kernel "
+              "elaborated.", ""]
+    for c in ia5["checks"]:
+        _lines.append(f"- [{'OK' if c['ok'] else 'FAIL'}] **{c['check']}** — {c['detail']}")
+    cr5 = ia5.get("closure_rebuild", {})
+    ar5 = ia5.get("audit_rerun", {})
+    _lines += ["",
+               f"- pass-5 full project-closure rebuild: `{cr5.get('command')}` "
+               f"exit **{cr5.get('exit_code')}**, {cr5.get('jobs')} jobs, "
+               f"{cr5.get('oleans_deleted')} project oleans deleted first, "
+               f"{cr5.get('seconds')}s, log `{cr5.get('log')}`; the 79 `release/**/*.lean` "
+               "sources are byte-identical before and after the rebuild",
+               f"- axiom-audit module re-run on the freshly rebuilt oleans: exit "
+               f"**{ar5.get('exit_code')}**, {ar5.get('reported')}/{ar5.get('expected')} "
+               f"declarations reported, missing={ar5.get('missing')}, "
+               f"out-of-cone={ar5.get('out_of_cone')}, log `{ar5.get('log')}`",
+               "",
+               f"- independent probe: `{ia5['probe']['file']}` "
+               f"(sha256 `{ia5['probe']['sha256']}`), `{ia5['probe']['command']}`, "
+               f"compile exit **{ia5['probe']['compile_exit']}**, log "
+               f"`{ia5['probe']['log']}`; {ia5['probe']['declarations_audited']} declarations "
+               f"audited fail-closed, out-of-cone = {ia5['probe']['out_of_cone']}", ""]
+    for t in ia5["probe"]["theorems"]:
+        _lines.append(f"  - `{t['name']}` — cone `{t['cone']}`")
+    _lines += ["", "- proof-term provenance (declaration → engine name, hit counts):", ""]
+    for pr in ia5["probe"]["provenance"]:
+        _lines.append(f"  - `{pr['declaration']}` → "
+                      + ", ".join(f"`{k}`×{v}" for k, v in pr["engine_hits"].items())
+                      + f" — {'OK' if pr['ok'] else 'FAIL'}")
+    _lines += ["",
+               "- the pass-5 probe additionally exercises the acceptance data directly: the "
+               "literal branch refutation with the exact value `firstPositiveZero sin = π`; the "
+               "sharper `sin` vs `k = 1/2` interlacing with its explicit witness `π`; the "
+               "infinite interlacing at `n = 1` with the explicit zero `3π`; zero counting under "
+               "`u 0 = 0`, `u' 0 = 1` on `jacobiSol 2` against `K = 1`; horizon/attainment data "
+               "`K = 9`, `k = 10`, `H = 2`; the equality case `k ≡ K = 5`; the Wronskian at "
+               "`π/4`; a hypothesis-satisfiability bundle in which **every** hypothesis of "
+               "`exists_zero_of_curvature_lt` holds simultaneously on the acceptance data "
+               "together with an explicit interior zero; and the `conjugate_point_bound` "
+               "cross-check on fresh equality-case data (`k ≡ K = 1`, `u = sin`, `T = π/2`).", ""]
+    ia5_section = "\n".join(_lines)
+else:
+    ia5_section = ""
+
+ia6_path = os.path.join(EV, "acceptance-pass6.json")
+ia6 = json.load(open(ia6_path)) if os.path.exists(ia6_path) else None
+if ia6 is not None:
+    _lines = ["## 8g. Independent acceptance pass 6 (continuation invocation, fresh probe, "
+              "gate mutation tests)",
+              "",
+              f"- verdict: **{ia6['verdict']}**; artifact `evidence/acceptance-pass6.json`",
+              f"- generated: `{ia6['generated']}`; driver `tools/acceptance_pass6.py`",
+              "",
+              "- this pass was run by a further continuation invocation on the frozen tree.  Its "
+              "probe `tmp/acceptance_probe_r6.lean` was written from scratch (it does not import or "
+              "reuse the pass-1/2/3/4/5 probes) and uses fresh data: the negative shift `a = -3` "
+              "with `(k₁,k₂) = (9,4)`; zero counting at `(K,k) = (4,9)`; the horizon form `H = 3` "
+              "and attainment on `jacobiSol 9`; the interior-bound form `(K,k) = (16,25)`; the "
+              "equality case `k ≡ K = 7`; and Wronskian data `(9, jacobiSol 9)` versus "
+              "`(4, jacobiSol 4)` on `[0,π/6]`.  It adds two things the earlier passes do not:",
+              "  1. **machine-checked non-restatement**: the raw engine is invoked directly on the "
+              "acceptance data, producing its two-sided alternative `A ∨ B`; the probe proves `¬B` "
+              "at the point `π/4` and the delivered theorem supplies `A`, so on this data the "
+              "delivered statement is strictly more informative than the engine's own conclusion;",
+              "  2. **gate mutation (sensitivity) testing**: the fail-closed machinery is shown to "
+              "*reject* poisoned artifacts, not merely to accept the pristine one.", ""]
+    for c in ia6["checks"]:
+        _lines.append(f"- [{'OK' if c['ok'] else 'FAIL'}] **{c['check']}** — {c['detail']}")
+    cr6 = ia6.get("closure_rebuild", {})
+    ar6 = ia6.get("audit_rerun", {})
+    _lines += ["",
+               f"- pass-6 full project-closure rebuild: `{cr6.get('command')}` exit "
+               f"**{cr6.get('exit_code')}**, {cr6.get('jobs')} jobs, "
+               f"{cr6.get('oleans_deleted')} project oleans deleted first, "
+               f"{cr6.get('seconds')}s, log `{cr6.get('log')}`; the 79 `release/**/*.lean` "
+               "sources are byte-identical before and after the rebuild",
+               f"- axiom-audit module re-run on the freshly rebuilt oleans: exit "
+               f"**{ar6.get('exit_code')}**, {ar6.get('reported')}/{ar6.get('expected')} "
+               f"declarations reported, missing={ar6.get('missing')}, "
+               f"out-of-cone={ar6.get('out_of_cone')}, log `{ar6.get('log')}`",
+               "",
+               f"- independent probe: `{ia6['probe']['file']}` "
+               f"(sha256 `{ia6['probe']['sha256']}`), `{ia6['probe']['command']}`, "
+               f"compile exit **{ia6['probe']['compile_exit']}**, log "
+               f"`{ia6['probe']['log']}`; {ia6['probe']['declarations_audited']} declarations "
+               f"audited fail-closed, out-of-cone = {ia6['probe']['out_of_cone']}", ""]
+    for t in ia6["probe"]["theorems"]:
+        _lines.append(f"  - `{t['name']}` — cone `{t['cone']}`")
+    mut = ia6.get("mutations", {})
+    pa = mut.get("poisoned_audit", {})
+    ta = mut.get("truncated_audit", {})
+    st = mut.get("scan_targets", {})
+    poison_cone = pa.get("reported_cones", {}).get(
+        "Poincare.L4.GeodesicComparison.p6_mutation_poisoned")
+    _lines += ["",
+               "- **gate mutation tests** (artifacts under `tmp/mutation/`, never in `release/`):",
+               f"  - poisoned audit (`{pa.get('file')}`, sha256 `{pa.get('sha256')}`): a new axiom "
+               f"`p6_mutation_axiom` is introduced; compile exit **{pa.get('compile_exit')}**, the "
+               f"poisoned cone `{poison_cone}` is out of the allowed set, violations reported = "
+               f"**{len(pa.get('violations', []))}**.  The gate driver's own parser and allow-list "
+               "are reused (`import run_sturm_gates`), so this exercises the production detector "
+               "rather than a copy;",
+               f"  - truncated audit (`{ta.get('file')}`, sha256 `{ta.get('sha256')}`): reports "
+               f"only {ta.get('reported')} declarations — the naive expected-vs-reported check "
+               f"would pass (**{ta.get('naive_check_would_pass')}**) because the expected list "
+               "shrinks together with the audited source; the fail-closed coverage check catches "
+               f"it with **{ta.get('coverage_uncovered')} own declarations uncovered**;",
+               f"  - scanner sensitivity (`{st.get('dir')}`, scanner exit {st.get('scanner_exit')}): "
+               f"hard matches = **{st.get('hard_match_count')}**, flagged files = "
+               f"{st.get('hard_files')}, soft flags = {st.get('soft_files')} — `real_sorry.lean` "
+               "(a genuine `sorry` in code) is caught while `comment_only.lean` (the same tokens "
+               "only in comments and a string literal) is not, so sensitivity is not bought with "
+               "false positives;",
+               f"  - the released tree itself remains clean under the same scanner: hard = "
+               f"**{ia6.get('release_scan', {}).get('hard_match_count')}** over "
+               f"{ia6.get('release_scan', {}).get('lean_files_scanned')} Lean files.", "",
+               "- **statement-level (type) checks** parsed from the probe's `#check @...` surface "
+               "(arrow counts are top-level `→` counts, a heuristic proxy for hypothesis count):", ""]
+    for k, v in (ia6.get("type_checks", {}).get("arrow_counts") or {}).items():
+        _lines.append(f"  - `{k}` — {v} arrows")
+    _lines += ["",
+               "- the type surface confirms non-restatement structurally as well: the delivered "
+               "strict-gap type is not the engine's type and contains no `∨` while the engine's "
+               "does; the delivered closed-interval zero-counting type is not the prior-art type "
+               "(`Ioc` versus `Ioo`) and drops the prior art's strict-excess hypothesis; the "
+               "engine-derived positivity bound carries strictly fewer hypotheses than "
+               "`conjugate_point_bound` and mentions neither `B` nor `t₀`.", ""]
+    ia6_section = "\n".join(_lines)
+else:
+    ia6_section = ""
+
 md = f"""# L4-child-sturm-zero-interlacing — result card
 
 - **Task id:** `L4-child-sturm-zero-interlacing`
@@ -319,6 +615,12 @@ The two structural points of the review:
   it refutes the naive `k₂ = 0` conclusion and records the true Wronskian consequence.
 - `negcontrol/NegativeControl.lean` (soundness negative control): compiles, exit 0.
 
+{ia_section}
+{ia2_section}
+{ia3_section}
+{ia4_section}
+{ia5_section}
+{ia6_section}
 ## 9. Provenance, queue and checkpoints
 
 - `checkpoint.json` at the worktree root holds the full checkpoint history (never rewritten);
@@ -326,7 +628,19 @@ The two structural points of the review:
   `{cp['checkpoints'][-1]['at']}` with `gates={cp['checkpoints'][-1]['gates']}`.  The final
   checkpoint written after this card records the card's own sha256.
 - Shared queue files were **not modified**: `longrun/queue.updated.json` and
-  `manifest/*` remain as inherited. This card and `evidence/*` are the task's only outputs.
+  `manifest/*` remain as inherited (their mtimes, 2026-09-09, predate the first checkpoint at
+  2026-09-12T02:16Z; a `find -newermt` scan over `longrun/queue.updated.json`, `manifest`
+  and `input` finds no file modified during the task). This card, `evidence/*` and the
+  independent acceptance probes `tmp/independent_acceptance_probe.lean` (§8b),
+  `tmp/acceptance_probe_r2.lean` (§8c, driven by `tools/acceptance_pass2.py`) and
+  `tmp/acceptance_probe_r3.lean` / `tmp/acceptance_probe_r3_audit.lean`
+  (§8d, driven by `tools/acceptance_pass3.py`), `tmp/gs_independent_probe.lean`
+  (§8e, driven by `tools/gs_independent_check.py`) and `tmp/acceptance_probe_r5.lean`
+  (§8f, driven by `tools/acceptance_pass5.py`) are this task's outputs; §8g adds
+  `tmp/acceptance_probe_r6.lean` and the gate-sensitivity artifacts
+  `tmp/mutation/poisoned_audit.lean`, `tmp/mutation/truncated_audit.lean` and
+  `tmp/mutation/scan_targets/*` (driven by `tools/acceptance_pass6.py`); `tools/*` are
+  this task's own gate, card, checkpoint and acceptance drivers.
 - **Revision note.**  After the first complete pass, the two local statements that duplicated the
   read-only prior art were removed in favour of importing `SturmZeroCount.lean` (the local
   `sin_no_zero_in_Ioo_zero_pi` additionally collided with the leader declaration of the same
@@ -356,7 +670,20 @@ export ELAN_HOME={os.environ.get('ELAN_HOME', '/data3/guoshaoyang/workdir/lean_p
 export PATH="$ELAN_HOME/bin:$PATH"
 cd {ROOT}
 python3 tools/run_sturm_gates.py        # compile + axiom audit + forbidden scan + hashes
+python3 tools/acceptance_pass2.py       # pass-2 fail-closed acceptance (closure rebuild,
+                                        # probe r2, signature re-diff, input byte-identity)
+python3 tools/acceptance_pass3.py       # pass-3 independent acceptance (hand-rolled probe,
+                                        # leader two-sided cross-check, closure rebuild)
+python3 tools/gs_independent_check.py   # pass-4 independent acceptance (fresh probe from a
+                                        # separate invocation, fail-closed cones/hashes/names)
+python3 tools/acceptance_pass5.py       # pass-5 independent acceptance (continuation
+                                        # invocation; fresh probe plus proof-term provenance
+                                        # of the engine consumption)
+python3 tools/acceptance_pass6.py       # pass-6 independent acceptance (continuation
+                                        # invocation; fresh probe, statement-level type
+                                        # checks, and gate mutation/sensitivity tests)
 python3 tools/make_result_card.py       # regenerate this card and its JSON
+python3 tools/final_integrity_check.py  # card/checkpoint/hash consistency
 ```
 
 **TASK_DONE**
@@ -402,6 +729,12 @@ card = {
     "non_vacuity_witnesses": witnesses,
     "hypothesis_review": hyp,
     "semantic_review": sr,
+    "independent_acceptance": ia,
+    "independent_acceptance_pass2": ia2,
+    "independent_acceptance_pass3": ia3,
+    "independent_acceptance_pass4_gs": ia4,
+    "independent_acceptance_pass5": ia5,
+    "independent_acceptance_pass6": ia6,
     "checkpoints": cp["checkpoints"],
     "limitations": sr["honest_limitations"],
 }

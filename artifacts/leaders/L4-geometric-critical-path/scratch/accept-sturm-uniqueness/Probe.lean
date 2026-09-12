@@ -1,6 +1,7 @@
 /-
-Reviewer probe for L4/GeodesicComparison/SturmUniqueness.lean
+Reviewer probe for L4/GeodesicComparison/SturmUniqueness.lean (post-review revision).
 Read-only w.r.t. the artifact: imports it and prints checks/axioms.
+11 declarations remain (wronskian_sturmModel_eq_zero_of_pos was deleted).
 -/
 import Poincare.L4.GeodesicComparison.TwoSidedSturm
 import Poincare.L4.GeodesicComparison.SturmUniqueness
@@ -10,7 +11,6 @@ open Poincare.L4.GeodesicComparison
 -- Elaborated types (full binder structure)
 #check @sturmModel_pos_at_right
 #check @sturmModel_eq_zero_at_pi_sqrt
-#check @wronskian_sturmModel_eq_zero_of_pos
 #check @exists_smul_sturmModel_of_wronskian_eq_zero
 #check @wronskian_sturmModel_eq_zero_of_curvature_eq
 #check @exists_smul_sturmModel_of_curvature_eq
@@ -24,7 +24,6 @@ open Poincare.L4.GeodesicComparison
 -- Axiom cones
 #print axioms sturmModel_pos_at_right
 #print axioms sturmModel_eq_zero_at_pi_sqrt
-#print axioms wronskian_sturmModel_eq_zero_of_pos
 #print axioms exists_smul_sturmModel_of_wronskian_eq_zero
 #print axioms wronskian_sturmModel_eq_zero_of_curvature_eq
 #print axioms exists_smul_sturmModel_of_curvature_eq

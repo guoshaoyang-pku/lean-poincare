@@ -14,7 +14,7 @@ hypothesis
 
 as an explicit argument.  This file shows that `htrans` is derivable from the atlas structure
 alone (`smoothOverlapAtlas_transition_mem_source`), and then re-derives the headline without it
-(`globalWeightedIBP_of_cover_partial_ae'`), so the hypothesis list of the D13 interface is
+(`globalWeightedIBP_of_cover_partial_ae_no_coherence`), so the hypothesis list of the D13 interface is
 strictly smaller.  The strengthened theorem is the downstream consumer of the redundancy
 lemma; it also independently re-verifies finding F1 of the independent D13 semantic audit
 (`L4-child-d13-semantic-audit`), which discovered the same redundancy in a scratch probe.
@@ -66,7 +66,7 @@ theorem halfSpaceAtlas_coherence_derived (n : ℕ) (G : ChartMetric (n + 1)) :
 partial charts with constructed partition of unity, with exactly the hypotheses of
 `SmoothOverlapAtlas.globalWeightedIBP_of_cover_partial_ae` *except* `htrans`, which is supplied
 by `smoothOverlapAtlas_transition_mem_source`.  The conclusion is unchanged. -/
-theorem globalWeightedIBP_of_cover_partial_ae' {M : Type*} [MeasurableSpace M] {n : ℕ}
+theorem globalWeightedIBP_of_cover_partial_ae_no_coherence {M : Type*} [MeasurableSpace M] {n : ℕ}
     {A : SmoothOverlapAtlas M (n + 1)}
     (b : ℕ) {ι : Type*} [Fintype ι] (chartOf : ι → ℕ)
     (f u v Du Guv : M → ℝ)

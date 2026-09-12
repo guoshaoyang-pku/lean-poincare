@@ -66,6 +66,16 @@ Unpack with `tar -xf <asset>` (zstd auto-detected). Build-log visualization sour
 these archives + in-repo `longrun/state/*/gate-build.log`, `latest.log`, `run-*.log`
 and `longrun/logs/events.jsonl`.
 
+Fetching is via GitHub Release, NOT git (keeps clones lean):
+
+```sh
+gh release download artifacts-2026-09-12 --repo guoshaoyang-pku/lean-poincare
+# or browser download from the release page above, no CLI needed
+```
+
+The archives are optional for running the swarm — the repo alone is sufficient for a
+cold start; pull them when you need full process visualization or lineage forensics.
+
 ## Excluded bulk (rebuildable; not stored anywhere)
 
 | item | size | how to rebuild |

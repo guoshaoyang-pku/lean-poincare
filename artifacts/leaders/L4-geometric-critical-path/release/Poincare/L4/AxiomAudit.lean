@@ -25,11 +25,21 @@ import Poincare.L4.GeodesicComparison.ConstantCurvatureRauchLower
 import Poincare.L4.GeodesicComparison.SturmZeroCount
 import Poincare.L4.GeodesicComparison.TwoSidedSturm
 import Poincare.L4.GeodesicComparison.SturmUniqueness
+import Poincare.L4.GeodesicComparison.ZeroSpacing
 import Poincare.L4.ManifoldIBP.WeightedSelfAdjointness
 import Poincare.L4.ManifoldIBP.AtlasHypothesisRedundancy
 import Poincare.L4.Compactness.CoveringStability
 import Poincare.L4.Compactness.DoublingToCovers
 import Poincare.L4.Compactness.MeasureGrowthCovers
+import Poincare.L4.Compactness.FamilyCovers
+import Poincare.L4.PointedGH.Family
+import Poincare.L4.Compactness.MeasureGrowthChain
+import Poincare.L4.Compactness.MeasureGrowthChainWitness
+import Poincare.L4.Compactness.MeasureGrowthChainCircle
+import Poincare.L4.Compactness.MeasureGrowthChainCircleFamily
+import Poincare.L4.Compactness.RicciGrowthChain
+import Poincare.L4.Compactness.FlatTorusGrowth
+import Poincare.L4.GeodesicComparison.FlatGeodesicExpModel
 
 /-! ## RauchBridge.lean -/
 
@@ -126,20 +136,25 @@ import Poincare.L4.Compactness.MeasureGrowthCovers
 #print axioms Poincare.L4.GeodesicComparison.wronskian_sturmModel_eq_zero_of_curvature_eq
 #print axioms Poincare.L4.GeodesicComparison.exists_smul_sturmModel_of_curvature_eq
 #print axioms Poincare.L4.GeodesicComparison.sturmModel_eq_zero_at_pi_sqrt
-#print axioms Poincare.L4.GeodesicComparison.wronskian_sturmModel_eq_zero_of_pos
 #print axioms Poincare.L4.GeodesicComparison.eq_zero_of_wronskian_sturmModel_eq_zero
 #print axioms Poincare.L4.GeodesicComparison.no_first_zero_of_curvature_le_of_lt_pi
 #print axioms Poincare.L4.GeodesicComparison.no_first_zero_before_pi_sqrt_of_curvature_le
 #print axioms Poincare.L4.GeodesicComparison.nonvanishing_near_left_of_deriv_ne
 #print axioms Poincare.L4.GeodesicComparison.no_zero_of_curvature_le_of_deriv_ne
-#print axioms Poincare.L4.GeodesicComparison.no_first_zero_before_pi_sqrt_of_curvature_le
 #print axioms Poincare.L4.GeodesicComparison.strict_span_necessary
+
+ /-! ## GeodesicComparison/ZeroSpacing.lean -/
+
+#print axioms Poincare.L4.GeodesicComparison.zero_spacing_lt_of_curvature_gt
+#print axioms Poincare.L4.GeodesicComparison.zero_spacing_ge_of_curvature_le
+#print axioms Poincare.L4.GeodesicComparison.sturmModel_zero_spacing
+#print axioms Poincare.L4.GeodesicComparison.sturmModel_spacing_boundary
 
  /-! ## ManifoldIBP/AtlasHypothesisRedundancy.lean -/
 
 #print axioms Poincare.L4.ManifoldIBP.smoothOverlapAtlas_transition_mem_source
 #print axioms Poincare.L4.ManifoldIBP.halfSpaceAtlas_coherence_derived
-#print axioms Poincare.L4.ManifoldIBP.globalWeightedIBP_of_cover_partial_ae'
+#print axioms Poincare.L4.ManifoldIBP.globalWeightedIBP_of_cover_partial_ae_no_coherence
 
 /-! ## ManifoldIBP/WeightedSelfAdjointness.lean -/
 
@@ -177,3 +192,177 @@ import Poincare.L4.Compactness.MeasureGrowthCovers
 #print axioms Poincare.L4.Compactness.measure_closedBall_le_pow_mul
 #print axioms Poincare.L4.Compactness.coveringNumber_le_of_measure_doubling_allScales
 #print axioms Poincare.L4.Compactness.coveringNumber_le_floor_of_measure_doubling_allScales
+
+/-! ## Compactness/MeasureGrowthChain.lean (round 5) -/
+
+#print axioms Poincare.L4.Compactness.UniformMeasureGrowth.coveringNumber_le
+#print axioms Poincare.L4.Compactness.UniformMeasureGrowth.doublingConstant
+#print axioms Poincare.L4.Compactness.UniformMeasureGrowth.coveringNumber_le_doublingConstant
+#print axioms Poincare.L4.Compactness.totallyBounded_of_uniformMeasureGrowth
+#print axioms Poincare.L4.Compactness.isCompact_of_uniformMeasureGrowth
+#print axioms Poincare.L4.Compactness.exists_pointed_subseq_of_uniformMeasureGrowth
+#print axioms Poincare.L4.Compactness.subsingletonGHSpaceRepPUnit
+#print axioms Poincare.L4.Compactness.dirac_closedBall_of_subsingleton
+#print axioms Poincare.L4.Compactness.punitGrowth
+#print axioms Poincare.L4.Compactness.punitGrowth_measure_varies
+#print axioms Poincare.L4.Compactness.totallyBounded_punit
+#print axioms Poincare.L4.Compactness.isCompact_punit
+#print axioms Poincare.L4.Compactness.exists_pointed_subseq_punit
+
+/-! ## Consumed child-artifact headlines (round 5, independent re-audit) -/
+
+#print axioms Poincare.L4.Compactness.totallyBounded_of_uniformDoubling
+#print axioms Poincare.L4.Compactness.isCompact_of_uniformDoubling
+#print axioms Poincare.L4.PointedGH.pointed_subseq_of_compact
+#print axioms Poincare.L4.PointedGH.exists_dist_optimalGHInjl_optimalGHInjr_lt
+
+/-! ## Compactness/MeasureGrowthChainWitness.lean (round 5, non-degenerate witness) -/
+
+#print axioms Poincare.L4.Compactness.dZero
+#print axioms Poincare.L4.Compactness.dOne
+#print axioms Poincare.L4.Compactness.dZero_ne_dOne
+#print axioms Poincare.L4.Compactness.twoPointZero_ne_one
+#print axioms Poincare.L4.Compactness.dist_twoPointZero_twoPointOne
+#print axioms Poincare.L4.Compactness.twoPoint_eq_zero_or_one
+#print axioms Poincare.L4.Compactness.twoPointMeasure_apply
+#print axioms Poincare.L4.Compactness.twoPointMeasure_closedBall
+#print axioms Poincare.L4.Compactness.twoPointMeasureOf_apply_member
+#print axioms Poincare.L4.Compactness.twoPointGrowth
+#print axioms Poincare.L4.Compactness.twoPointGrowth_nondegenerate
+#print axioms Poincare.L4.Compactness.twoPointGrowth_doublingConstant
+#print axioms Poincare.L4.Compactness.totallyBounded_twoPoint
+#print axioms Poincare.L4.Compactness.isCompact_twoPoint
+#print axioms Poincare.L4.Compactness.exists_pointed_subseq_twoPoint
+
+/-! ## Compactness/MeasureGrowthChainCircle.lean (round 5, geometric circle realization) -/
+
+#print axioms Poincare.L4.Compactness.circleEquiv
+#print axioms Poincare.L4.Compactness.circleZero
+#print axioms Poincare.L4.Compactness.circleMeasure
+#print axioms Poincare.L4.Compactness.circleMeasure_closedBall
+#print axioms Poincare.L4.Compactness.circleMeasure_univ
+#print axioms Poincare.L4.Compactness.circleMeasureOf
+#print axioms Poincare.L4.Compactness.circleMeasureOf_apply_member
+#print axioms Poincare.L4.Compactness.circle_norm_le_one
+#print axioms Poincare.L4.Compactness.circle_dist_le_one
+#print axioms Poincare.L4.Compactness.circle_m_pos
+#print axioms Poincare.L4.Compactness.circle_toNNReal_eq_of_pos
+#print axioms Poincare.L4.Compactness.circleGrowth
+#print axioms Poincare.L4.Compactness.circleGrowth_measure_varies
+#print axioms Poincare.L4.Compactness.totallyBounded_circle
+#print axioms Poincare.L4.Compactness.isCompact_circle
+#print axioms Poincare.L4.Compactness.exists_pointed_subseq_circle
+
+/-! ## Round-5 completion: remaining top-level declarations of the new modules -/
+
+#print axioms Poincare.L4.Compactness.instMeasurableSpaceGHSpaceRep
+#print axioms Poincare.L4.Compactness.instBorelSpaceGHSpaceRep
+#print axioms Poincare.L4.Compactness.UniformMeasureGrowth
+#print axioms Poincare.L4.Compactness.twoPointEquiv
+#print axioms Poincare.L4.Compactness.twoPointZero
+#print axioms Poincare.L4.Compactness.twoPointOne
+#print axioms Poincare.L4.Compactness.twoPointEquiv_twoPointZero
+#print axioms Poincare.L4.Compactness.twoPointEquiv_twoPointOne
+#print axioms Poincare.L4.Compactness.twoPointMeasure
+#print axioms Poincare.L4.Compactness.twoPointMeasureOf
+#print axioms Poincare.L4.Compactness.two_mul_half
+#print axioms Poincare.L4.Compactness.half_le_two_mul_half
+#print axioms Poincare.L4.Compactness.one_le_two_mul_half
+#print axioms Poincare.L4.Compactness.one_le_two_mul_one
+#print axioms Poincare.L4.Compactness.coe_half
+#print axioms Poincare.L4.Compactness.half_le_two_mul_half_nn
+#print axioms Poincare.L4.Compactness.one_le_two_mul_half_nn
+
+/-! ## Compactness/MeasureGrowthChainCircleFamily.lean (round 5, circumference-parameterized) -/
+
+#print axioms Poincare.L4.Compactness.circleEquivT
+#print axioms Poincare.L4.Compactness.circleMeasureT
+#print axioms Poincare.L4.Compactness.circleMeasureT_closedBall
+#print axioms Poincare.L4.Compactness.circleMeasureT_univ
+#print axioms Poincare.L4.Compactness.circleMeasureTOf
+#print axioms Poincare.L4.Compactness.circleMeasureTOf_apply_member
+#print axioms Poincare.L4.Compactness.circleT_norm_le
+#print axioms Poincare.L4.Compactness.circleT_dist_le
+#print axioms Poincare.L4.Compactness.circleGrowthT
+#print axioms Poincare.L4.Compactness.circleGrowthT_constants
+#print axioms Poincare.L4.Compactness.circleGrowthT_measure_varies
+#print axioms Poincare.L4.Compactness.totallyBounded_circleT
+#print axioms Poincare.L4.Compactness.isCompact_circleT
+#print axioms Poincare.L4.Compactness.exists_pointed_subseq_circleT
+
+/-! ## Round 6 (session slice 3): Compactness/RicciGrowthChain.lean -/
+
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.A_nonneg
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.intervalIntegrable_A
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_eq_zero_of_nonpos
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_nonneg
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_mono
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_eq_of_ge
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_pos
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.radialVolume_halving
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.doublingNNReal
+#print axioms Poincare.L4.Compactness.UniformRicciBallGrowth.toUniformMeasureGrowth
+#print axioms Poincare.L4.Compactness.totallyBounded_of_uniformRicciBallGrowth
+#print axioms Poincare.L4.Compactness.isCompact_of_uniformRicciBallGrowth
+#print axioms Poincare.L4.Compactness.exists_pointed_subseq_of_uniformRicciBallGrowth
+
+/-! ## Round 6 (session slice 3): Compactness/FlatTorusGrowth.lean -/
+
+#print axioms Poincare.L4.Compactness.FlatTorus
+#print axioms Poincare.L4.Compactness.torusEquiv
+#print axioms Poincare.L4.Compactness.torusZero
+#print axioms Poincare.L4.Compactness.torusMeasure
+#print axioms Poincare.L4.Compactness.torusMeasureOf
+#print axioms Poincare.L4.Compactness.torusMeasureOf_apply_member
+#print axioms Poincare.L4.Compactness.torusMeasure_closedBall
+#print axioms Poincare.L4.Compactness.torusMeasure_univ
+#print axioms Poincare.L4.Compactness.torusA
+#print axioms Poincare.L4.Compactness.torusA_of_mem
+#print axioms Poincare.L4.Compactness.torusA_of_notMem
+#print axioms Poincare.L4.Compactness.torusA_of_nonpos
+#print axioms Poincare.L4.Compactness.torusA_of_gt
+#print axioms Poincare.L4.Compactness.torusA_half
+#print axioms Poincare.L4.Compactness.torusA_eq_of_mem_Icc
+#print axioms Poincare.L4.Compactness.torusA_pos
+#print axioms Poincare.L4.Compactness.torusA_nonneg
+#print axioms Poincare.L4.Compactness.torusA_abs_le_four
+#print axioms Poincare.L4.Compactness.torusA_cont
+#print axioms Poincare.L4.Compactness.torusA_hasDerivAt
+#print axioms Poincare.L4.Compactness.torusA_zero
+#print axioms Poincare.L4.Compactness.torusA_measurable
+#print axioms Poincare.L4.Compactness.torusA_intervalIntegrable
+#print axioms Poincare.L4.Compactness.torusRadialVolume_of_le_half
+#print axioms Poincare.L4.Compactness.torusRadialVolume_of_ge_half
+#print axioms Poincare.L4.Compactness.torusRadialVolume_of_nonpos
+#print axioms Poincare.L4.Compactness.torusRadialVolume_eq
+#print axioms Poincare.L4.Compactness.torusMeasure_closedBall_eq_ofReal
+#print axioms Poincare.L4.Compactness.circle_norm_le_half
+#print axioms Poincare.L4.Compactness.circle_dist_le_half
+#print axioms Poincare.L4.Compactness.torus_dist_le_half
+#print axioms Poincare.L4.Compactness.torusRicciBallGrowth
+#print axioms Poincare.L4.Compactness.torusGrowth_measure_varies
+#print axioms Poincare.L4.Compactness.torus_nondegenerate
+#print axioms Poincare.L4.Compactness.totallyBounded_torus
+#print axioms Poincare.L4.Compactness.isCompact_torus
+#print axioms Poincare.L4.Compactness.exists_pointed_subseq_torus
+
+/-! ## Round 6 (session slice 3): GeodesicComparison/FlatGeodesicExpModel.lean -/
+
+#print axioms Poincare.L4.GeodesicComparison.geodesicLine
+#print axioms Poincare.L4.GeodesicComparison.geodesicLine_zero
+#print axioms Poincare.L4.GeodesicComparison.geodesicLine_flow
+#print axioms Poincare.L4.GeodesicComparison.dist_geodesicLine
+#print axioms Poincare.L4.GeodesicComparison.expMap
+#print axioms Poincare.L4.GeodesicComparison.expMap_eq
+#print axioms Poincare.L4.GeodesicComparison.expMap_injective
+#print axioms Poincare.L4.GeodesicComparison.radialJacobi
+#print axioms Poincare.L4.GeodesicComparison.radialJacobi_zero
+#print axioms Poincare.L4.GeodesicComparison.radialJacobi_eq_zero_iff
+#print axioms Poincare.L4.GeodesicComparison.radialJacobi_hasDerivAt
+#print axioms Poincare.L4.GeodesicComparison.radialJacobi_hasDerivAt_deriv
+#print axioms Poincare.L4.GeodesicComparison.radialJacobi_deriv
+#print axioms Poincare.L4.GeodesicComparison.radialJacobi_second_deriv
+#print axioms Poincare.L4.GeodesicComparison.scalarRadialJacobiSolutionOn
+#print axioms Poincare.L4.GeodesicComparison.euclidModelA_one_eq
+#print axioms Poincare.L4.GeodesicComparison.torusA_eq_eight_mul_radialJacobi
