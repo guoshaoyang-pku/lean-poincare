@@ -1,0 +1,902 @@
+dsh: reasoning:
+Let me explore the worktree structure.
+dsh: reasoning:
+The gate.json doesn't exist at that path. Let me look at the state dir for D9-tensor-algebra-manifolds — it exists there (`ls -la .../state/D9-tensor-algebra-manifolds/` was the second command, output shows DONE, heartbeat.json, last_run.json, latest.log, prompt.md, PUSHED). So gate.json is not there. Let me read the prompt.md and latest.log.
+dsh: reasoning:
+Interesting, prompt.md exists but gate.json not. Latest.log is binary. Let me check what files exist in the state dir and the worktree more thoroughly. Also, there might be another location for gate.json (maybe in the worktree longrun/results). Let's check.
+dsh: reasoning:
+Let me read the result card (D9-tensor-algebra-manifolds.md) to see what the task is about, and check for gate.json anywhere.
+
+Also important: the gate.json path doesn't exist. Maybe there's a different location — let me search the filesystem broadly for gate.json files.
+dsh: reasoning:
+The gate.json isn't present. The card says everything compiled at exit 0 previously. But the compile gate failed at attempt 2. Since gate.json is missing, I need to re-run the compile checks myself.
+
+Wait — maybe the "authored files" for this task are elsewhere. The task is D9-tensor-algebra-manifolds but the release directory contains many files from other tasks (it's a shared release). The gate probably compiled files listed in a manifest. Let me check the manifest directory and tools directory.
+
+Let me first check the git status of the worktree to figure out what's changed/authored.
+dsh: reasoning:
+No gate.json. Let me check the release directory for the D9 files and try compiling them. But first, let me look for a gate script or a list of files that the gate checks. Let me look at the logs directory in the worktree.
+dsh: reasoning:
+The D9 files were modified Sep 10 09:12-09:13 (attempt 2 apparently). Note the card says they were generated at 09:17, but files modified 09:13. Hmm, actually the card's generated time is 01:16 UTC = 09:16 local. Let me now run the compile checks on the four authored files. First set up environment.
+
+Note also there's a lakefile in release. Let me check ELAN_HOME etc.
+dsh: reasoning:
+Now let me run the compile gate on the four authored files. This may take a while. Let me run all four in one bash command, capturing exit codes and stderr.
+dsh: reasoning:
+All four authored files compile with exit 0. So the gate failure must be elsewhere. The instruction says "Fix ONLY the authored files in your worktree so that every `.lean` file compiles with `lake env lean`". Maybe "every .lean file" means the entire worktree — including the other files in release/ that may have been broken (e.g. by the D9 changes to RiemannAdapter imports?). Wait, but earlier attempts say "attempt 2" and the gate.json is missing. Since gate.json doesn't exist, maybe I should look for the gate script and run it. Let me search the longrun directory for scripts that produce gate.json.
+
+Let me search for "gate.json" in the repo.
+dsh: reasoning:
+There's a gate_replica.py in D10-bochner-euclidean worktree logs. Let me look at the dispatch360.py to understand what the gate does, and look for gate_replica.py in other worktrees.
+dsh: reasoning:
+The gate walks the entire worktree (excluding .lake/.git/.dshpkg) and runs `lake env lean <file>` with cwd = worktree root (WT = the worktree root, not the release dir!). That's key: `lake env lean` from the worktree root directory — but there's no lakefile at the worktree root. Hmm, wait. Actually in the D10 replica, `cwd=WT` and WT is the worktree root. But the worktree root has no lakefile.toml. Let me check if `lake env lean` works from the worktree root.
+
+Actually, let's check the D10 worktree root — maybe it has a lakefile. Let me look at the actual dispatch360.py compile_gate to be precise.
+dsh: reasoning:
+Key insight: the gate runs `lake env lean <file>` with cwd = worktree root (`wt`), NOT the release directory. The environment `ENV` is defined at the top of dispatch360.py. Let me check ENV. The issue: from the worktree root, there is no `lakefile.toml`, so `lake env lean` would fail to find a package... unless ENV includes something. Let me check.
+
+Actually wait — `lake env lean <absolute path>` from a directory without a lakefile: lake searches parent directories for lakefile. The worktree root has no lakefile. The parent dirs: /data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/ ... no lakefile either. So `lake env lean` from wt root would error "no lakefile found". Hmm, but that would make every file fail.
+
+Unless... the worktree root does have a lakefile. Let me check: `ls -la` at the worktree root showed: input, logs, longrun, manifest, negcontrol, README.md, release, tools. No lakefile.
+
+Hmm, so maybe compile_gate failed for all files? But then attempt 1 presumably re-ran. Actually wait — maybe `lake env lean` works without a lakefile for pure Lean files, resolving the toolchain via lean-toolchain search? Let's test: run from worktree root `lake env lean release/Poincare/D9/TensorAlgebra/Interface.lean`. Also check ENV in dispatch360.py.
+dsh: reasoning:
+Interesting! The worktree root DOES have a lakefile.toml, lake-manifest.json, lean-toolchain, but `ls -la` earlier didn't show them because... wait, earlier `ls -la` output showed only input, logs, longrun, manifest, negcontrol, README.md, release, tools. But now `ls` shows lakefile.toml, lake-manifest.json, lean-toolchain too! 
+
+Hmm, maybe those are hidden? No, `ls -la` would show them. Wait, the first `ls -la` was of the worktree: it showed 9 entries total (input, logs, longrun, manifest, negcontrol, README.md, release, tools) — that's 8 + . and .. = 10. But now `ls` shows lakefile.toml, lake-manifest.json, lean-toolchain. That means these files were created in between! Possibly by my `lake env lean` invocation from the worktree root — lake might have created a default lakefile? No, lake doesn't create a lakefile... but `lake env lean file.lean` without a lakefile might trigger `lake init`? Actually, when lake is run in a directory with a `lean-toolchain` file, it might create `.lake`... Hmm.
+
+Wait, actually maybe the previous run of the gate (dispatch360 compile_gate) created these files by running `lake env lean` from the root — lake might have auto-created a lakefile? Or maybe a concurrent process (the D9 dispatch) created them.
+
+Let me check timestamps.
+dsh: reasoning:
+The root lakefile.toml was created at 09:41:14 — that's during my session? Actually my session started around 09:40. Wait, my first `ls -la` was at the beginning and showed no lakefile. Then after running `lake env lean` from the root, the lakefile appeared. Did *I* create it? I didn't. Hmm.
+
+Oh wait — I see. The `lake env lean` command from the worktree root... no. Actually, maybe the worker_loop or some supervisor process created it concurrently? The heartbeat says pid 199358 started 09:40:09. Possibly the harness setup for this repair session creates the root lakefile wrapper. Actually the comment in lakefile says "Worktree-level Lake workspace for the longrun compile gate" — so it's part of the environment setup, likely created by the repair harness right when my session began. The timestamps 09:41:11 and 09:41:14 are just after my session start (heartbeat 09:40:09). So it's likely the harness installed it.
+
+Wait, but actually, maybe it's the repair worker setup script. Anyway.
+
+Important: `.lake -> release/.lake` symlink. So `lake env lean release/Poincare/D9/TensorAlgebra/Props.lean` from root worked, exit 0.
+
+Now, the gate walks ALL .lean files in the worktree recursively, including `negcontrol/NegativeControl.lean`, `release/Audit/*`, `release/Ledger/*`, `release/Probe/*`, `release/*.lean`, etc. So the gate checks every .lean file in the whole worktree. One of them must fail.
+
+Also note: the gate excludes `.lake` dirs by name, but the root `.lake` is a symlink to release/.lake — os.walk with followlinks=False (default) won't follow the symlink, so fine.
+
+Let me replicate the gate: run `lake env lean` on every .lean file from the worktree root, capture failures. This will take a while (there are many files). Note the gate has a 1800s timeout per file. Let me first count files.
+
+Also I should be careful: the D9 task's *authored* files are the four under release/Poincare/D9/TensorAlgebra/. But the instruction says fix ONLY authored files. However, the gate failing could be due to other files. Let me determine which files fail first.
+
+The gate.json is missing, so I can't see which failed. Let me run the replica across all files. That could take significant time (maybe 30+ min?). Since oleans are prebuilt in release/.lake, `lake env lean` on each file should be quick-ish (each file compiles its imports from oleans). There are maybe 80 files.
+
+Wait — one important subtlety: the root lakefile has srcDir = "release", globs = ["Poincare.+"]. Running `lake env lean release/Poincare/...` with cwd=root: Lean will resolve imports via LEAN_PATH, which includes release/.lake/build/lib/lean (from the symlink) plus mathlib packages. Should be fine.
+
+For files under `Probe/`, `Ledger/`, `Audit/`, `ReleaseCheck.lean` etc., imports may include `Probe.GeometryApi` etc. which might not be in the root lakefile's lean_lib list, but since the .lake/build/lib/lean directory contains all prebuilt oleans from the release package build, LEAN_PATH should include them (lake env adds the lib dir of the workspace: `.lake/build/lib/lean` → release/.lake/build/lib/lean). Actually does lake add the workspace's build lib dir even if the library isn't declared? `lake env` adds `build/lib/lean` of the root package to LEAN_PATH. Since root package's .lake is symlinked to release/.lake, LEAN_PATH gets release/.lake/build/lib/lean, which contains all built oleans including Probe/Ledger/Audit. So it works.
+
+Let me now run the full replica in the background and meanwhile inspect the D9 authored files for issues. Actually, let me first try a quick check of a few likely-failing files. But the most reliable is to run the whole gate and collect fail list. Let me write a replica script like the D10 one but for this worktree, and run it in the background.
+
+Actually, the gate may take a long time; but let me just run it and monitor. Given the files are already built, each should take a few seconds. ~100 files → maybe 5-10 minutes.
+
+Let me write the replica script into longrun/logs/ (allowed? workspace-write allows the worktree). The D10 worktree has gate_replica.py there. I'll do the same.
+
+Note: the gate uses ENV from dispatch360 which includes NODE_OPTIONS=--require ~/proxyhelper/proxy_preload.js. Probably irrelevant for lean.
+
+Let me create the script and run it in the background.
+dsh: reasoning:
+While that runs, let me inspect the four authored D9 files in detail, looking for anything that could fail under different conditions. Also, check the other .lean files, e.g. negcontrol/NegativeControl.lean — this one likely fails intentionally? Let me check. In the D10 worktree, does the gate include negcontrol? Yes it walks everything. Hmm — wait, but for D10 the negcontrol/NegativeControl.lean may be deliberately failing (negative control). Let me check what's in this worktree's negcontrol file.
+
+Actually, the gate failing might be because of the negative control file! Let me check whether the D9 negcontrol file compiles.
+dsh: reasoning:
+WAIT. Critical finding: the negcontrol/NegativeControl.lean contains `sorry` and `native_decide`! And the gate runs `lake env lean` on EVERY .lean file in the worktree. So the gate would fail on negcontrol/NegativeControl.lean... but would it? The run_cmd at the end checks for sorryAx and unapproved axiom; those checks pass, so the file exits 0 (with warning about sorry). `sorry` produces a warning, not an error. `native_decide` also fine. So exit 0.
+
+Hmm, but wait: is the negcontrol file expected to be excluded? The gate walks everything, and the D5 release's negcontrol is deliberately not part of the release. In other worktrees (D10), does negcontrol exist? Let me check whether D10-bochner-euclidean has negcontrol, and what its gate replica reports.
+
+Actually, the key question: which file(s) fail. Let me wait for the replica job. Meanwhile, let me look at the four D9 files' contents to check for issues, and understand what changed in attempt 2 (timestamps 09:12-09:13).
+
+Hmm, actually here's a thought: the gate at 09:33 failed (last_run exit_code 1). The D9 files were modified at 09:12-09:13, i.e., before that gate run. So the failing file is likely among the files added/modified by the D9 attempt-2 worker. The D9 files are the only ones modified on Sep 10 (besides release dir timestamp). So which of the 68 .lean files fails?
+
+Wait — the mtimes shown: only 4 files modified on Sep 10. All other files date Sep 5-9. And gate.json (removed after writing the repair prompt per dispatch360 lines 153-155: `if os.path.exists(gpath): os.remove(gpath)`). So the failing file must be one of these four, OR a file that depends on them and gets recompiled? No — `lake env lean` compiles only the target file and imports come from oleans. If an imported olean is stale (e.g., release/Poincare/D9/TensorAlgebra/Interface.lean was modified after the olean was built), `lake env lean Toy.lean` would recompile Interface from source... which succeeds per my test.
+
+Hmm wait, actually my test `lake env lean Props.lean` compiled directly from source with imports. It succeeded.
+
+So why did the gate fail? Possibilities:
+1. The gate ran at 09:33 while files were in an intermediate broken state, and a worker later fixed them at... no, files were last modified 09:13, gate ran at 09:33. Hmm.
+2. The gate run had a different environment (ENV with NODE_OPTIONS preload) that broke something.
+3. The failure is in a file I haven't considered — e.g., `release/.lake/packages/...` is excluded. What about `input/d5-tools/` maybe contains .lean? No, find showed 68 total. Let me list all 68.
+
+Actually hold on. The gate at 09:33 is when `last_run.json` was written (09:33:27, exit 1). The gate is run by dispatch360 when DONE file exists. The DONE file mtime is 09:20. PUSHED is 09:38. So sequence: worker finished 09:20 (DONE written), dispatcher at 09:33 ran compile gate → failed → wrote repair prompt & repair_count=2, deleted gate.json. Files were last modified 09:13, so the gate failed on the 09:13 state.
+
+But my run of the four files succeeded... unless the failure is due to something environmental, e.g., `lake env lean` from the worktree root (root lakefile!) rather than from release dir. I ran from release dir first (all success), then later I ran from wt root for Props (success). But note: at the time of the gate (09:33), did the root lakefile.toml exist? It was created at 09:41:11 — AFTER the gate! So at gate time, there was no root lakefile.toml, no lean-toolchain at root, no .lake symlink. Running `lake env lean` with cwd=worktree root and no lakefile → lake error "no lakefile found" for EVERY file → gate failed. That's probably exactly what happened: the D9 worker removed/altered something? Hmm, but why would the root lakefile be missing at 09:33 and created at 09:41?
+
+Actually more likely: the harness's repair-session setup creates the root lakefile wrapper (it's described as "Worktree-level Lake workspace for the longrun compile gate"), and the previous attempt (attempt 1?) had a different flow. Hmm, let me check other worktrees: D9-parabolic-maximum-principle, D10-bochner-euclidean — do they have root lakefile.toml? If all worktrees have it, it's a standard fixture that might have been deleted... Let me check.
+
+Actually wait. Let me check whether the root lakefile is part of the original worktree creation. In other worktrees:
+dsh: reasoning:
+So the root lakefile wrappers were created for the worktrees that got repair sessions (D10-bochner, D10-jacobi, D9-parabolic, D9-tensor) at their session start times. This is a fixture created by the repair harness — good.
+
+So the gate ran at 09:33 without the root lakefile wrapper. But dispatch360's compile_gate runs `lake env lean f` with cwd=WT (root) and ENV includes ELAN_HOME and PATH. Without lakefile at root... Let's test what happens: temporarily simulate? I can't remove the root lakefile because it was just created by harness; but I can test in a temp dir. Actually, `lake env lean` without a lakefile: lake searches for lakefile in cwd and ancestors; if none found, I believe it errors. Actually, in recent lake versions, `lake env` without a package might still work using the default toolchain? Let me test in /tmp.
+
+But actually — the harness just created the root lakefile wrapper for my session, implying the gate will now work. But the goal is that the *files* compile. Let me wait for the replica result. It's running with cwd=root and root lakefile present — should be representative of a correct gate run now.
+
+Let me check on the background job progress.
+dsh: reasoning:
+/tmp is full — that explains many things, potentially. "No space left on device". Hmm! Maybe the gate failure was due to disk full. Let me check disk usage.
+
+Also the background job's output was empty (only stderr from landlock). Let me check its progress via the replica JSON file.
+dsh: reasoning:
+Interesting: /tmp is 100% full. That could indeed cause failures if Lean needs temp space. But the compile of the four files worked because... Lean may not need /tmp.
+
+The replica is progressing: 5 files done, all ok so far. Let me let it run. 68 files, each compiles fast (17.8s for 5 files ≈ 3.5s/file) → ~4 minutes total.
+
+Meanwhile, let me read the D9 authored files. Since gate.json is gone, and the root lakefile wrapper suggests the harness fixed the environmental issue, maybe the gate will now pass. But I need to verify all 68 files. The replica does exactly that.
+
+Let me read the four authored files while waiting.
+dsh: reasoning:
+Interface.lean looks OK. Note `dim_spec` uses `Module.finrank ℝ (TangentSpace I x) = dim`.
+
+Note: uses `IsManifold I 1 M` and `RiemannianBundle (TangentSpace I : M → Type uE)` — from RiemannAdapter.
+
+Let me read Props.lean and Toy.lean.
+dsh: reasoning:
+Props.lean line 50: `variable (D : TensorBundleData I M)` — then `variable {D}` at line 142 shadows. Then `def trace_divergence_identity (E : TraceDivergenceInterface D) : Prop` uses `D` — with `D` no longer a variable (only `{D}` implicit variable, still a variable). It's `variable {D}` which means D is now implicit; `(E : TraceDivergenceInterface D)` has D as an implicit auto-bound variable. Fine.
+
+Now Toy.lean.
+dsh: reasoning:
+Toy.lean compiles, good. Now AxiomAudit.lean.
+dsh: reasoning:
+Progress is slow-ish: 6 files in 22.9s. 68 files total → ~4-5 min.
+
+While waiting, let me think about the likely gate failure cause. Given:
+- gate ran at 09:33 with cwd = worktree root, no root lakefile wrapper (created at 09:41 by the repair harness).
+- Without a lakefile, `lake env lean <file>` likely fails immediately for all files.
+
+Let me verify this hypothesis: does `lake env lean` fail without a lakefile in cwd? I can test by creating a temp dir under /data (not /tmp, which is full) with a copy of a lean file and no lakefile.
+
+Actually, wait: the parent directories matter. If I create /data/.../testdir with no lakefile and no lean-toolchain, `lake env lean file.lean` → lake will search up the directory tree from cwd. /data/home/guoshaoyang/workdir/lean_poincare/ has no lakefile. So it should fail with "no lakefile found" or similar. But hold on: without a lakefile, does lake even find a toolchain? The worktree has lean-toolchain at root but no lakefile.
+
+Let me test in a fresh dir under /data.
+dsh: reasoning:
+The `cd` failed (mkdir permission denied), so it ran in the previous dir (worktree root), and it shows the lakefile listing. So the test is inconclusive. The exit 1 was from mkdir? Actually the output shows `exit: 1` from... hmm, the command chain: `mkdir -p ... && cd ... && cp ... && timeout 120 lake env lean Props.lean; echo "exit: $?"`. mkdir failed → `&&` chain stops → the `echo` runs with $? = 1 from mkdir. So no test.
+
+Let me test in a different writable location — e.g., under the worktree itself: /data/.../D9-tensor-algebra-manifolds/longrun/logs/laketest_nofile/ (workspace-write allowed).
+
+But careful: if I create a test dir inside the worktree, the gate replica will walk it and find .lean files there! Wait, the replica is running now; adding a .lean file inside the worktree during the walk could confuse it. Better to test outside the worktree. Permission denied for /data/home/guoshaoyang/tmp_laketest — because workspace-write policy restricts writes to the session workspace (the worktree). Let me use the worktree's longrun/logs directory and clean up immediately. The replica has already passed the `longrun` dir? It walks sorted by full path: paths under the worktree root: .../input (not .lean... actually input/d5-tools may have .lean? no), .../longrun/... comes early alphabetically. The replica list is built upfront (before compiling), so a new file created now would not be in the list. But if it's created before os.walk... the walk happened at script start (09:44), so the list is fixed. Safe. Actually, wait: `input` sorts before `longrun`, `release` after. The walk completed at script start, so the file list is fixed. Adding files now is fine for this run but I should delete right after.
+
+Actually, simpler: I can test the no-lakefile hypothesis in a subdir of `logs` and remove it. Let's do it.
+dsh: reasoning:
+Confirmed: without a lakefile (no LEAN_PATH setup), `lake env lean Props.lean` fails with "unknown module prefix 'Poincare'". So the gate at 09:33 failed because the worktree root lacked the lakefile wrapper. The repair harness has now created the root lakefile.toml + .lake symlink, so the gate should pass.
+
+But hold on: the task says "Fix ONLY the authored files in your worktree so that every .lean file compiles with `lake env lean` (exit 0)". The root wrapper is a harness fixture, not authored by me. The important thing is to verify all 68 files pass now under the root-cwd gate and then update the card.
+
+But wait — should I also consider that maybe the gate at 09:33 ran with a *different* cwd or that the root lakefile existed before? Timeline:
+- Root lakefile created 09:41:14 — during my session (session started ~09:40).
+- Gate ran 09:33:27.
+So yes, at gate time there was no root lakefile.
+
+Hmm, but how did other worktrees pass their gates? D10-bochner has root lakefile created 09:40:56 (also during a repair session?). D9-parabolic root lakefile at 09:25. Perhaps the harness evolves: earlier worktrees were created before the wrapper existed; when a repair session starts it installs the wrapper. Anyway.
+
+Now: is there any actual file failing? The replica will tell. Currently 6 files ok. Let me wait for it to finish. Meanwhile, consider whether the authored D9 files might fail in the *gate environment* specifically, e.g., ENV["NODE_OPTIONS"] preload — irrelevant to Lean.
+
+There is one more possible gate failure: `lake env lean` with absolute path and cwd=wt root. My gate replica uses exactly that. 
+
+Another consideration: the gate in dispatch360 does NOT delete pre-existing gate.json? It does `if os.path.exists(gate): return json.load(...)` at the top. And after failing, dispatch360 removes gate.json when queuing repair. So gate.json is absent now — consistent.
+
+Now let me also check: is there a `DONE` file in state and a `PUSHED` file. The dispatcher will re-run compile_gate after my session ends, if DONE exists. Since DONE exists (mtime 09:20) and status running with repair_count=2, next gate run: if ok → verified. If fail → status gate_failed (since repairs=2, no more repair). So I must make sure the gate passes now.
+
+So key: all 68 .lean files must compile with `lake env lean` from the worktree root. The replica verifies exactly that. Let me wait.
+
+Also: the instruction says update the result card and end with TASK_DONE. I'll update the card with a new attempt section, and re-verify.
+
+One concern: the `negcontrol/NegativeControl.lean` file contains `sorry` and `native_decide` — the task says no `sorry`, `axiom`, `unsafe`, `native_decide`, or `proof_wanted`. But that's a pre-existing negative control file (from D5), not authored by D9. The gate only checks exit codes, and the file exits 0 (proves sorryAx detection). Hmm, does it exit 0? Let me check when the replica gets there. If it fails, the card might need... but the instruction says "Fix ONLY the authored files". The negcontrol is arguably not authored by D9 (it's from the D5 input; mtime Sep 9 11:35). Let's see.
+
+Actually wait — in the D10 worktree, the same negcontrol exists? Let me check. And how did D10 handle it? Let me check D10's gate_replica.json.
+dsh: reasoning:
+Very interesting! The D10 replica (run at some point before, presumably during D10's repair session) shows MANY files failing with exit 1. That suggests something systemic in that worktree (maybe the D10 worker's files are broken, or the lakefile wrapper was made after). But it proves the replica approach works and finds failures.
+
+For D9, 11 files done, all ok so far.
+
+Hmm wait, the D10 replica shows failures in Audit/*, CurvatureODE/* etc. Those may be because D10's gate replica ran when `.lake` symlink/paths were partially set up, or because those files genuinely fail (the D10 task may have broken something). Not my problem.
+
+Let me continue waiting for D9's replica. Meanwhile, think about what to do after:
+1. If all 68 pass → update card, end TASK_DONE.
+2. If some fail → investigate.
+
+Let me check whether the replica finished soon. It's at 11/68 after 45s; ~3-4 min total. Let me look at the whole replica in the D10 worktree to see whether `negcontrol` passed there — useful signal about whether negcontrol exits 0.
+dsh: reasoning:
+The D10 replica has 50/69 failures — that's because D10's replica probably ran before their root wrapper was in place, or something. Anyway negcontrol exits 0.
+
+For D9, let me just wait for the replica to complete. Let me poll less aggressively — the job will notify me. Actually the bash tool with run_in_background: true — I'll get a notification when the job finishes. Meanwhile, let me look at the card update requirements and check the gate environment more.
+
+Actually, one more important check: the gate walks `.lean` files; are there any .lean files under `input/` or `tools/`? find showed 68 total. `input/d5-tools` might have .py only.
+
+Let me also verify: does the gate exclude `.lake` dirs? Yes by name. But note the root `.lake` is a symlink; `os.walk` doesn't follow symlinks by default. Fine.
+
+While waiting, let me double-check the D9 files for forbidden tokens (sorry, axiom, unsafe, native_decide, proof_wanted) — "axiom" appears only in #print axioms + module name. Let me run a precise scan.
+
+Also I want to make sure the card will be accurate. The current card claims gate results from a previous run. I should update it with the new verification (attempt 2 / repair verification), noting the environment fix (root lakefile wrapper for the gate) and re-verified exit codes.
+
+Hmm, but here's a subtlety: the repair harness created the root lakefile.toml wrapper. Is that "authored file" I should keep? It's a fixture provided by the harness to make the gate work. If I delete it, the gate fails again. Keep it. But should the card mention it? The card says "Authored files (added only under release/Poincare/D9/TensorAlgebra/)". I might add a note about the root workspace wrapper being present to make the gate's cwd=worktree-root invocation resolve the release package. That's honest and useful.
+
+Actually wait. Let me think again about whether the root wrapper is truly a harness fixture or something I need to preserve. The D10 worktree got the same file at 09:40:56, D9-parabolic at 09:25:01, D10-jacobi at 09:44:15. These are all repair sessions. So yes: when a repair worker session starts, the harness writes the wrapper. But the dispatcher's compile_gate will run later — will the wrapper still be there? It's in the worktree, so yes, unless something deletes it. The wrapper is a real file in the worktree (mtime 09:41), so it persists.
+
+Hmm, but here's a concern: the harness might have created it *for this session* and could clean it up at session end. In that case the gate would fail again. But that's out of my control; more likely it's a persistent fix to make the gate work (the second attempt). Actually, let's think: attempt 1 gate failed for the same reason (no root lakefile). The repair prompt says attempt 2. So the harness authors presumably learned and added the wrapper for this attempt. It's likely persistent.
+
+Alternatively, I could add a root `lakefile.toml` myself... but it already exists. Should I make it more robust by also ensuring the wrapper exists in the worktree? It's there. I could also consider making the gate work even without the wrapper — e.g., could I make each .lean file self-contained? No — Lean needs LEAN_PATH for imports. The gate invocation fundamentally requires a lake workspace at the worktree root. So the wrapper is necessary. I'll keep it and document it.
+
+Hmm, wait. Actually, is it possible that the root wrapper is created by the worker_loop.sh at session start and DELETED at session end? Let me check worker_loop.sh / relay_push.sh in longrun/bin to understand.
+
+Let me look at bin/worker_loop.sh and relay_push.sh.
+dsh: reasoning:
+The worker_loop.sh does `cd "$WORK"` before launching dsh. The dsh harness (dsh_fixed.sh --profile headless) is what creates the root lakefile wrapper probably (as part of its session setup for lean tasks). It's created at session start. It won't be deleted at end presumably.
+
+Also note: `state/DONE` is touched when the dsh run exits 0. The current DONE exists from 09:20 (previous run). The dispatcher then runs compile_gate. My session's exit code matters: if I end with TASK_DONE and exit 0, DONE is touched again.
+
+Also relay_push.sh: let me read it to see what it does (probably syncs the card to some results dir).
+dsh: reasoning:
+Important! relay_push.sh rsyncs the *local* worktree to a remote host (ophis) at DST="guoshaoyang@127.0.0.1:workdir/lean_poincare/longrun" — the actual dispatcher runs there, re-runs the compile gate locally on the remote copy. Interesting: the rsync excludes `.lake/` but includes everything else. So the root lakefile.toml wrapper (801 bytes) and `lean-toolchain` WILL be rsynced (symlink `.lake` might be copied as a symlink by rsync -a but `--exclude='.lake/'` excludes the dir; a symlink named `.lake` may or may not be excluded — with trailing slash it matches directories only; the symlink is copied as a symlink probably).
+
+Wait, this is the crucial part: the *central dispatcher* on ophis re-runs the compile gate on ITS copy of the worktree. The worktree here is on a 360 machine ("360-1" lane per queue). The gate that failed at 09:33 was run by dispatch360.py locally (STATE is local longrun/state). Hmm, but relay_push says central dispatcher re-runs gate locally (on ophis). The local dispatch360 also runs compile_gate.
+
+So: the remote copy on ophis gets my worktree files (excluding .lake). If the remote worktree already has a `.lake` symlink pointing to release/.lake, then `lake env lean` works there. The remote copy presumably was created by `cp -al D6_weekly_release` which has the release package with .lake prebuilt.
+
+Anyway, for the gate to pass:
+- Locally (dispatch360): root lakefile.toml must exist (it does now, created by harness at 09:41) and .lake symlink must exist (it does).
+- Remotely (central dispatcher): the rsync from this machine pushes root lakefile.toml + lean-toolchain + .lake symlink → remote has them. But does the remote copy have release/.lake prebuilt? The remote worktree was seeded via `cp -al D6_weekly_release` (hardlink copy) with the release package. The remote's `release/.lake` should exist there. Also rsync excludes `.lake/` so it won't clobber.
+
+Wait, but if `.lake` is a symlink (not a directory), `--exclude='.lake/'` might not exclude it, and rsync -a would copy the symlink `.lake -> release/.lake`. That's good for the remote.
+
+Hmm, but hold on: this machine (where I am) — is it the 360 machine or ophis? The relay_push DST is 127.0.0.1:10022 (a reverse tunnel to ophis). The path here is /data/home/guoshaoyang/workdir/lean_poincare/longrun, and relay_push.sh is running presumably. So this is the 360 machine; the central dispatcher is on ophis (also reachable at 127.0.0.1 via tunnel).
+
+The gate.json path given in the prompt (/data/home/guoshaoyang/workdir/lean_poincare/longrun/state/D9-tensor-algebra-manifolds/gate.json) is local, and it's missing — deleted by local dispatch360 after queuing repair. OK.
+
+So the key question remains: is the root lakefile wrapper persistent and will it be included in the push? It was created at session start. It should persist on disk. The rsync happens when DONE exists and PUSHED doesn't. PUSHED currently exists (for the previous run). After my run, worker_loop touches DONE but PUSHED still exists from before! Wait: `[ -f "$d/PUSHED" ] && continue` — so relay_push will skip this task because PUSHED is not removed. Hmm, unless the remote/harness removes PUSHED when queuing a repair. Local PUSHED mtime 09:38. The state dir has DONE (09:20), PUSHED (09:38). dispatch360 doesn't remove PUSHED or DONE. relay_push skips if PUSHED exists. So the repair run's artifacts might NOT be pushed... unless someone removes PUSHED. Not my problem, but interesting: the card file in longrun/results IS in the rsync'd worktree, so it gets pushed when it happens.
+
+Wait, actually the local dispatcher (dispatch360.py) does compile_gate locally. So the local gate result determines promotion. Let me re-read dispatch360 main loop: it checks `done = os.path.exists(DONE)`; if done and status running/queued: `st, _ = card_status(tid)`; if st == "done": `g = compile_gate(tid)`; if g["ok"] → verified. So local gate is authoritative for the queue here.
+
+OK. So the essential thing: every .lean file in this worktree must compile with `lake env lean` from the worktree root, now that the wrapper exists. My replica is verifying that.
+
+Let me wait for the replica to finish. Currently 15/68 at 57s. It'll take ~4 min total.
+
+While waiting: consider whether I should make the gate robust even if the wrapper were removed. One option: create a `lakefile.toml` at root myself if missing — it exists now. It's a harness fixture; I'll leave it (and not modify it, since "fix ONLY the authored files", but the wrapper isn't authored by the task; I should not delete it).
+
+Hmm, actually, wait. Let me reconsider: is the root lakefile wrapper perhaps part of the *authored* files that the repair session is expected to create? The comment says "Worktree-level Lake workspace for the longrun compile gate." If the harness creates it, fine. Since it appeared at 09:41:11-14 which is after my session start (the harness's dsh_fixed.sh setup), it's harness-provided.
+
+Now, about the card: the card's §1 table lists exit codes and hashes. I should update it to reflect the re-verified state. Also the task says "Update the result card and end it with TASK_DONE." The card is at longrun/results/D9-tensor-algebra-manifolds.md; also there's a corresponding .json. Let me look at the JSON card to see its structure.
+dsh: reasoning:
+The JSON card is comprehensive. Let me check the replica progress. Then decide on the update.
+
+Let me also check the SHA hashes of the current files vs card.
+dsh: reasoning:
+Hashes match the card exactly. 41/68 done, all OK. The D9 authored files passed already (at position ~15).
+
+Let me wait for the replica to finish. It should take another ~2 min. Meanwhile, let me pre-plan the card update.
+
+Actually, let me reconsider the underlying cause more carefully, because I want the card to be honest about *why* attempt 2 failed and what I did.
+
+Evidence:
+1. gate.json missing; last_run.json says exit_code 1 at 09:33:27.
+2. Root lakefile.toml + lean-toolchain + .lake symlink created 09:41 by the repair harness (during this session).
+3. Without a lakefile at cwd=worktree root, `lake env lean <any file>` fails with "unknown module prefix 'Poincare'" (verified experimentally).
+4. With the wrapper, files compile (verified experimentally, and replica running).
+
+So the gate failure was environmental: the gate invokes `lake env lean` with cwd = worktree root, but the worktree root had no Lake workspace, so no LEAN_PATH for the release package. The harness has now installed the wrapper.
+
+But hmm — is that the true story? Let me check another worktree that passed its gate, e.g. D6_weekly_release (no root lakefile at all, and it's the seed?). It has no root lakefile and presumably D6 wasn't gated this way or was created before the gate logic. Let me check D9-cheeger-gromov and D9-adversarial — no root lakefiles either, and they're `running` (not yet gated, no DONE).
+
+So which tasks have been gated successfully? queue shows all running. state/DONE exists for D9-tensor (09:20), D10-bochner (09:20), D9-parabolic? Let me check DONE files across state. Also check whether any gate.json exists anywhere. Earlier find for gate.json found none. So no task has passed the gate yet. Hmm.
+
+That's consistent with a systemic environment issue: the gate had never worked because of the missing root workspace. The repair harness (updated at some point) now installs the wrapper at repair-session start. The D9-parabolic and D10-bochner worktrees have wrappers too — for their repair sessions.
+
+OK. My job: ensure all .lean files compile *now* and that the wrdsh: reasoning:
+67/71. Almost done. Let me wait for it to finish.
+dsh: reasoning:
+The gate sim completed with SCRIPT_EXIT: 0, meaning all 71 files passed. Let me verify the gate_sim.json and the tail of stdout.
+dsh: reasoning:
+The gate now passes: 68 files (my earlier find said 71 — let me recount; the find included `./release/.lake/...`? No, I excluded that. Let me recount: `find . -name '*.lean' -not -path './release/.lake/*' -not -path './.lake/*' -not -path './.git/*'` gave 71 lines. But the gate walks with dirnames filtering `.lake`, `.git`, `.dshpkg` — which also excludes nested `.lake` dirs. Hmm, 68 vs 71. Let me diff the lists.
+
+Possibly the find output included some files under `release/.lake/packages/mathlib/...`? No, excluded by './release/.lake/*'. Let me check: the find printed 71 lines. The gate found 68. Let me list differences.
+
+Wait, `os.walk` with `followlinks=False` (default) — the `.lake` symlink at root: `dirnames` filter removes names in (.lake,.git,.dshpkg), so root `.lake` is excluded. Under release/, `.lake` is a real dir → excluded. Under `longrun/`, `.lake`? No.
+
+Hmm, maybe find followed something? Let me compare precisely.
+dsh: reasoning:
+Both are 68 — my earlier count of 71 must have included duplicate paths (the find command didn't exclude them but whatever). Actually earlier the find showed 71 lines; now 68. Hmm, the earlier find listed paths like `./release/Poincare/Longrun/CurvatureODE.lean` and `./release/Poincare/Longrun/CurvatureODE/Bridge.lean` etc. Let me not worry — the counts now match exactly: 68 files in both.
+
+Wait, actually earlier `find` output had 71 entries... it may have included `./release/.lake/packages/...`? No. Hmm, let me count the earlier list: it listed from `./negcontrol/NegativeControl.lean` through `./release/ReleaseClaims.lean`. I trust the current comparison: identical sets of 68.
+
+Hmm, one thing: the first find ran before I created the root workspace — no .lean files changed. Whatever.
+
+Wait, actually: the e done. Let me wait for the last few files (release/Probe, ReleaseAudit, etc.). Wait, sorte  order: .../release/Poincare/... then release/Probe/..., release/ReleaseAudit.lean, release/ReleaseCheck.lean, release/ReleaseClaims.lean. Let me wait ~40s more.
+dsh: reasoning:
+The replica finished: ok=True, all 68 files exit 0. So the entire worktree currently passes the gate replica.
+
+Let me collect the job output for the record, and then verify the D9 authored files' details for the card (timings, hashes, axiom audit output).
+
+Now, plan:
+1. Confirm full replica result (done: ok=True, n=68).
+2. Re-run the per-file compile of the four authored files from the *worktree root* (gate-style) and record exit/seconds; also run AxiomAudit to capture output.
+3. Update the result card (md and json) to reflect the repair verification: attempt 2 root cause (missing root Lake workspace for gate's cwd=worktree-root invocation → all files failed to resolve `Poincare` imports), the fix (root workspace wrapper `lakefile.toml` + `.lake -> release/.lake` symlink; no mathematical changes), full-tree gate replica result (68/68 exit 0), and re-verified hashes.
+4. End with TASK_DONE.
+
+But wait: I need to be careful about "Fix ONLY the authored files in your worktree". I didn't author the wrapper; the harness did. Should I claim credit? I should report honestly: the authored D9 files were unchanged and correct; the gate failure was environmental (missing root Lake workspace), now provided. Actually — hmm, let me think about whether I should make the gate robust by adding the root workspace myself if it were absent. It's present. Fine.
+
+But actually, let me reconsider whether the failure could have been something else and the wrapper is coincidental. Let me check the mtimes again and whether the wrapper existed before my session: the `.lake` symlink 09:41:11, lakefile 09:41:14, lean-toolchain copied 09:41:14. My session's heartbeat pid 199358 at 09:40:09. My first `ls -la` command ran at ~09:40:0x (before these times) and showed no wrapper. So the wrapper appeared ~1 minute into my session, written by the harness setup. Strong evidence.
+
+Also I can check the harness log (dsh) maybe. Not needed.
+
+One more check: are there any other .lean files elsewhere in the worktree (e.g. hidden dirs) that the replica missed? The replica walks exactly like the gate. n=68 both. Good.
+
+Let me now:
+- Read the job output (record).
+- Verify the four files one more time from the root and capture precise seconds.
+- Capture the AxiomAudit output.
+- Do the forbidden-token scan.
+
+Then update the card.
+
+Let me also snapshot the replica JSON summary and maybe save a copy for evidence: longrun/logs/gate_replica.json already exists. Good.
+
+Let me run the final verification commands.
+dsh: reasoning:
+All 68 files pass, including all four D9 authored files, using exactly the gate's invocation (`lake env lean <abs path>`, cwd = worktree root).
+
+Now, wait. I should double-check the root cause story once more, because there's an alternative: maybe the gate failed because at 09:33 the root lakefile existed but was different/broken. The mtime evidence (09:41 creation) is strong. But let me check if there's any backup of the previous state, e.g., in the remote copy (pushed at 09:38). The remote copy on ophis via 127.0.0.1:10022 — I could ssh and check if `worktrees/D9-tensor-algebra-manifolds/lakefile.toml` exists there and its mtime. That would tell whether the wrapper was pushed (it wasn't, since push happened at 09:38 before it existed). Interesting but not necessary.
+
+Actually, let me check the remote copy's gate situation: the central dispatcher on ophis also runs compile_gate. If the remote worktree lacks the wrapper, the remote gate will fail even if local passes! The relay_push rsync sends my current worktree (including wrapper) when DONE and not PUSHED. But PUSHED already exists (09:38), so relay_push may skip re-pushing. Hmm. Wait: PUSHED was touched at 09:38 after the *first* successful push. The push at 09:38 included the state at that time... but the D9 files were already at 09:12-09:13 state, so the remote has the same 4 files. The only difference now will be the wrapper + updated card.
+
+If the central dispatcher's gate runs on the remote copy without the wrapper, it fails there too. But the local dispatch360 is what updated the queue with repair_count=2 → it seems the local dispatcher is the one gating (or the remote queue state is synced back?). Hmm, the prompt file was written locally by local dispatch360. The local state/queue.json is what matters for the local worker. Actually relay_push pushes *to* ophis: "Central dispatcher on ophis re-runs the compile gate locally" — meaning on ophis. So ophis's dispatcher owns the global queue and launches worker loops on 360 machines? But worker_loop.sh runs locally here with TASK_ID/PROMPT_FILE env... The local dispatch360.py is also running (pid?). Let me check which dispatchers are running.
+
+This is getting deep. The bottom line: to make the remote gate pass, the remote worktree needs the wrapper too. Since the harness created the wrapper locally at session start, maybe the harness also creates it remotely, or the push will carry it if PUSHED is removed. I can't control the remote push policy, but I can check the remote state via ssh (127.0.0.1:10022) — the relay script has BatchMode ssh access. Let me try to inspect the remote worktree to see if it has a root lakefile and whether its files pass. This could be valuable: if the remote gate is the authoritative one and its worktree lacks the wrapper, my repair might not help unless I remove PUSHED so the push happens (but removing PUSHED is modifying state outside the worktree — not allowed/wise? Actually state dir is outside the worktree; workspace-write policy may deny. Also I shouldn't manipulate harness state).
+
+Hmm, wait. Let me re-read: relay_push.sh runs on the 360 machine and pushes to 127.0.0.1:10022 = ophis. The local dispatch360.py exists here, and the local state dir has prompt.md written at 09:40 (the repair prompt). So the local dispatcher wrote the repair prompt and queued the task. Both dispatchers may be running (local and central). Actually the comment in relay_push.sh says the central dispatcher re-runs the gate on ophis, so local dispatch360 probably isn't running here... but prompt.md was created locally at 09:40? Let me check the mtime of state/prompt.md: 09:40. And the local logs/dispatch.log? Let me check.
+
+Actually let me check what processes are running.
+dsh: reasoning:
+Interesting history:
+- 09:30:08 repair attempt 1 for D9-tensor queued, launched. That worker session ran 09:30-09:33? At 09:33 the gate failed again (last_run exit 1) → 09:40:09 attempt 2 queued and launched (me).
+- Wait, the gate for attempt 1 must have been run by dispatch360's loop at 09:30:08 (cycle every 600s). The D9 files were modified at 09:12-09:13 (the original task run 23:20 → 09:12?). Hmm.
+
+Timeline reconstruction:
+- 23:20:02 (Sep 9): original D9 task launched (worker_loop with D9_tensor_algebra_manifolds.md).
+- The worker completed at 09:17 (card generated 09:16), DONE touched 09:20? state DONE mtime 09:20. last_run? 
+- 09:20:08: dispatcher cycle: D9-parabolic repaired (attempt 1), others? It saw DONE for D9-tensor? No — D9-tensor repair was at 09:30:08, not 09:20. So at 09:20 the D9-tensor DONE may not have existed yet or the gate passed? Hmm: at 09:20:08 only D9-parabolic got a repair. So at 09:20, D9-tensor's DONE didn't exist (worker still finishing) OR gate ok → verified. Not verified (status running now).
+- Files modified 09:12-09:13; card written 09:17 (generated_at 01:16:23Z = 09:16:23+08). DONE touched at 09:20 (state/DONE mtime 09:20). Actually the DONE file mtime is 09:20:0x — matches when the dsh run exited (rc=0) at ~09:20.
+- 09:20:08 dispatcher cycle may have run just before DONE was touched → didn't gate it.
+- 09:30:08 cycle: DONE exists → card_status = done → compile_gate → failed (attempt 1 at 09:30:08). But wait, that ran at 09:30:08 and the gate took some time; the repair prompt says attempt 1... and then attempt 2 at 09:40:09.
+
+Hmm, but the gate.json is written after the gate finishes. dispatch360's loop: at 09:30:08, gate runs (takes maybe 5 min for 68 files = 278s ≈ 4.6 min) → finishes ~09:34:46. But dispatch360 then updates queue (repair attempt 1) — yet the log shows "REPAIR D9-tensor-algebra-manifolds attempt 1 queued" at 09:30:08, which is the timestamp when the cycle started (log line written at start of cycle? No — the log line is written when the change is applied, which happens after the gate finishes). Hmm, the log timestamps: log() uses time.strftime at call time. So "09:30:08 REPAIR ... attempt 1" means the gate finished before 09:30:08?? No wait.
+
+Let me re-read the main loop order:
+```
+for t in tasks:
+   done = exists(DONE)
+   if done and status in (running, queued):
+       st, _ = card_status(tid)
+       if st == "done":
+           g = compile_gate(tid)   # takes minutes
+           if g.ok: ...
+           else: repairs<2 -> repair
+   elif st == blocked ...
+for t in tasks:
+   if status == queued: launch...
+if changed: save_queue(q)
+```
+Note `changed` is only saved at the end, and the launch loop is in the SAME cycle. So at 09:30:08 cycle start, gate for D9-tensor ran; it finished at some point; then "REPAIR attempt 1 queued" was logged; then the launch loop launched the repair worker immediately in the same cycle. So the log timestamp of "09:30:08" for both REPAIR and LAUNCH is odd — unless the gate ran BEFORE 09:30:08.
+
+Hmm, wait: maybe the gate at 09:30:08 was quick because it failed fast on every file! If `lake env lean` fails instantly ("no lakefile found" / "unknown module prefix"), 68 files × ~0.1s ≈ 7s. Then REPAIR at 09:30:08 + LAUNCH at 09:30:09 — the 1-second difference matches a fast-failing gate. Yes! That confirms: the gate failed *fast* (all files), i.e., environmental, not a real compile error.
+
+Then attempt-1 worker ran 09:30-09:33 and gave up (exit 1, last_run 09:33:27 — the worker's dsh run exited nonzero; maybe the agent hit an error). Then 09:40:09 cycle: DONE still exists (from 09:20) and status queued → gate again → failed fast → REPAIR attempt 2 → LAUNCH me at 09:40:09.
+
+So: the gate fails fast for all files because the worktree root lacks a Lake workspace. The harness now pre-creates the wrapper for repair sessions. Attempt 1's worker (09:30) didn't have the wrapper; it presumably couldn't fix it (or didn't understand) and exited 1. I have the wrapper.
+
+Wait, but actually the attempt-1 worker session started at 09:30:09 — the root lakefile in this worktree was created 09:41 (my session). So attempt 1 had no wrapper. Which means attempt 1's worker likely could not make `lake env lean` pass from the root no matter what it did to the authored files... unless it created the wrapper itself. It failed.
+
+Hmm, so how do I know the harness created the wrapper rather than attempt-1's worker? The mtime 09:41 is during MY session, so it's the harness (or... could my own `lake env lean` from the root have created it? No, lake doesn't create lakefiles).
+
+Actually, hold on. Let me reconsider: could the wrapper have been created by the *dsh harness setup* for my session at 09:41? Worker_loop sets heartbeat at 09:40:09, then launches dsh. The dsh harness likely has a "lean_task" setup step that writes the root lakefile wrapper. The D9-parabolic wrapper was created 09:25 (its repair session), D10-bochner 09:40:56 and D10-jacobi 09:44:15 (their repair sessions). Yes: each repair session gets a wrapper. Consistent.
+
+Good. So the story: gate failed due to missing root Lake workspace (environment), fixed by the repair harness which now installs the wrapper; the four authored files were already correct and unchanged (hashes match the card); full-tree replica: 68/68 exit 0.
+
+There's still the question of whether the wrapper persists after my session and whether the local gate will pass. The wrapper is on disk with mtime 09:41 and nobody deletes it. The local dispatcher gates in its next cycle after DONE. Since DONE is touched when my dsh exits 0, and my session will end with TASK_DONE and exit 0 → DONE re-touched → next cycle (09:50:08) gates → should pass (gate takes ~5 min for 68 files now, since files compile for real).
+
+Hmm, one risk: the gate at 09:50:08 will take ~280s; the dispatch loop runs single-threaded, that's fine.
+
+Another thought: should I remove the gate_replica.py and gate_replica.json from my worktree? The gate walks .lean files only, so .py/.json are harmless. But relicas are diagnostic artifacts. The D10 worktree has its own. I'll keep gate_replica.json as evidence (it's in longrun/logs). Keeping the .py is fine too.
+
+Now, is there any change I should make to the authored files at all? They compile. The mathematical content is honest. The card says TASK_DONE. The only "fix" needed was environmental. Per instructions "Fix ONLY the authored files" — I should avoid touching other files. The wrapper was created by the harness, not me.
+
+Hmm, but wait. What if the wrapper is NOT going to persist? Let me test whether it survives by checking whether it's a regular file in the worktree... it is (801 bytes, regular file). Nothing in the dispatcher deletes it. relay_push excludes only .lake/.git. So it persists.
+
+However, there's a catch: the *remote* central dispatcher gates the rsynced copy on ophis. Let me check the remote copy to see whether it has a root wrapper and whether the remote gate would pass. If PUSHED exists locally, relay_push skips. But maybe there's a central dispatcher on ophis that gets the queue/state via a different mechanism. Let me try ssh to 127.0.0.1:10022 to inspect (read-only). If the remote lacks the wrapper, the remote gate would fail; but the local gate is what wrote the repair prompt (state/prompt.md locally, dispatch.log locally). The local dispatch360 is running (pid 47937). So the local gate is authoritative for this 360 machine. The remote push is for artifact collection. Fine.
+
+Still, it's worth checking remote if cheap. Let me try: `ssh -p 10022 -o BatchMode=yes -o ConnectTimeout=10 guoshaoyang@127.0.0.1 'ls -la workdir/lean_poincare/longrun/worktrees/D9-tensor-algebra-manifolds/'`. Actually the relay_push runs as user guoshaoyang with BatchMode — key auth configured. Let me test read-only. If it works, I can see whether the remote copy has the wrapper (it won't until pushed). But since local gating is what matters, I won't act on it. Actually, maybe I shouldn't poke at remote at all; not needed. But it could be informative about whether my repair will be considered done. Let me limit to one read-only check.
+
+Actually, let me think about whether I can even affect the remote. The relay_push skip logic: `[ -f "$d/PUSHED" ] && continue`. PUSHED exists → skip. So no re-push will happen unless PUSHED disappears. Removing PUSHED would be modifying harness state — probably out of scope and could cause the push, which would actually help the remote gate. But it's not in my worktree and could be considered tampering. I'll leave it.
+
+Priority now: update the card honestly. Let me write the updated md card and json card.
+
+The card should:
+- Keep the mathematical content.
+- Update `generated_at` maybe add a "repair verification" section.
+- Report: attempt-2 repair; gate failure root cause; the full-tree gate replica 68/68 exit 0; authored files unchanged (hashes match); no forbidden tokens; keep TASK_DONE.
+
+Also the JSON card should be updated with a repair section. The instruction says "Update the result card" — the .md is the card; the .json is a companion. I'll update both to stay consistent (the .json is machine-readable and may be used by the harness).
+
+Before updating, let me gather:
+1. Exact sha256 full hashes? The card uses 16-char prefixes. Keep consistent.
+2. Timings from the gate replica for the 4 files: AxiomAudit 2.6, Interface 3.2, Props 2.9, Toy 3.2.
+3. AxiomAudit output: let me capture it to confirm 31 declarations, standard cones, and re-verify counts.
+4. Forbidden-token scan of the 4 files.
+5. Confirm no `sorry`/`axiom` declarations in authored files.
+6. Check `lake build` still works? The card claimed a full `lake build` exit 0 with 8950 jobs. I don't need to re-run that (expensive), but I could verify the D9 module builds. Actually `lake env lean` on AxiomAudit already builds imports from source. That's sufficient.
+
+Let me capture AxiomAudit output and do the token scan.
+dsh: reasoning:
+Hmm! The AxiomAudit run produced 0 lines of output this time! Exit 0 but no output. That's strange — the card claimed 35 lines of output. Why no output? Because `lake env lean` on a file that's already been compiled... no, `lake env lean <file>` always elaborates and prints. `#print axioms` output goes to stdout... Let me check: I redirected both stdout and stderr to /tmp/d9_axiomaudit.txt, and got 0 lines. Weird.
+
+Wait — maybe `/tmp` is full and the redirect failed? The command `> /tmp/d9_axiomaudit.txt 2>&1` — if /tmp is 100% full, writing an empty file succeeds (0 bytes), but writes of content fail silently? Actually the shell would report "No space left on device" on write. Hmm, but the file was created (0 lines). Since /tmp is full (0 bytes available), the writes were discarded/failed. Actually with `df` showing 0 available, opening a new file may succeed if inode allocation doesn't need space... writing would fail with ENOSPC, and the shell would print an error to stderr — but stderr is redirected into the same file... which can't be written. The command's stderr may not have shown.
+
+Note the previous `/tmp/d9_*.out` files from my earlier per-file runs: those files were created when /tmp had some space? Actually the earlier runs also redirected to /tmp and worked (tails were empty anyway because no output). Let me just write the audit output inside the worktree instead, e.g. longrun/logs/axiomaudit.txt. Let me redo it.
+
+Also interesting: `grep -c "depends on axioms"` returned 0 → exit 1 (grep no match) → command exit 1, fine.
+
+Also the `#print axioms` count in AxiomAudit.lean is 32 now vs card says 31 declarations audited. Count lines: the file has 32 `#print axioms` commands? Let me count: lines 22-36 = 15 commands; lines 38-53 = 16 commands; total 31. But grep -c counted 32 — maybe an extra occurrence in the docstring ("`#print axioms` audit for every declaration") at line 13. Yes, the docstring mentions it. Card said 31 `#print axioms` cmds and 32 token occurrences — matches.
+
+Let me redo the audit output capture to a worktree path.
+dsh: reasoning:
+35 lines: 29 single-line cones + 2 declarations whose cones wrapped onto 3 lines each (6 lines) = 35 lines. Total declarations = 29 + 2 = 31. Matches the card. The two wrapped ones are `metricTrace_inverseMetric_eq_finrank` and `contract_tensorProduct_eq_inner`, both still standard cones.
+
+Let me verify: 31 declarations, 31 standard cones, no nonstandard.
+
+Let me parse properly: count occurrences of "depends on axioms" = 31. grep -c gave 29 for the exact-single-line pattern because two are multi-line. Let me count "'Poincare." lines = 31.
+
+Let me also verify there is no `sorryAx` etc. in the output.
+dsh: reasoning:
+All 31 declarations have the standard cone. 
+
+Now let me also verify the toy theorems actually prove something (kernel-checked) — yes, they compile. Let me additionally check with `#print axioms` on a toy theorem (already in audit; shows standard cone only, meaning no sorryAx).
+
+Now update the card. Let me decide the exact content changes.
+
+The card currently (md) has sections 1-7 with TASK_DONE at the end. I'll:
+1. Update the header block: add a `- **Repair attempt:** 2 (2026-09-10)` line and a new verdict line about the repair.
+2. Update section 1 table with the new exit codes/seconds from the gate replica, and add a note that all files unchanged (hashes match).
+3. Add a new section "8. Repair attempt 2 — gate diagnosis and fix" (or insert before Reproduction) with:
+   - gate invocation detail: `lake env lean <abs file>` with cwd = worktree root; the root had no Lake workspace → every file failed with `unknown module prefix 'Poincare'`; gate failed fast (~7s for 68 files).
+   - the fix: root-level workspace wrapper `lakefile.toml` (srcDir=release, globs Poincare.+) + `lean-toolchain` pin + `.lake -> release/.lake` symlink; this makes the gate's cwd resolve the prebuilt release package via LEAN_PATH. This is an environment-level fix; the four authored files are byte-identical to the pre-repair card (sha256 prefixes match).
+   - full-tree gate replica: 68/68 `.lean` files exit 0, 278.3s; log at longrun/logs/gate_replica.json; audit output at longrun/logs/d9_axiomaudit.txt.
+4. Update the reproduction section to mention the root-cwd invocation works.
+5. Keep the final line TASK_DONE.
+
+Also update the JSON card: add `repair` section, update `per_file_compile` seconds with new values? The JSON's per_file_compile has compile_seconds from the old run; I'll update to the new measured values and add `gate_replica` info. Keep schema.
+
+Wait, "Update the result card and end it with TASK_DONE" — the essential is the .md. But consistency between .md and .json is good. Let me look at the full JSON to update it properly.
+
+Let me print the full JSON (it's 11KB).
+dsh: reasoning:
+Whoa — the JSON card on disk is DIFFERENT from what I read via the python walk earlier! It now has `"generated_at": "2026-09-10T01:49:52+00:00"`, `"repair_pass": 1`, and a whole repair section referring to logs/gate_sim.json, logs/axiom_audit_rerepair.txt etc. This file was modified recently — the walk I did earlier showed generated_at 01:16:23 and no repair section. So the JSON was rewritten at 09:49:52 (01:49:52 UTC) — that's *just now*, during my session, by... attempt-1's worker? No, attempt 1 already exited. Hmm!
+
+Wait: 01:49:52 UTC = 09:49:52 +08. It's currently ~09:52. So something wrote this JSON card in the last few minutes. Who? Possibly a concurrent worker for the same task?! Note the background processes: multiple worker_loop.sh instances (pids 199358, 199359, 199372, 199373 started 09:40). One of them is mine (the process tree for my session). But there might be another dsh session running concurrently for D9-tensor — e.g., the local dispatcher launched TWO worker loops at 09:40:09? Look at the ps output: pids 199358, 199359 (Ss, session leaders), 199372, 199373 (children). worker_loop.sh spawns: itself + heartbeat subshell + dsh process. So 199358 (worker_loop), 199359 could be another worker_loop for a different task (D10-bochner), 199372/199373 heartbeat subshells. Hmm.
+
+But the JSON card's content mentions "repair_pass": 1, "gate_replica" with "checked_at": "2026-09-10T09:48:54+0800", "raw": "logs/gate_sim.json"... That's not me! I named mine gate_replica.json and my timestamps differ. Someone else is doing this same repair concurrently — an agent whose work overlaps with mine! Look: logs/gate_sim.json, logs/gate_sim/, logs/axiom_audit_rerepair.txt, logs/forbidden_d9.json, logs/scan_forbidden via input/d5-tools/scan_forbidden.py.
+
+Let me look at the logs dir — earlier listing showed perfile_*.log files, and now probably new files were added.
+
+Hmm wait, is it possible that this JSON was written by *me* in a previous "round" of my own session that I don't remember? No — my session is this conversation; I haven't written any card yet. The harness model runs one session per worker_loop. Unless my session was resumed from a prior dsh run... The prompt says "attempt 2"; the last_run.json shows a run ended 09:33:27 with exit 1 (attempt 1's session ended in error). Then at 09:40:09 attempt 2 launched (me). So the JSON card at 09:49:52 must be from... someone else running concurrently.
+
+Wait, let me reconsider: maybe it's from attempt 1's worker! Attempt 1 started 09:30:09; its last_run shows ended 09:33:27 exit_code 1. But maybe dsh spawns background subagents that continue after the main loop exits? Unlikely.
+
+Or maybe there's ANOTHER dsh session (mine) plus a "supervisor" LLM? Hmm.
+
+Let me check the file mtimes in the worktree and the logs to understand. Also check whether gate_sim.json exists.
+
+Actually — hold on. Maybe *I* am not the only agent in this conversation: the worktree may be shared with another concurrent repair agent from the central dispatcher (ophis) working on the same task via the synced copy. But the central one works on its own copy (on ophis), not this filesystem... unless the two machines share the filesystem? No, relay_push rsyncs.
+
+Let me look at the logs directory now and check for new files. Also check `ps aux | grep dsh`.
+dsh: reasoning:
+There ARE two concurrent dsh sessions for D9-tensor-algebra-manifolds:
+- pid 197403, started 09:35, with the *attempt 1* prompt (launched at 09:30? no — the dsh process start 09:35; worker_loop launched at 09:30:09; dsh startup maybe 09:35?). Wait, the log says "09:30:09 LAUNCH D9-tensor-algebra-manifolds (REPAIR_D9-tensor-algebra-manifolds.md)" attempt 1. The dsh process for attempt 1 is pid 197403 started 09:35? Hmm.
+- pid 199380, started 09:40, with the *attempt 2* prompt (mine).
+
+So attempt 1's session (pid 197403) is STILL RUNNING! It didn't exit at 09:33. Wait, last_run.json says ended 09:33:27 exit_code 1. That must have been from the ORIGINAL task run (23:20 session) ending at 09:33? Hmm no.
+
+Let me reconstruct: worker_loop.sh loops: run dsh; if rc==0 → touch DONE, break; else sleep 120, repeat. So for the attempt-1 worker_loop (started 09:30:09): it ran dsh (pid 197403 started 09:35 — maybe dsh took 5 min to boot? unlikely, but node startup with big prompt maybe). If that dsh run exited rc≠0 at 09:33:27, then last_run.json would show ended 09:33:27 exit 1. Then it sleeps 120 and re-runs dsh → new pid maybe 197403 at 09:35! Yes: 09:33:27 + 120s = 09:35:27, matching pid 197403's start ~09:35. So the attempt-1 worker_loop is STILL RUNNING and re-launched dsh (attempt-1 prompt) at 09:35 — it's a *second* concurrent session on the same worktree with the same task, writing the card at 09:49-09:50!
+
+And my session is attempt 2 (pid 199380), launched at 09:40:09.
+
+So we have two concurrent agents editing the same worktree and card. Attempt-1's session (197403) wrote:
+- longrun/results/D9-tensor-algebra-manifolds.json/md at 09:49-09:50 (the "repair_pass 1" version)
+- and it's still running, presumably about to finish/end with TASK_DONE.
+
+Also note the attempt-1 session's card claims it added root files (lean-toolchain, lake-manifest.json, lakefile.toml, .lake symlink) and did a gate replica using logs/gate_sim.json. Wait — the card JSON says the fix was "added a worktree-root Lake workspace wrapping release/". So it was the OTHER agent (attempt 1's retry) that created the wrapper at 09:41! Not the harness! Hmm! The mtimes: lean-toolchain 09:41:14, lakefile 09:41:14, .lake 09:41:11. Both agents were active then.
+
+Hmm, so which agent created the wrapper? The card JSON from attempt-1's session claims it did. That is plausible: the attempt-1 agent read the gate code, diagnosed the missing root workspace, and created the wrapper. Also its card mentions logs/gate_sim.json with checked_at 09:48:54.
+
+Wait, but the mtimes of the root files are 09:41:11-14, just 1-2 minutes after my session started (09:40:09). My first `ls -la` at... let me think: my first command ran at ~09:40:3x and showed no wrapper. My second/third commands at ~09:41:0x? The `lake env lean` from worktree root test ran around 09:41:2x and showed the files present. So the wrapper appeared between ~09:40:40 and 09:41:20 — could be either agent. The attempt-1 agent had been running since 09:35 and had 5+ minutes of work.
+
+OK so now the situation: two concurrent sessions, same task, same worktree. The other agent (attempt 1) has already written a complete card (repair_pass 1) at 09:49:52 and is presumably in its final steps. I (attempt 2) am also here.
+
+The instructions to me: update the result card and end with TASK_DONE. I must be careful not to clobber the other agent's card with conflicting info; but actually both cards would say the same thing: gate passes now, 68/68 files exit 0.
+
+However, there's a risk: the other agent might still be modifying files (e.g., re-writing the card, or editing `.lean` files!). Its card says "authored sources unchanged". Let me check whether the four D9 .lean files changed since my earlier hash check — hashes matched the original card at 09:44. The JSON card now references paths like `logs/axiom_audit_rerepair.txt`, `logs/forbidden_d9.json`, `logs/gate_sim.json`, which don't exist in the worktree logs I listed (only d9_axiomaudit.txt, gate_replica.json, gate_replica.py). Hmm! The other agent's card references files that don't exist. Wait, maybe its logs are in a different location: `longrun/logs/`? I listed it: only 3 files. Hmm, the card says `"raw": "logs/gate_sim.json"` — relative to what? Possibly relative to... hmm. Maybe the other agent put them in `release/longrun/logs/`? Let me search for gate_sim.json.
+
+Also note: my worktree listing of `longrun/logs/` includes my files; the other agent's claimed artifacts are missing — maybe it wrote them and something removed them, or it's writing them under a different path.
+
+Wait, actually let me look at the current md card (12937 bytes, 09:50:07) and the current json (14018 bytes, 09:50:22). The JSON I read at ~09:52. The .md at 09:50:07. Let me read the md now to see what the other agent wrote.
+
+There's a real coordination problem. Two agents editing the same card → last writer wins. The dispatcher's card_status only looks at the last 400 chars for TASK_DONE/TASK_BLOCKED. Both will end with TASK_DONE.
+
+What should I do? My honest job: ensure files compile (they do), update the card (the other agent did, with accurate content), and end with TASK_DONE. If I rewrite the card, I might duplicate/conflict. Best approach: verify the current card is accurate and complete; if it needs corrections (e.g., references to nonexistent logs), fix them and/or augment with my independent verification. But we must avoid an edit war with the other agent.
+
+Wait — actually, is the other agent really still running? pid 197403 with the attempt-1 prompt is alive (started 09:35). The card was written 09:50:22. It's 09:53 now. The other agent may be finishing up. Its worker_loop will touch nothing (DONE already exists); when its dsh exits 0, worker_loop touches DONE and breaks.
+
+Concurrent writes are dangerous: if the other agent rewrites the card after me, my changes vanish; if I rewrite after it, its changes vanish. Since the other agent has already written a thorough card, maybe the best is to leave the card as-is if it's accurate, and only make sure the last line is TASK_DONE. The task says "Update the result card and end it with TASK_DONE" — the card has been updated (by the concurrent attempt-1 session, whose content is essentially the same as what I'd write).
+
+Hmm, but I'm supposed to do the work myself. Let me first read the current md card to see its quality and accuracy. If it's accurate and ends with TASK_DONE, I can leave it and just add my independent verification? Editing risks conflict.
+
+Actually, let me think about the risk differently: the local dispatcher's next gate run at 10:00:08 (cycle every 600s) will gate the worktree. Both agents' sessions may still be running; the gate doesn't care. The card_status is checked only if the task status is running/queued — currently running (attempt 2 launched). At 10:00:08, if card_status finds TASK_DONE in the card tail, gate runs. So the card must end with TASK_DONE. It does.
+
+The bigger risk: the other agent might still be *modifying* the .lean files (it said unchanged, but who knows). And my replica ran at 09:44-09:49 while the other agent was active. If it modifies files after, my verification is stale. Let me re-verify hashes and re-run the gate replica at the end.
+
+Also potentially the other agent could be editing root files. Let me check the current state of root files and hashes vs. the other agent's card claims:
+- root lean-toolchain sha256_16 = 8190e75a20174106
+- lake-manifest.json cbc45ee0bd591606
+- lakefile.toml 2a3d6f3b8d0f4102
+
+Let me check.
+
+And read the current md card.
+dsh: reasoning:
+The concurrent attempt-1 agent wrote a thorough and accurate card. Details differ slightly from my findings:
+
+1. Its root-cause quote: "error: no default toolchain configured..." — my experiment showed "unknown module prefix 'Poincare'" when a lean-toolchain IS present in an ancestor... Actually in the no-lakefile test dir, there was no lean-toolchain either, and lake printed an error. Wait, my test printed:
+```
+Props.lean:6:0: error: unknown module prefix 'Poincare'
+No directory 'Poincare' or file 'Poincare.olean' in the search path entries: ...
+exit: 1
+```
+Interesting: in my test dir there was no lean-toolchain, yet lake found the toolchain (from ELAN_HOME default? or from the toolchain override in the parent?) and ran lean, failing on the import. The other agent claims "no default toolchain configured" — that's a different error, possibly what actually happened in the gate subprocess environment (dispatch360 ENV doesn't set PATH to include elan? Let's see: ENV["PATH"] = ~/.local/node/bin + ELAN_HOME/bin + PATH — includes elan. So elan is on PATH. But without a lean-toolchain file, `lake env` might still work via elan's default toolchain...).
+
+Hmm. My test had `export ELAN_HOME` and elan on PATH; the result was "unknown module prefix 'Poincare'", not "no default toolchain". Why? Because in my test, I was in a directory with NO lean-toolchain and no lakefile. Lake v5 searches for a lakefile upward; failing that, it may run with the default (stable) toolchain? And the default toolchain in ELAN_HOME must be v4.34.0-rc2 (since no other installed?). Let me check: `ls /data/home/guoshaoyang/workdir/lean_poincare/elan/toolchains/`. If only v4.34.0-rc2 is installed, then the "default" resolves to it. Then the error was about imports.
+
+Either way, the gate failed for an environmental reason (no root workspace / no Lean search path), and the fix (root wrapper) works. The other agent's card's exact error message may be slightly off (it may have actually observed that message in its own experiment; both are plausible depending on environment). But the core diagnosis is the same.
+
+2. It claims the wrapper was "added" by the repair pass (i.e., by itself). The sha256 values it lists for the root files are worth verifying: 8190e75a20174106 for lean-toolchain, cbc45ee0bd591606 for lake-manifest.json, 2a3d6f3b8d0f4102 for lakefile.toml.
+
+3. It references logs/gate_sim.json, logs/axiom_audit_rerepair.txt, logs/forbidden_d9.json — but those files do NOT exist in longrun/logs/ (I listed it: only d9_axiomaudit.txt, gate_replica.json, gate_replica.py). Let me search the worktree for them. Maybe they're in release/logs/ or elsewhere. The card's relative paths are ambiguous (relative to worktree root probably: `<worktree>/logs/...`, i.e. the top-level `logs/` directory at the worktree root, not longrun/logs!). Yes! The worktree root has a `logs/` directory (the first `ls -la` showed `logs` at worktree root). The gate_sim files are probably there. Let me check.
+
+Indeed the top-level `logs/` contains perfile_*.log from the D6 release build. The other agent likely wrote gate_sim.json etc. there.
+
+4. The card says "68/68 files exit 0" — matches my independent replica.
+
+5. The card's per-file seconds (3.2, 2.9, 3.1, 2.6) match my replica timings (3.2, 2.9, 3.2, 2.6) closely.
+
+So the card is essentially accurate. However, there's a discrepancy to resolve: the other agent's card says "the four authored sources are byte-identical" — true.
+
+Now, both sessions are running. The other agent is presumably going to end with TASK_DONE. I should NOT fight over the card. But my task says to update the card and end with TASK_DONE. The card IS updated (by the other session). If I rewrite it identically-ish, I risk losing their evidence file references or creating inconsistency.
+
+Best approach:
+- Verify the card's claims independently (do now).
+- Fix any inaccuracies if found (e.g., nonexistent referenced logs; error message wording).
+- Possibly add my independent verification note (repair pass 2) — but the concurrent agent may overwrite. Since my session is the "attempt 2" session, it would be natural for me to record the second verification. But the risk of racing...
+
+Hmm, let me think about what matters for the gate: the dispatcher only checks card tail for TASK_DONE and runs compile_gate. The card content accuracy matters for human audit. Both sessions will produce a TASK_DONE card. The main risk is a *partially written* card at gate time, but the gate only runs after DONE is touched (session exit), so fine.
+
+Actually wait — there's a subtle risk: if the other agent's session ends AFTER mine and rewrites the card, no problem. If mine ends after theirs, also no problem as long as my final card is valid.
+
+But what if the other agent is editing the .lean files right now? Let me check hashes again (they still match?). If they modify and break something after my replica, the gate could fail. I'll re-verify at the very end.
+
+Let me now:
+1. Check the top-level logs/ for gate_sim files.
+2. Verify root file hashes.
+3. Check the other agent's gate_sim claim (68/68).
+4. Decide on card edits: I think I should make a *minimal* addition documenting the independent second verification (gate replica run by attempt 2) and correct any wrong path references. But since the other agent might overwrite, I could alternatively leave the card as-is if fully accurate.
+
+Hmm, wait. Actually, let me reconsider the whole situation. Am I sure pid 197403 is a separate session and not, say, my own session's process? My session should be pid 199380 (attempt 2 prompt, started 09:40). The dsh process for my session would be the one whose command line matches the attempt-2 prompt. But how do I run commands? My bash tool runs through the harness; the tool calls appear as `bash -c` processes. The parent of my bash processes is likely my dsh (199380). Let me check: `ps -o ppid= -p $$`? My bash tool spawns fresh shells; I can check the process tree.
+
+Actually earlier `ps` showed a `bash -c` for D9-parabolic at 09:53 — that's another agent's tool call.
+
+Let me verify which dsh is mine by checking the process ancestry of my bash shell.
+
+This matters because if 197403 is the other agent, it might still write the card. Let me confirm.
+
+Also: could pid 197403 be a *stale* process whose session already ended (the one that wrote the card at 09:49-09:50 and is now idle waiting for more input)? dsh in headless mode ends after the turn; if the process is still alive, it's likely still doing something (multi-turn). The card was written 09:50:07-09:50:22, ~3.5 min ago. The process is using CPU (0:14 total). It might be finishing.
+
+Let me check process ancestry and the top-level logs.
+dsh: reasoning:
+Confirmed:
+- I am pid 199380 (attempt 2), launched by worker_loop 199358 under dispatch360 47937.
+- The other session is pid 197403 (attempt 1's re-run), which is NOT my ancestor. It's still running (it wrote gate_sim at 09:44-09:48 and the card at 09:49-09:50).
+- The root file hashes match the card's claims. The other agent's artifacts exist in the top-level `logs/` dir.
+
+So the concurrent agent's card is well-supported. Its gate_sim.json should show 68/68 as well. Let me verify quickly.
+
+Now: how to handle the card? The situation is that two sessions were launched for the same task (the dispatcher's 600s cycle: attempt 1's worker_loop was still alive after its dsh run exited 1; at 09:40:09 the dispatcher saw the task still "queued"?? Hmm — actually the dispatcher set status "queued" when it wrote the repair prompt at 09:40:09, then launched a *new* worker_loop (mine, 199358) because `is_running` checks heartbeat mtime < 45 min — attempt 1's worker_loop heartbeat file... hmm, is_running(tid) uses state/<tid>/heartbeat.json which both worker_loops write; attempt 1's loop was alive and heart-beating. Then why did dispatch360 launch a second worker for the same task at 09:40? Let me look at the launch logic: `if t["status"] != "queued": continue; if any(deps not verified): continue; pr = prompt_for(tid); if not pr: continue; if is_running(tid): continue; launch`. So is_running must have returned False at 09:40:09 → heartbeat older than 45 min? Attempt-1's worker_loop writes heartbeat every 600s; it started 09:30:09 and would write at 09:40:09-ish. Hmm, but attempt-1's worker_loop (pid 194690?) — wait, which worker_loops belong to attempt 1?
+
+ps showed worker_loops: 47937's children 47942, 47945, 47975, 47981 (from Sep09), 180002, 180009 (09:20), 194690-194715 (09:30, six of them), 199358/199359/199372/199373 (09:40), 156479 relay. That's a lot of worker_loop processes — many are idle/stale loops from earlier launches (the dispatcher never kills them; they just re-run dsh? no, they exit when rc==0). Hmm, actually each LAUNCH spawns a worker_loop; when the dsh exits, worker_loop either breaks (rc 0) or loops forever (rc != 0), retrying every 120s! That's why attempt 1's worker loop (194690-ish) is still alive and re-launched dsh at 09:35. Its heartbeat.json writes compete with mine.
+
+So the dispatcher launched attempt 2 because at 09:40:09 `is_running` returned false — probably because heartbeat.json had been written by a *different* stale worker or the timing. Whatever.
+
+The practical question: what should I do now?
+
+Option A: Leave the card as the other agent wrote it (accurate), add a small independent-verification note from attempt 2, end with TASK_DONE. Risk: edit conflict if the other agent rewrites.
+
+Option B: Do nothing to the card, just end with TASK_DONE. But the prompt explicitly says "Update the result card". The card has been updated during my session window (by the other session). Hmm.
+
+I think the honest and useful action is:
+1. Independently verify all claims (done mostly).
+2. Make a *small, additive* edit to the card: add a short "Repair pass 2 (attempt-2 session) — independent re-verification" note documenting: gate replica by the attempt-2 session (68/68, 278.3s, evidence longrun/logs/gate_replica.json), fresh AxiomAudit run (31/31 standard cones, evidence longrun/logs/d9_axiomaudit.txt), authored file hashes unchanged, and confirmation that the root workspace wrapper is present and required. Also correct the one questionable detail: the exact error message quoted in §0 ("no default toolchain configured") vs. what I observed ("unknown module prefix 'Poincare'"). Which is right?
+
+Let me test precisely: what does the gate command produce *without* the wrapper but with a lean-toolchain? My earlier test in the `nolakefile_test` dir had neither lakefile nor lean-toolchain, and produced "unknown module prefix 'Poincare'". The other agent claims "no default toolchain configured". Both could happen depending on how elan/lake resolves the toolchain. Since the other agent ran its own experiment (probably in an empty temp dir with TMPDIR etc.), its quote may be genuine for its setup. To avoid asserting something I haven't verified, in my added note I'll describe my reproduction: without a root workspace, `lake env lean` cannot resolve the `Poincare` import (LEAN_PATH lacks the release package), reproducing exit 1 for every file. I can mention both messages? Better: I could re-run the exact no-wrapper experiment with the same ENV as the gate to be precise. Let me do that: create a temp dir *inside the worktree* with a copy of the release structure? Simpler: temporarily rename the wrapper files (lean-toolchain, lakefile.toml, .lake) and run the gate command from the root, then restore. That's risky if the other agent is running commands concurrently (it would see failures too, and might panic/rewrite the card!). Hmm, dangerous. Better: simulate in a standalone dir that has a copy of the release package? That requires .lake. I can create a temp dir with a lean-toolchain but no lakefile, and run on an absolute path... Actually the key question is only what error message appears; the card already says the root cause correctly (no root Lake workspace → every file exit 1). The exact message nuance is cosmetic. I'll avoid touching their §0 text except maybe appending my verification.
+
+Wait, actually — maybe I should be even more careful about edit conflicts. If the other agent is mid-turn and rewrites the whole card after my edit, my edit is lost (not harmful, since their card is complete). If I edit while they write, one of us may produce a corrupted file? Edits are atomic-ish (the write tool writes whole file; last writer wins, no interleaving at byte level typically). The risk of corruption is low.
+
+Let me first check the other agent's status: is it still actively running commands? Look at recent file mtimes and CPU. Let me check its current activity indirectly: `ls -la --time-style=full-iso logs/ | head`, and check dsh process CPU time over a few seconds. Also, maybe I can detect if it's about to finish by looking at its latest.log (the dsh session output). state/D9-tensor-algebra-manifolds/latest.log is binary-ish; let me look at its tail via strings/tail -c. Actually latest.log is the dsh run's stdout for *the most recent* worker_loop run — both sessions write to the same latest.log! (worker_loop redirects `> "$STATE/latest.log"`.) So it's shared/overwritten. Eh.
+
+Let me check whether the other agent's session has produced any new file in the last minute. gate_sim was 09:48:54, card 09:50:22. It's ~09:56 now. Let me sample `ps` CPU twice.
+
+Actually, a cleaner approach to detect whether the other dsh is still doing tool calls: its child bash processes. `ps --ppid 197403`. Let me check.
+dsh: reasoning:
+pid 197403 is gone now (no output for `ps -p 197403`) — the other session has exited! Its worker_loop would have touched DONE if rc==0. Let me check DONE's mtime and last_run.json.
+
+So the other agent finished (probably at ~09:52-09:53: 09:53:42? no, that's my d9_axiomaudit.txt write). Its card is final. Since it exited, no further edit conflicts unless its worker_loop re-launches (only if rc != 0; then it sleeps 120 and retries). If it exited 0, worker_loop touches DONE and breaks. Let me check the state files and whether any new dsh for attempt 1 is running.
+
+If the other session is truly done, I can safely update the card now, adding my independent verification. But careful: if attempt-1's worker_loop exited with rc != 0, it will re-launch dsh in 120s and we'd have another concurrent writer. Let me check ps for the attempt-1 worker_loop (parent of 197403).
+
+Let me find which worker_loop was 197403's parent. From earlier: 197403 started 09:35. Parent likely one of 194690-194715 (09:30 batch). Let me check /proc for those parents (they may still exist).
+dsh: reasoning:
+Update:
+- The other D9-tensor session (attempt 1, pid 197403) exited at 09:54:00 with exit_code 0, and worker_loop (194691/194715) touched DONE at 09:54:00 and presumably broke (both worker_loop processes still listed but should exit... they're listed with 26:20 elapsed; after touching DONE, worker_loop does `break` and exits; but ps still shows them — maybe they're in the process of exiting or my ps snapshot was before. Anyway.)
+- last_run.json now says exit_code 0 at 09:54:00. 
+- latest.log is being written at 09:56:28 (87KB) — that's MY session's dsh output? Wait, my session started at 09:40:09; latest.log would be opened by worker_loop 199358 with `>` at launch (09:40) — both sessions write to the same file, the later opener truncates. The mtime 09:56:28 is presumably my session's output. Hmm, actually attempt-1's worker_loop opened latest.log at 09:35 (truncating), then my worker_loop opened at 09:40:09 (truncating). Both write to the same inode... The file mtime 09:56:28 = my activity.
+
+So the concurrent writer is done. Good. Now I can update the card safely.
+
+Before editing, let me verify the other agent's gate_sim claims (68/68) and check that gate_sim.json matches. Quick verification.
+
+Then decide the card edit. Since the other agent's card is thorough and accurate, I'll add a compact "Repair pass 2 — independent re-verification" subsection (after §0) and update the header line to mention pass 2, plus fix anything inaccurate:
+
+Potential inaccuracies I noticed in their card:
+1. §0 error quote "error: no default toolchain configured..." — I can't verify; my reproduction gave "unknown module prefix 'Poincare'". To be safe, I could adjust the wording to cover both: "failed for every file (unresolved `Poincare` imports — in the gate's env elan/lake reported no usable toolchain for the root, with no `Poincare` search path once a toolchain was picked), exit code 1". Hmm, better not to muddy someone's verified claim. I could leave their §0 as-is and add my own note describing my independent reproduction with the exact message I observed. That's honest: each session reports its own observations. The two are compatible: without root lakefile AND without toolchain resolution, error = "no default toolchain configured"; when elan picked the pinned toolchain (as in my test), error = unknown module prefix. Actually why the difference? In the gate's subprocess ENV, PATH includes ELAN_HOME/bin and... the gate's cwd=wt root has a lean-toolchain file now, but before it didn't. My test dir had no lean-toolchain, and the error was "unknown module prefix" — meaning elan found *a* default toolchain (probably the only installed one, or `ELAN_HOME` default). The other agent may have run with a different cwd/PATH (e.g., TMPDIR test elsewhere) and got "no default toolchain". Both plausible.
+
+I'll keep their text and add a footnote in my section: the attempt-2 session reproduced the failure as `error: unknown module prefix 'Poincare'` (no search path entry for the release package) in a root-like directory without a Lake workspace.
+
+2. Their §5 references `logs/axiom_audit_rerepair.txt` (exists, 35 lines) and `logs/forbidden_d9.json` (exists) and `logs/gate_sim.json` (exists). Good.
+3. Their §0 says fix "was added" — by the attempt-1 session, true. Fine.
+
+Now, what should my addition say? Something like:
+
+```
+### 0.1 Repair pass 2 — independent re-verification (attempt-2 session)
+
+A second repair session (dispatcher attempt 2, launched 09:40 while the attempt-1 worker loop was
+still alive) re-diagnosed the same failure independently and re-ran the gate end-to-end after the
+root workspace of §0 was in place. No source file was modified.
+
+* Independent full-tree gate replica (same walk/exclusions, cwd = worktree root, same
+  ELAN_HOME/PATH): **68/68 `.lean` files exit 0**, 0 failures, 278.3 s
+  (`longrun/logs/gate_replica.json`, driver `longrun/logs/gate_replica.py`).
+* Fresh `lake env lean release/Poincare/D9/TensorAlgebra/AxiomAudit.lean` from the worktree root:
+  exit 0, 31 declarations, all 31 cones exactly `[propext, Classical.choice, Quot.sound]`, zero
+  `sorryAx`/`unsafe`/`native_decide`/`proof_wanted` matches (`longrun/logs/d9_axiomaudit.txt`).
+* The four authored sources remain byte-identical to the original card (sha256 prefixes in §1).
+* Reproduction of the pre-fix failure (attempt-2 session): in a directory with no Lake workspace,
+  `lake env lean` on `Props.lean` exits 1 with `error: unknown module prefix 'Poincare'` and no
+  `Poincare`.olean in the search path — the same class of environment failure as §0.
+```
+
+And update the header "Generated" line to note the second verification, and maybe the verdict line to mention two independent gate runs.
+
+Hmm — but hold on. Do I want to claim "Repair pass 2" when the harness's attempt numbering says attempt 2 (my prompt) but the other agent called itself "repair pass 1"? The dispatcher's repair_count was 2 when my prompt was written. The card's "repair_pass 1" label came from the other agent's own numbering. I'll call mine "attempt-2 session re-verification" to align with the prompt.
+
+Also: the final line must remain `TASK_DONE — card: longrun/results/D9-tensor-algebra-manifolds.md` (it is).
+
+Should I also update the JSON card? The other agent's JSON says repair_pass 1 and contains accurate data. I could append a `"reverification_attempt2"` object with my evidence. That keeps the JSON consistent with the md. I'll do a careful, minimal JSON edit via python (to avoid syntax errors) — but wait, using python to edit a file... the fs policy allows writes in the workspace. The instruction says use edit tool for targeted changes. The JSON is machine-generated; a programmatic edit is reasonable but let me use the edit tool with a precise anchor to insert a new key. Actually inserting into JSON with the edit tool: I can add `"reverification_attempt2": {...},` right after the `"repair": {...},` block. The anchor is the end of that block:
+
+```
+    "authored_sources_unchanged": true
+  },
+  "gate_replica": {
+```
+
+I can replace with:
+
+```
+    "authored_sources_unchanged": true
+  },
+  "reverification_attempt2": {
+    ...
+  },
+  "gate_replica": {
+```
+
+That's a targeted, safe edit.
+
+Also update the `"generated_at"`? I'd rather not overwrite the other agent's timestamp; I'll add `"reverified_at"` inside my object.
+
+Now, one more consideration: maybe I should double-check that the other agent's gate_sim.json really says 68/68 — since its card claims it. Let me verify (quick parse). Also verify its gate_sim stdout tail. Then do a final fresh hash check of the four .lean files and a final quick per-file compile to ensure nothing changed since my replica.
+
+Also: the state/DONE mtime is 09:54:00 (touched by the other worker_loop). The dispatcher's next cycle at 10:00:08 will run the gate. My session might still be running then (I should finish before, or it doesn't matter — DONE exists, status of task in queue: currently "running" (attempt 2 launched). At 10:00:08, card_status → done → compile_gate → hopefully ok → verified).
+
+Hmm wait, if my dsh session is still running at 10:00:08 (heartbeat fresh), the dispatcher will still gate (the gate check doesn't care about running state, only DONE + card_status). Fine. But there's a subtlety: if the gate passes → status verified; then when my session exits and worker_loop touches DONE, nothing more happens (status verified, and the loop only acts on running/queued). Fine.
+
+Let me verify gate_sim.json now.
+dsh: reasoning:
+Independent verification of the other session's evidence: 68/68, all good. Two independent gate replicas now agree.
+
+Now let me write my addition to the card. I'll:
+1. Update the md header "Generated" line to mention the attempt-2 re-verification.
+2. Insert §0.1 after §0.
+3. Keep everything else.
+4. Keep final line.
+
+Then update the JSON with a `reverification_attempt2` key.
+
+Let me do the md edit carefully with the edit tool.
+
+Edit 1: header line 5:
+`- **Generated:** \`2026-09-10T01:49:52+00:00\` (repair pass 1; original card \`2026-09-10T01:16:23+00:00\`)`
+→
+`- **Generated:** \`2026-09-10T01:49:52+00:00\` (repair pass 1; original card \`2026-09-10T01:16:23+00:00\`); **re-verified** \`2026-09-10T01:57:00+00:00\` by the attempt-2 repair session (independent gate replica, 68/68 green)`
+
+Hmm, I need the actual current time. Let me get `date -u +%FT%TZ`. Also, the insert should be accurate.
+
+Edit 2: insert §0.1 between §0's end (line 54, "mathematics of §§2–6 is unchanged.") and "## 1. Authored files".
+
+Let me write the text:
+
+```
+### 0.1 Independent re-verification (attempt-2 repair session)
+
+A second repair session (dispatcher attempt 2, launched while the attempt-1 worker loop was still
+alive) re-diagnosed the failure independently and re-ran the gate end-to-end once the root
+workspace above was in place. **No source file was modified by either repair session.**
+
+* **Second, independent full-tree gate replica** (same walk and exclusions, `cwd` = worktree root,
+  same `ELAN_HOME`/`PATH`): **68/68 `.lean` files exit `0`**, 0 failures, 278.3 s; raw per-file
+  results in `longrun/logs/gate_replica.json`, driver `longrun/logs/gate_replica.py`. This agrees
+  with the attempt-1 replica of §0 (`logs/gate_sim.json`, 68/68).
+* **Fresh axiom audit** via the gate command (`lake env lean
+  release/Poincare/D9/TensorAlgebra/AxiomAudit.lean`, exit `0`): 31 declarations, all 31 cones
+  exactly `[propext, Classical.choice, Quot.sound]`, and 0 occurrences of
+  `sorryAx`/`unsafe`/`native_decide`/`proof_wanted`; archived at `longrun/logs/d9_axiomaudit.txt`.
+* **Unaffected mathematics**: the four authored sources still hash to the values in §1
+  (`fd1e8fd6…`, `bd646313…`, `acae4b16…`, `2a75ff0f…`), i.e. byte-identical to the original card.
+* **Reproduction of the pre-fix failure** (attempt-2 session): with no Lake workspace in the
+  working directory, `lake env lean` on `Props.lean` exits `1` with
+  `error: unknown module prefix 'Poincare'` and an empty search path — the same class of
+  environment failure as §0, fixed by the root workspace.
+```
+
+Wait: "with no Lake workspace in the working directory" — my test dir also had no lean-toolchain. Fine as stated.
+
+Also the header verdict line: maybe add nothing. Update "Generated" line as described.
+
+Then JSON edit.
+
+Let me also double check: is the final line of the md still `TASK_DONE — card: ...`? Yes.
+
+Let me get the current UTC time.
+dsh: reasoning:
+Now update §5 to mention the second audit evidence file? The §5 already mentions `logs/axiom_audit_rerepair.txt`. My §0.1 mentions `longrun/logs/d9_axiomaudit.txt`. That's fine.
+
+Maybe also update §7 reproduction to mention the second replica? Not necessary.
+
+Now update the JSON card with a `reverification_attempt2` key. Let me do the targeted edit.
+
+Also, the JSON's `generated_at` stays; I'll add a `reverified_at` field.
+
+Insert after:
+```
+    "authored_sources_unchanged": true
+  },
+```
+before:
+```
+  "gate_replica": {
+```
+
+New block:
+```
+  "reverification_attempt2": {
+    "checked_at": "2026-09-10T01:58:23+00:00",
+    "session": "dispatcher repair attempt 2",
+    "full_tree_gate_replica": {
+      "files_total": 68,
+      "failures": [],
+      "all_exit_zero": true,
+      "seconds_total": 278.3,
+      "raw": "longrun/logs/gate_replica.json",
+      "driver": "longrun/logs/gate_replica.py",
+      "agrees_with_attempt1_replica": true
+    },
+    "axiom_audit": {
+      "command": "lake env lean release/Poincare/D9/TensorAlgebra/AxiomAudit.lean   # cwd = worktree root",
+      "compile_exit": 0,
+      "declarations_audited": 31,
+      "cones": {"propext, Classical.choice, Quot.sound": 31},
+      "nonstandard_cones": [],
+      "forbidden_dependency_counts": {"sorryAx": 0, "unsafe": 0, "native_decide": 0, "proof_wanted": 0},
+      "raw_output_file": "longrun/logs/d9_axiomaudit.txt"
+    },
+    "authored_sha256_16": {
+      "Poincare/D9/TensorAlgebra/Interface.lean": "fd1e8fd6ac136f7f",
+      "Poincare/D9/TensorAlgebra/Props.lean": "bd646313f4ac526a",
+      "Poincare/D9/TensorAlgebra/Toy.lean": "acae4b1690b3e021",
+      "Poincare/D9/TensorAlgebra/AxiomAudit.lean": "2a75ff0fa6eb7e06"
+    },
+    "authored_sources_unchanged": true,
+    "pre_fix_failure_reproduced": "lake env lean Props.lean in a directory with no Lake workspace: exit 1, error: unknown module prefix 'Poincare'"
+  },
+```
+
+Let me apply.
+dsh: reasoning:
+Also update the top-level `generated_at`? No. But maybe add to `boundaries` a line about the repair? The other agent's boundaries already has "Repair pass 1 added only..." — wait, does it? Let me check: in the JSON I read, boundaries had 6 entries including "Repair pass 1 added only the worktree-root Lake workspace files...". Yes.
+
+Now validate the JSON parses and the md ends with TASK_DONE. Then re-run a final per-file check of the four authored files (quick) and a final hash check, and confirm the whole tree gate replica result still holds (the other agent is done, no files changed since 09:48 replica except cards/logs; the .lean files unchanged).
+
+Actually, wait: is it possible the other agent's session modified any `.lean` file after my replica at 09:44-09:49? The hashes of the four authored files match. What about other .lean files in the tree? My replica ran 09:44:36-09:49:16. The other agent's gate_sim ran 09:44:12-09:48:54 (concurrent) — both green. After 09:50, only card files were written (09:50:07, 09:50:19, 09:50:22) and my logs. Let me do a final check: find .lean files newer than 09:50.
+
+Also, I should consider whether to remove my `longrun/logs/gate_replica.py` driver? It's harmless. Keep as evidence.
+
+One more thing: the `logs/make_card_json.py` at the worktree root written by the other agent (09:50:19) — a script they used. Harmless.
+
+Let me validate everything.
+dsh: reasoning:
+- JSON parses fine.
+- md ends with TASK_DONE line.
+- No .lean files modified since 09:50, so my 68/68 replica remains valid.
+
+Final step: run the four authored files one more time via the exact gate invocation to be 100% sure (they're unchanged, but a final fresh check is cheap), and also verify the root wrapper is intact. I already ran the full replica; but a final quick check of the four files (each ~3s) is a good closing verification after all edits (cards only, but still).
+
+Also, I should consider whether my session might be judged on "exit code" — the dsh run must exit 0 for worker_loop to touch DONE and stop retrying. Ending with TASK_DONE should do it.
+
+Let me do the final per-file verification (4 files, gate-style from root).
+
+Additionally, should I worry that the two `longrun/logs/gate_replica.py` and `gate_replica.json` files might confuse the grader? No; the gate only walks .lean files.
+
+One more consideration: the task's "Last line: TASK_DONE or TASK_BLOCKED with the card path." — my final message will have that.
+
+Let me run the final check.
+dsh: reasoning:
+All four compile with exit 0 and no stderr. The full tree (68 files) passed earlier with no changes since.
+
+Summary of what I did:
+1. gate.json is absent (deleted by dispatcher after writing the repair prompt) — used the gate source (`dispatch360.py: compile_gate`) to replicate it exactly.
+2. Root cause: gate runs `lake env lean <file>` with cwd = worktree root; the root had no Lake workspace, so no toolchain/search path → every file exit 1. Reproduced (`unknown module prefix 'Poincare'`).
+3. The worktree now has the root workspace wrapper (`lakefile.toml`, `lean-toolchain`, `lake-manifest.json`, `.lake -> release/.lake`) installed during the repair window. Authored D9 files were already correct and unchanged (hashes match original card).
+4. Full-tree gate replica: 68/68 exit 0 (278.3s), independently confirmed the concurrent attempt-1 replica too.
+5. Axiom audit re-run: 31/31 standard cones, no forbidden deps; forbidden token scan clean.
+6. Updated the result card (md + json) with §0.1 independent re-verification, and verified the card ends with TASK_DONE.
+
+Note: the card documents the concurrent attempt-1 work; both sessions agree.
+
+Let me do one last sanity check on the md structure (make sure my insert didn't break formatting) by reading the first ~80 lines. Then finalize.
+dsh: reasoning:
+The card looks good. Everything is verified:
+
+- All 68 `.lean` files in the worktree compile with the exact gate command (cwd = worktree root), exit 0.
+- The four authored D9 files are mathematically honest: no sorry/axiom/unsafe/native_decide/proof_wanted in authored declarations; 31 audited declarations all have standard axiom cones.
+- The card is updated and ends with TASK_DONE.
+
+One last check — the negcontrol file contains `sorry` and `native_decide` (intentional D5 negative control, not D9-authored). It's outside the authored scope and exits 0, so the gate passes. I should note this in my final answer for transparency.
+
+I'm done. Final answer: TASK_DONE with card path.
+All verification is complete. Here's the summary of the repair:
+
+## Diagnosis
+
+`gate.json` was absent (the dispatcher deletes it after writing the repair prompt), so I replicated `dispatch360.py: compile_gate` exactly: for every `.lean` file in the worktree it runs `lake env lean <abs file>` with **cwd = worktree root** (not `release/`).
+
+**Root cause was environmental, not mathematical:** the worktree root had no Lake workspace, so `lake env lean` resolved neither the pinned toolchain nor the `Poincare` package search path — every file exited 1 (reproduced: `error: unknown module prefix 'Poincare'`, empty search path). The gate failed fast on all files, which is why the dispatcher queued attempt 2.
+
+## Fix / verification
+
+- The worktree-root workspace wrapper is now in place (`lakefile.toml` with `srcDir = "release"`, `lean-toolchain` pin, `lake-manifest.json`, `.lake → release/.lake`), making the gate's root invocation resolve the prebuilt release package. **No source or mathematical statement was changed** — the four authored files still hash exactly to the original card (`fd1e8fd6…`, `bd646313…`, `acae4b16…`, `2a75ff0f…`).
+- **Full-tree gate replica: 68/68 `.lean` files exit 0**, 0 failures, 278.3 s (`longrun/logs/gate_replica.json`) — independently agreeing with the concurrent attempt-1 replica (`logs/gate_sim.json`, `GATE_OK`).
+- Fresh `AxiomAudit` through the gate command: exit 0, 31 declarations, all 31 cones exactly `[propext, Classical.choice, Quot.sound]`; zero `sorryAx`/`unsafe`/`native_decide`/`proof_wanted` (`longrun/logs/d9_axiomaudit.txt`).
+- Forbidden-token scan clean on all authored sources; toy theorems (`sharp_flat`, `flat_sharp`, `trace_sharp_comp_flat`, `contract_tensorProduct`, …) remain kernel-checked with complete proofs.
+- Card updated (`.md` + `.json`) with §0.1 independent re-verification; final line is `TASK_DONE`.
+
+Note: `negcontrol/NegativeControl.lean` intentionally contains `sorry`/`native_decide` as the pre-existing D5 audit negative control (not D9-authored); it exits 0 and is excluded from the D9 honesty claims.
+
+TASK_DONE — card: longrun/results/D9-tensor-algebra-manifolds.md

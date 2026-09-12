@@ -1,0 +1,8 @@
+import UpstreamAdapters.Probes.Shared
+import UpstreamAdapters.Probes.DoCarmo
+import UpstreamAdapters.Probes.RicciFlow
+import UpstreamAdapters.Probes.Topology
+import UpstreamAdapters.Adapters
+import UpstreamAdapters.DownstreamUse
+import UpstreamAdapters.DownstreamGeometry
+import UpstreamAdapters.PointwiseSymmetries

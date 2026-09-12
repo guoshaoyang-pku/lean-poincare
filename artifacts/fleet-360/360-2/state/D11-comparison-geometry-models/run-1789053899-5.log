@@ -1,0 +1,1276 @@
+dsh: reasoning:
+Let me start by exploring the worktree to understand the existing state, check checkpoint.json, and see what's already there.
+dsh: reasoning:
+Interesting — there's no checkpoint.json at root apparently. Let me check the longrun directory and see what exists. Also check D11/ComparisonModels/Probe.lean and Scratch.lean.
+dsh: reasoning:
+The worktree has some scratch files from a previous attempt. Let me look at the D10 JacobiConstantCurvature files to understand what's available — particularly the `Comparison.lean` and `ODE.lean` — and check what's already defined (the j_K solutions).
+
+Also, there's no checkpoint.json apparently — the task says "Continue from existing files and checkpoint.json in this worktree". Let me check again; maybe checkpoint.json is somewhere else. Let me search for it.
+dsh: reasoning:
+Now I understand the D10 context. Let me look at the D10 files to understand the exact API available (namespaces, names of theorems, etc.). The key files are:
+- `release/Poincare/D10/JacobiConstantCurvature/Basic.lean`
+- `release/Poincare/D10/JacobiConstantCurvature/ODE.lean`
+- `release/Poincare/D10/JacobiConstantCurvature/Comparison.lean`
+
+Let me read them.
+dsh: reasoning:
+Now let me read the ODE.lean file to see the remaining API (jacobiSol_deriv etc.).
+dsh: reasoning:
+Now I understand the D10 API well. Let me plan the D11 work:
+
+**Task D11: model-space comparison geometry**
+
+1. **Define the three constant-curvature model metrics in polar form** `dr² + j_K(r)² g_{S^{n-1}}` with D10 Jacobi solutions j_K; verify the warped-product metric axioms reduce to the ODE conditions already proved.
+
+2. **Prove unconditionally the Bishop–Gromov volume comparison at the ODE level**: `r ↦ vol(B_K(r))/vol(B_K^model(r))` is monotone non-increasing — for explicit j_K this is a real-analytic monotonicity statement; prove via derivative sign computation.
+
+3. **Prove the Laplacian comparison** `Δr ≤ (n-1) j_K'(r)/j_K(r)` in the model case (explicit radial computation, unconditional).
+
+4. `#print axioms` only `[propext, Classical.choice, Quot.sound]`. No `sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted`.
+
+Let me think about the mathematics.
+
+### Model metrics in polar form
+
+The model space of constant sectional curvature K and dimension n is the warped product metric `dr² + j_K(r)² · g_{S^{n-1}}` on `[0, R) × S^{n-1}` where `g_{S^{n-1}}` is the round metric on the unit sphere, and j_K solves `j'' + K j = 0`, `j(0) = 0`, `j'(0) = 1`.
+
+A "metric" here is a bilinear form at each point: `g(v, w) = dr(v) dr(w) + j_K(r)² · g_S^{n-1}(π_*v, π_*w)` where v decomposes as (radial part, spherical part).
+
+The "warped-product metric axioms" — probably: positive definiteness / symmetry / bilinearity of the metric tensor? Actually, in this codebase there might be an existing notion of metric from earlier days. Let me check what D7/D9 have for Riemannian metric axioms. Actually, the task says "verify the warped-product metric axioms reduce to the ODE conditions already proved". Hmm — that's interesting. Warped product metric axioms: the metric `g = dr² + j² g_{S^{n-1}}` is a Riemannian metric iff j is a smooth function. The radial Jacobi equation condition j'' + Kj = 0 with j(0)=0, j'(0)=1 gives the metric smoothness at the origin. The "ODE conditions already proved" = jacobiSol solves the ODE with normalized initial conditions.
+
+Perhaps a cleaner formalization at the "axiom level": define a structure `WarpedProductAxioms` or something? Hmm, but I have freedom in the design. Let me think about what makes a clean, self-contained, correct Lean development:
+
+**Part 1: Model metrics.** Define for a function `f : ℝ → ℝ` (the warping function; will use `j = jacobiSol K`) and a "spherical metric" `gS : SphereMetric (Fin (n-1))` (an inner product on the sphere coordinates, e.g., the standard Euclidean inner product on `Fin (n-1)` restricted to the sphere), the polar metric: on `ℝ × S`, `g ((r, x)) ((v_r, v_x)) ((w_r, w_x)) = v_r * w_r + j(r)^2 * inner v_x w_x`. 
+
+The warped-product metric axioms:
+1. bilinearity (linear in each argument) — follows from inner product bilinearity.
+2. symmetry — follows from inner product symmetry.
+3. positive definiteness (for r < first zero of j, i.e. where j(r) > 0... at least where j(r) ≠ 0): `0 < g(v,v)` for v ≠ 0.
+4. smoothness? At the level of scalar functions: the warping function needs to be smooth and satisfy j(0) = 0, j'(0) = 1 to extend smoothly across the origin. "Reduce to the ODE conditions already proved": the smooth extension at the origin is exactly the normalized initial conditions j(0) = 0, j'(0) = 1.
+
+Hmm, actually maybe the intent is simpler: the axioms of the model metric (e.g., that the radial geodesic equation / the Jacobi equation along radial geodesics is j'' + Kj = 0) reduce to the ODE conditions. Let me re-read the task:
+
+"1. Define the three constant-curvature model metrics in polar form `dr² + j_K(r)² g_{S^{n-1}}` with the D10 Jacobi solutions j_K; verify the warped-product metric axioms reduce to the ODE conditions already proved."
+
+So: define the metrics (sphere K>0: j = jacobiSolSphere; flat K=0: j = jacobiSolFlat; hyperbolic K<0: j = jacobiSolHyperbolic — or just one definition with jacobiSol K). Then "verify the warped-product metric axioms reduce to the ODE conditions already proved" — i.e., the conditions that make the polar metric a bona fide warped-product metric (the warp function is a positive function satisfying the Jacobi ODE with normalized initial conditions) are exactly the ODE conditions proved in D10. So I should formalize a predicate like:
+
+```lean
+structure WarpedProductData where
+  warp : ℝ → ℝ
+  smoothAtZero : warp 0 = 0 ∧ deriv warp 0 = 1  -- extends smoothly across the cone point
+  positiveOn : ∀ r, ... 0 < warp r  -- wherever the polar chart is nondegenerate
+```
+
+Hmm. Let me think about what's genuinely checkable and meaningful:
+
+A warped product metric `dr² + f(r)² g_{S^{n-1}}` on `(0, R) × S^{n-1}` extends smoothly to the cone point r = 0 (yielding a smooth manifold metric) iff f extends to a smooth odd function with f(0) = 0 and f'(0) = 1. In particular the metric axioms at the cone point are exactly f(0) = 0, f'(0) = 1.
+
+So "the warped-product metric axioms reduce to the ODE conditions already proved" — the ODE conditions are `j'' + Kj = 0` AND normalized initial `j(0) = 0, j'(0) = 1`. The initial conditions are the metric smoothness at the cone point, and the ODE is what makes it constant curvature.
+
+Formalization plan for part 1:
+
+- Define `sphereMetric` (the standard inner product on the tangent space of S^{n-1} at x, modeled on `EuclideanSpace ℝ (Fin m)`): `fun v w => inner ℝ v w`.
+- Define the polar model metric: 
+
+```lean
+noncomputable def warpedPolarMetric (n : ℕ) (j : ℝ → ℝ) : ℝ × EuclideanSpace ℝ (Fin n) → (ℝ × EuclideanSpace ℝ (Fin n)) → (ℝ × EuclideanSpace ℝ (Fin n)) → ℝ := ...
+```
+
+Hmm wait, actually let me simplify: tangent vectors split as radial ℝ component times spherical component. Let `M := ℝ × EuclideanSpace ℝ (Fin m)` for m = n-1. Tangent vector v = (v_r, v_s). Metric:
+
+`g j (v) (w) := v.1 * w.1 + j(r)^2 * inner ℝ v.2 w.2` where r = the base point's radial coordinate.
+
+- Axioms: symmetric bilinear positive semidefinite; positive definite iff j(r) > 0 (for r > 0... well if j(r) = 0, the metric degenerates: a vector with v_r = 0 and v_s ≠ 0 has g(v,v) = 0). So positive definiteness holds exactly where j(r) ≠ 0... wait j(r)² > 0 iff j(r) ≠ 0.
+
+So:
+- `warpedPolarMetric_symm`: symmetric — inner product symmetry.
+- `warpedPolarMetric_add_left`/`smul_left`: bilinear.
+- `warpedPolarMetric_pos_def_iff`: for r with j(r) ≠ 0, positive definite (given 0 ≤ g(v,v) always, i.e., positive semidefinite unconditionally via inner_self_nonneg and sq_nonneg).
+
+- Warped-product metric axioms: define a predicate
+
+```lean
+def IsWarpedProductModel (j : ℝ → ℝ) : Prop :=
+  j 0 = 0 ∧ deriv j 0 = 1 ∧ Differentiable ℝ j
+```
+
+Hmm, but "reduce to the ODE conditions already proved" — the ODE conditions are `HasNormalizedInitial j` and `SolvesJacobiODE K j`. The metric regularity at the origin (smooth extension through the cone point) is exactly `HasNormalizedInitial`. So:
+
+```lean
+def MetricExtendsThroughConePoint (j : ℝ → ℝ) : Prop := HasNormalizedInitial j
+theorem jacobiSol_extendsThroughConePoint (K) : MetricExtendsThroughConePoint (jacobiSol K) := jacobiSol_hasNormalizedInitial K
+```
+
+That's a bit thin. Let me think about what more substantive content we can pack in part 1. Maybe also:
+
+- The radial geodesic distance function r has gradient of unit norm: `g(∇r, ∇r) = 1` — that's `dr²`'s coefficient = 1. With our explicit metric, the gradient of r w.r.t. g is... hmm, we'd need a Riemannian gradient which requires the metric to compute. At the algebraic level: `g(grad, grad) = 1` where grad = (1, 0). That's trivial: g((1,0),(1,0)) = 1.
+
+- Constant curvature: the sectional curvature of the model equals K. Computing sectional curvature explicitly in this formalization would be a big undertaking. Instead, "the ODE conditions already proved" (j'' + Kj = 0) is exactly what makes the warped product have constant curvature K. I could state this as a "reduction theorem": the warped product metric has constant sectional curvature K in the sense that its radial Jacobi equation is j'' + Kj = 0 — i.e., define `RadialJacobiEquation K j : Prop := SolvesJacobiODE K j` and show the metric axioms (smooth extension at cone point + Jacobi equation along radial geodesics) hold for jacobiSol K.
+
+Actually, let me design a cleaner bundle:
+
+```lean
+structure WarpedProductModel (n : ℕ) where
+  K : ℝ
+  warp : ℝ → ℝ
+  solvesJacobi : SolvesJacobiODE K warp
+  normalized : HasNormalizedInitial warp
+
+theorem jacobiSol_warpedProductModel (K n) : WarpedProductModel ... := ...
+```
+
+And prove that each of the metric axioms (symmetry, bilinearity, nonnegativity, positive-definiteness on j(r) ≠ 0, cone-point extension) follows from these two ODE conditions — with the cone-point extension requiring exactly `HasNormalizedInitial`, and the metric being nondegenerate on (0, first zero) requiring j > 0 which follows from the ODE+initial conditions... 
+
+Hmm wait, does j > 0 on (0, first zero) follow from ODE + initial conditions? Yes — for the explicit jacobiSol it's `jacobiSolSphere_pos` (proved in D10 Basic), and for hyperbolic/flat it's positivity. But for a general warp function satisfying the ODE, positivity up to first zero follows by Sturm theory, but proving that generally is more work. Since our goal is "for explicit j_K" everywhere, I can just use the explicit formulas. 
+
+OK here's my refined plan. Files under `release/Poincare/D11/ComparisonModels/`:
+
+1. **`WarpedProduct.lean`** — Part 1:
+   - `sphereTangent` structure? Or just use `EuclideanSpace ℝ (Fin m)` for the spherical factor.
+   - `polarCoordinate (n)`: `ℝ × EuclideanSpace ℝ (Fin n)` with n = dim - 1.
+   - `warpedPolarMetric (j : ℝ → ℝ) (p v w : ℝ × EuclideanSpace ℝ (Fin m)) : ℝ := v.1 * w.1 + j p.1 ^ 2 * inner ℝ v.2 w.2`
+   - Axioms: symm, add_left, add_right, smul_left, smul_right, nonneg (positive semidefinite: `0 ≤ g v v`), pos-def iff/where `j p.1 ≠ 0`: `g v v = 0 ↔ (v.1 = 0 ∧ (j p.1 = 0 ∨ v.2 = 0))` and `0 < g v v` when v ≠ 0 and j p.1 ≠ 0.
+   - The "warped-product metric axioms reduce to ODE conditions": 
+     - define `ConePointSmooth (j) : Prop := j 0 = 0 ∧ deriv j 0 = 1` (= HasNormalizedInitial);
+     - define the "model metric axioms" as a structure with fields: symmetric, bilinear, cone-point normalization (`ConePointSmooth`), and Jacobi equation (`SolvesJacobiODE K j`).
+     - Then `modelMetricAxioms_of_jacobiSol K n : ModelMetricAxioms K (jacobiSol K) (warpedPolarMetric (jacobiSol K))` — each field discharged by D10 theorems: symm/bilinear from inner product axioms; cone-point from `jacobiSol_hasNormalizedInitial`; Jacobi from `jacobiSol_solvesJacobiODE`.
+   - Also maybe the radial unit-speed condition: the radial vector field (1,0) has unit length — this is the `dr²` coefficient.
+
+   Hmm, wait. Actually maybe I should also formalize that at the cone point the metric is exactly the Euclidean one (j(0) = 0, j'(0) = 1 makes the metric at r=0... hmm, careful: at r = 0 the polar coordinates degenerate. The metric at the cone point in the formalization... The smooth extension through the cone point: g at r=0 should be the identity (dr² + 0² g_S = dr², but the sphere direction is lost). Actually in polar coordinates, at r = 0 the metric written in polar form is dr² + j(r)²g_S = dr² + 0·g_S, which in the (r, s) coordinates is degenerate. The smooth extension fact is: there exist smooth local coordinates (e.g., the ambient Euclidean coordinates via x = r·s) in which the metric extends smoothly. The conditions f(0)=0, f'(0)=1 are exactly the known smoothness conditions. I'll state this as the formal "cone point condition" predicate and prove it holds for jacobiSol — that's the honest reduction, and I'll document it carefully in the card.
+
+2. **`BishopGromov.lean`** — Part 2: Bishop–Gromov at the ODE level.
+   
+   Model volume: `vol B_K(r) = vol(S^{n-1}) · ∫_0^r j_K(t)^{n-1} dt`. The comparison function is `r ↦ ∫_0^r j(t)^{n-1} dt / ∫_0^r jModel(t)^{n-1} dt` (the sphere volume factor cancels). Bishop–Gromov says for a manifold with Ric ≥ (n-1)K, the ratio vol(B(p,r))/vol(B_K(r)) is nonincreasing in r. At the model level with two curvatures K₁ ≤ K₂: the ratio ∫₀^r j_{K₁}^{n-1} / ∫₀^r j_{K₂}^{n-1}... 
+
+   Hmm wait — actually the classic statement at the model level: for K₁ ≤ K₂ (Ric lower bound (n-1)K₂ vs comparison model K₁? Let me get the directions right). Bishop–Gromov: if Ric ≥ (n-1)K₂... The standard formulation: the function r ↦ vol B(p,r) / vol B_K(r) is nonincreasing, where K is the comparison curvature (Ric ≥ (n-1)K). And also: if K₁ ≤ K₂ then vol B_{K₁}(r) ≥ vol B_{K₂}(r) and vol B(p,r)/vol B_{K₁}(r) ≤ vol B(p,r)/vol B_{K₂}(r)... hmm.
+
+   At the pure model level the cleanest "Bishop–Gromov" monotonicity statements:
+   (a) `r ↦ vol B_{K₁}(r) / vol B_{K₂}(r)` is monotone non-increasing when K₁ ≤ K₂? Wait: B_{K₁} is bigger (j_{K₁} ≥ j_{K₂} pointwise by Rauch), and the ratio B_{K₁}/B_{K₂} is nondecreasing? Let's compute: for K₁ < K₂... hmm wait, actually the standard statement: "if K₁ ≤ K₂, then vol B_{K₁}(r) / vol B_{K₂}(r) is monotone nondecreasing"? Hmm, let me think. j_{K₁} ≥ j_{K₂}, both increasing. Ratio of integrals. At r→0: both ~ r^n/n so ratio → 1. As r increases, does the ratio increase? The relative growth of the bigger one... d/dr log ∫₀^r j^{n-1} = j(r)^{n-1}/∫₀^r j^{n-1}. Hmm.
+
+   Actually the classical theorem stated in Bishop–Gromov form: "the function r ↦ vol B(p,r) / vol B_K(r) is monotone non-increasing" where B_K is the model ball with the comparison curvature K (the curvature lower bound). And an equivalent standard corollary: the ratio vol B(p,r)/vol B(p,R) ≥ vol B_K(r)/vol B_K(R) for r ≤ R.
+
+   At the model level with two models: if K₁ ≤ K₂, then vol B_{K₁}(r) ≥ vol B_{K₂}(r) (immediate from j_{K₁} ≥ j_{K₂} pointwise via integral monotonicity). And the ratio vol B_{K₁}(r)/vol B_{K₂}(r) — is it monotone? Since B_{K₂} is the "smaller" ball, consider f = vol B_{K₁}/vol B_{K₂} = ∫j₁^{n-1}/∫j₂^{n-1}. Claim: f is nondecreasing in r when K₁ ≤ K₂? Let's sanity check with the flat vs sphere example: K₁ = 0 (flat, j = t), K₂ = 1 (sphere, j = sin t, n-1 = 2, i.e., n = 3): f(r) = (r³/3)/(∫₀^r sin²t dt) = (r³/3)/((2r - sin 2r)/4). At r = π/2: numerator π³/24, denominator (π - 0)/4 = π/4 → ratio = π²/6 ≈ 1.645. At r → 0: ratio → 1. At r = π: numerator π³/3 ≈ 10.3, denominator π/2·... ∫₀^π sin² = π/2, so denominator = π/2 → ratio = 2π²/3 ≈ 6.58. So increasing — consistent with f nondecreasing. Also the classical statement: r ↦ vol B(p,r)/vol B_K(r) nonincreasing means with actual manifold = B_{K₁} (Ric ≥ (n-1)K₁ ≥ (n-1)K₂... hmm wait, if K₁ ≥ K₂... I'm getting confused with the direction.
+
+   Standard Bishop–Gromov: (M, g) with Ric ≥ (n-1)K. Then r ↦ vol(B(p,r))/vol(B_K(r)) is nonincreasing (B_K = model ball of curvature K). Applied to the model (M = model of curvature K₁ with Ric = (n-1)K₁): if K₁ ≥ K, r ↦ vol B_{K₁}(r)/vol B_K(r) nonincreasing. With K = K₂ ≤ K₁: ratio vol B_{K₁}/vol B_{K₂} is nonincreasing?? But my computation above with flat (K₁=0) vs sphere (K₂=1): K₁ = 0 < 1 = K₂, so we'd need K₂ ≤ K₁ which fails; and the ratio B_flat/B_sphere increased. Let's redo: take K₁ = 1 (sphere), K₂ = 0 (flat), K = K₂ = 0 ≤ K₁ = 1: ratio vol B_sphere(r)/vol B_flat(r) = (∫ sin²)/(r³/3). At r = π/2: (π/4)/(π³/24) = 6/π² ≈ 0.608. At r small → 1. So it decreased from 1 to 0.608 — nonincreasing. ✓. So the correct statement: **if K₂ ≤ K₁ then r ↦ vol B_{K₁}(r)/vol B_{K₂}(r) is monotone non-increasing** (up to first zero of the comparison, e.g. sphere radius π/√K₁... for K₁ > 0 the ratio only makes sense where vol B_{K₁} is defined, which is all r > 0 actually since the sphere model has cut locus at π/√K₁ — the "ball" B_{K₁}(r) for r beyond π/√K₁ is still defined via the integral but geometrically it's the whole sphere after r = π/√K₁... in fact ∫₀^r sin^{n-1} keeps growing past π. For the comparison theorem it's typically stated for r < injectivity radius. We'll state it up to the first zero π/√K₁ when K₁ > 0).
+
+   And the equivalent form used in Ricci flow: for r ≤ R, vol B(p,r)/vol B(p,R) ≥ vol B_K(r)/vol B_K(R).
+
+   The task says: "Prove unconditionally the Bishop–Gromov volume comparison at the ODE level: `r ↦ vol(B_K(r))/vol(B_K^model(r))` is monotone non-increasing — for explicit j_K this is a real-analytic monotonicity statement; prove via derivative sign computation."
+
+   Here B_K(r) is a ball in a manifold with Ric ≥ (n-1)K and B_K^model(r) is the model ball. At the ODE level, the manifold's Jacobi fields are bounded... Hmm — but we can't formalize arbitrary manifolds; "at the ODE level" means: B_K(r) is the ball of the model with curvature... hmm. Wait, re-read: "Prove unconditionally the Bishop–Gromov volume comparison at the ODE level: r ↦ vol(B_K(r))/vol(B_K^model(r)) is monotone non-increasing — for explicit j_K this is a real-analytic monotonicity statement".
+
+   So at the ODE level: B_K(r) = the ball in the model with curvature K (the "actual" space, playing the role of the manifold with the lower curvature bound), and B_K^model(r) = the comparison model ball with curvature K^model ≥ K... wait no. Hmm: "B_K(r)" with curvature K and "B_K^model(r)" with model curvature K_model. The ratio r ↦ vol(B_K(r))/vol(B_{K_model}(r)) is nonincreasing when K_model ≥ K? Hmm wait, but actually the comparison in Bishop–Gromov: Ric ≥ (n-1)K, compare with model of curvature K. So "B_K(r)" IS the model ball of curvature K in the notation vol B_K(r) = the model volume... 
+
+   Hmm, the task notation: `vol(B_K(r))` — the ball in the manifold satisfying the lower Ricci bound (n-1)K — and `vol(B_K^model(r))` the model ball of the same curvature. Since we work at the ODE level, "the manifold" is itself a model of curvature K' ≥ K. So vol(B_K(r)) = vol B_{K'}(r) for some K' ≥ K, and vol(B_K^model(r)) = vol B_K(r). The monotonicity: r ↦ vol B_{K'}(r)/vol B_K(r) nonincreasing for K' ≥ K. That matches my computation (K₁ = K' = 1 ≥ K = K₂ = 0: ratio nonincreasing ✓).
+
+   So the theorem to prove at the ODE level: **for K ≤ K' (i.e., K₁ ≤ K₂ with the roles... let me define Kmodel = K₁, Kspace = K₂ with K₁ ≤ K₂), the function r ↦ vol B_{K₂}(r) / vol B_{K₁}(r) is monotone non-increasing on [0, R] where R ≤ π/√K₂ (first zero of j_{K₂}, the smaller j).** And "via derivative sign computation": the derivative of the ratio has sign = sign of j₂^{n-1}∫₀^r j₁^{n-1} - j₁^{n-1}∫₀^r j₂^{n-1}... let me compute:
+
+   f(r) = V₂(r)/V₁(r), V_i(r) = ∫₀^r j_i^{n-1}. f'(r) = (j₂^{n-1} V₁ - V₂ j₁^{n-1})/V₁². Since V₁ ≥ V₂ (by Rauch pointwise j₁ ≥ j₂) and j₁^{n-1} ≥ j₂^{n-1}... need to show j₂^{n-1} V₁ ≤ j₁^{n-1} V₂, i.e., j₂^{n-1}/j₁^{n-1} ≤ V₂/V₁, i.e., the "current ratio" of densities ≤ the "average ratio". This is exactly the claim that the ratio r ↦ (j₂/j₁)^{n-1}... hmm, standard proof: show that s ↦ j₂(s)/j₁(s) is nonincreasing? No wait — j₂/j₁: at s→0 both ~ s so ratio → 1; Rauch says j₂ ≤ j₁; is j₂/j₁ nonincreasing? d/ds log(j₂/j₁) = j₂'/j₂ - j₁'/j₁. By the derivative comparison, j₂'/j₂ ≤ j₁'/j₁? Hmm: j'_K = jacobiDeriv K. Claim: s ↦ j₂'(s)/j₂(s) ≤ j₁'(s)/j₁(s) for K₁ ≤ K₂ — this is exactly the **Laplacian comparison** (part 3): Δr = (n-1) j'/j, and the comparison says for K₁ ≤ K₂, (n-1)j_{K₂}'/j_{K₂} ≤ (n-1)j_{K₁}'/j_{K₁}. Yes! Part 3 is: Δr ≤ (n-1) j_K'(r)/j_K(r) in the model case — the Laplacian of the distance function in a manifold with Ric ≥ (n-1)K is ≤ the model value (n-1)j_K'/j_K. At the model level (manifold = model with curvature K' ≥ K): (n-1) j_{K'}'/j_{K'} ≤ (n-1) j_K'/j_K. Hmm wait, which direction? Model with higher curvature has smaller j'/j? For K' > K: j_{K'} ≤ j_K and j'_{K'} ≤ j'_K. j'/j for sphere: cos/sin·√K decreasing in K? For K' > K both > 0: (√K' cot(√K' r)) vs (√K cot(√K r)): at r = 0 both 0... derivative near 0: j'/j ≈ 1/r - (K/3)r, so larger K gives smaller j'/j. ✓. So for K ≤ K' (comparison curvature K, actual K' ≥ K): Δ_{K'} r = (n-1) j_{K'}'/j_{K'} ≤ (n-1) j_K'/j_K = model Laplacian. ✓ direction matches "Δr ≤ (n-1) j_K'(r)/j_K(r)".
+
+   And then Bishop–Gromov: with log-derivative comparison d/dr log j_{K'} ≤ d/dr log j_K, integrate: j_{K'}(s)/j_{K'}(r)... hmm the standard proof: j_{K'}(s)/j_K(s) is nonincreasing in s (since its log-derivative is ≤ 0)... wait d/ds log(j_{K'}/j_K) = j_{K'}'/j_{K'} - j_K'/j_K ≤ 0. ✓. So s ↦ j_{K'}(s)/j_K(s) nonincreasing, from 1 at s = 0. Then for 0 ≤ s ≤ r: j_{K'}(s)/j_K(s) ≥ j_{K'}(r)/j_K(r), i.e., j_{K'}(s) j_K(r) ≥ j_{K'}(r) j_K(s). Integrate both sides over s ∈ [0,r]: j_K(r) ∫₀^r j_{K'}^{n-1}... hmm, need the (n-1) powers: from j_{K'}(s) j_K(r) ≥ j_{K'}(r) j_K(s) (both ≥ 0) get j_{K'}(s)^{n-1} j_K(r)^{n-1} ≥ j_{K'}(r)^{n-1} j_K(s)^{n-1}. Integrate over s ∈ [0, r]: j_K(r)^{n-1} V_{K'}(r) ≥ j_{K'}(r)^{n-1} V_K(r), i.e., V_{K'}(r)/V_K(r) ≥ j_{K'}(r)^{n-1}/j_K(r)^{n-1}... 
+
+   Hmm, and then to get monotonicity of f = V_{K'}/V_K: f'(r) = (j_{K'}^{n-1} V_K - V_{K'} j_K^{n-1})/V_K² ≤ 0 ⟺ j_{K'}^{n-1} V_K ≤ V_{K'} j_K^{n-1} ⟺ V_{K'}/V_K ≥ j_{K'}^{n-1}/j_K^{n-1}. ✓ Exactly what we derived. 
+
+   So the cleanest formal path for part 2:
+   1. **Laplacian/log-derivative comparison** (part 3, but needed for part 2): for K₁ ≤ K₂, r in (0, first zero of j₂... need j₂(r) > 0): j_{K₂}'(r)/j_{K₂}(r) ≤ j_{K₁}'(r)/j_{K₁}(r). This is part 3's content at the model level. Prove via explicit computation: j'/j for sphere = √K · cot(√K r)?? wait j'/j for sphere branch: jacobiDeriv/jacobiSol = cos(√K r)·√K/sin(√K r)... j' = cos(√K r), j = sin(√K r)/√K so j'/j = √K cos/sin = √K cot(√K r). Monotone in K: √K cot(√K r) decreasing in K? Derivative w.r.t. K: (1/(2√K))cot(√K r) + √K·(-csc²(√K r))·(r/(2√K)) = (1/(2√K))(cot(√K r) - √K r csc²(√K r)). Sign of cot x - x csc² x = (sin x cos x - x)/sin² x ≤ 0 since sin x cos x ≤ x for x ≥ 0. ✓. For hyperbolic: j'/j = √(-K) coth(√(-K) r), derivative w.r.t. K: (1/(2√(-K)))(-coth... hmm let me not compute — cross cases: sphere vs flat: √K cot(√K r) ≤ 1/r (standard cot inequality x cot x ≤ 1 for x ≥ 0, i.e., sin x ≥ x cos x); flat vs hyperbolic: 1/r ≤ √(-K) coth(√(-K) r) (standard: tanh x ≤ x so coth x ≥ 1/x → √a coth(√a r) ≥ 1/r). ✓. And hyperbolic vs hyperbolic: √a coth(√a r) increasing in a? Hmm, wait: for K₁ ≤ K₂ < 0, a₁ = -K₁ ≥ a₂ = -K₂, and the claim j₂'/j₂ ≤ j₁'/j₁ means √a₂ coth(√a₂ r) ≤ √a₁ coth(√a₁ r). Is √a coth(√a r) increasing in a? d/da: (1/(2√a))coth(√a r) + √a·(-csch²(√a r))·(r/(2√a)) = (1/(2√a))(coth(√a r) - √a r csch²(√a r)) = (1/(2√a))·(cosh x sinh x - x)/sinh² x ≥ 0 since cosh sinh ≥ x... sinh x cosh x = sinh(2x)/2 ≥ x. ✓ increasing. 
+
+   Alternatively — much cleaner! — avoid the explicit cot/coth algebra by using the derivative comparison from D10 (`jacobiDeriv_le_of_le`) plus cross-multiplication: j₂'/j₂ ≤ j₁'/j₁ ⟺ j₂' j₁ ≤ j₁' j₂. Hmm, that's still not directly from jacobiDeriv_le_of_le.
+
+   Hmm, but actually there's an even cleaner approach: the standard proof of the log-derivative comparison j₂'/j₂ ≤ j₁'/j₁ via the Wronskian: W(s) = j₁' j₂ - j₁ j₂' has W' = j₁'' j₂ - j₁ j₂'' = -K₁ j₁ j₂ + K₂ j₁ j₂ = (K₂ - K₁) j₁ j₂ ≥ 0, W(0) = 0, so W ≥ 0, i.e., j₁' j₂ ≥ j₁ j₂', i.e., j₂'/j₂ ≤ j₁'/j₁ (for j₁, j₂ > 0). This uses only the ODE conditions (j'' + Kj = 0) + normalized initial conditions, and avoids all the explicit trig monotonicity. And it's a genuinely nice "reduction to the ODE conditions" — but wait, the task says part 3 is "explicit radial computation, unconditional" — so they want the explicit computation. Hmm: "Prove the Laplacian comparison Δr ≤ (n-1) j_K'(r)/j_K(r) in the model case (explicit radial computation, unconditional)."
+
+   For the **model case**: the manifold IS the model with curvature K, then Δr = (n-1) j_K'/j_K exactly, and the comparison becomes: for K₁ ≤ K₂ (manifold curvature K₂ ≥ K... wait, no. Hmm. "in the model case": the model is the comparison space, and the actual manifold has Ric ≥ (n-1)K. At the ODE level the actual manifold is a model with curvature K' ≥ K. So the comparison is j_{K'}'/j_{K'} ≤ j_K'/j_K for K ≤ K'. Which is the log-derivative comparison — and the Wronskian proof is an explicit computation from the ODE. Alternatively with explicit formulas (cot/coth). 
+
+   Hmm, but also possible reading: "Laplacian comparison Δr ≤ (n-1) j_K'(r)/j_K(r) in the model case" — the model's own Laplacian is exactly (n-1) j_K'/j_K, and the comparison is that a manifold with Ric ≥ (n-1)K has Δr ≤ that. "In the model case" = we prove it for the manifold = model of curvature K' ≥ K: (n-1) j_{K'}'/j_{K'} ≤ (n-1) j_K'/j_K. Same as above.
+
+   I'll do BOTH: (a) the exact radial Laplacian computation in the model: define the model Laplacian via the explicit polar metric... hmm, computing Δr for the warped metric requires the formal Riemannian Laplacian which is heavy. Alternative honest formulation: the radial part of the Laplacian acting on radial functions is r ↦ f''(r) + (n-1)(j'/j)(r) f'(r). For f = r (identity): Δr = (n-1) j'(r)/j(r) — well, Δr = 0·... Δ(id) = id'' + (n-1)(j'/j)·id' = (n-1) j'/j. ✓ So I can DEFINE the model Laplacian in the polar chart as `Δ_model f (r) := f''(r) + (n-1) (j'/j)(r) f'(r)` — this is the honest radial formula for the warped product metric (the standard formula Δf = f'' + (n-1)(j'/j)f' for radial functions; hmm wait, is that right? For the warped product dr² + j(r)² g_S, the Laplacian of a radial function f: Δf = f'' + (n-1) (j'/j) f'. Yes.) Then Δ_model r = (n-1) j'/j exactly (proved by explicit computation using the ODE!). And the comparison: for K ≤ K' (K' the actual, K the model... careful with the ≤ direction again): (n-1) j_{K'}'/j_{K'} ≤ (n-1) j_K'/j_K via the Wronskian. So:
+
+   - `modelRadialLaplacian (n) (j) (f) (r) := deriv (deriv f) r + (n-1) * (deriv j r / j r) * deriv f r` — but this needs j r ≠ 0. Fine, hypotheses.
+   - `laplacian_dist_model (n K r) : modelRadialLaplacian ... (jacobiSol K) (fun x => x) r = (n-1) * jacobiDeriv K r / jacobiSol K r` — explicit computation: (id)'' = 0, (id)' = 1. Simple.
+   - `laplacian_comparison {K₁ K₂} (hK : K₁ ≤ K₂) ... : (n-1) * jacobiDeriv K₂ r / jacobiSol K₂ r ≤ (n-1) * jacobiDeriv K₁ r / jacobiSol K₁ r` for 0 < r < first zero of j₂ — via the Wronskian or explicit.
+
+   Hmm wait, which direction does the task want? "Δr ≤ (n-1) j_K'(r)/j_K(r) in the model case". Δr = actual manifold's Laplacian of distance; (n-1)j_K'/j_K = the model value for comparison curvature K (with Ric ≥ (n-1)K). Actual = model with curvature K' where K' ≥ K (Ric = (n-1)K' ≥ (n-1)K). So the claim: (n-1) j_{K'}'/j_{K'} ≤ (n-1) j_K'/j_K for K ≤ K'. ✓ consistent with what I said: j'/j is antitone in curvature (for r below the first zero of the larger-curvature model, where things are positive).
+
+   Wait, I need to double check with explicit formulas. K = 0 (flat), K' = 1 (sphere, n... j₁ = sin r, j₀ = r): j₁'/j₁ = cot r, j₀'/j₀ = 1/r. Claim cot r ≤ 1/r for r ∈ (0, π)? At r = π/2: 0 ≤ 2/π ✓. True (x cot x ≤ 1). ✓.
+
+   Then Bishop–Gromov part 2 via derivative sign: f(r) = V_{K'}(r)/V_K(r) nonincreasing where V_K(r) = ∫₀^r j_K^{n-1}. f' ≤ 0 ⟺ j_{K'}(r)^{n-1} V_K(r) ≤ V_{K'}(r) j_K(r)^{n-1} ⟺ ... standard route: (1) s ↦ j_{K'}(s)/j_K(s) is nonincreasing on (0, R] (log derivative ≤ 0 from part 3); (2) hence for 0 < s ≤ r: j_{K'}(s) j_K(r) ≥ j_{K'}(r) j_K(s), both sides ≥ 0 → (n-1) powers; (3) integrate over s ∈ [0, r] (with the endpoint s=0 handled since all continuous and the inequality at 0 holds trivially as both sides are 0: j_{K'}(0) = j_K(0) = 0); (4) divide by positive denominators → f'(r) ≤ 0 → monotoneOn_of_deriv_nonpos on (0, R]... need f differentiable on [0, R]... f is not differentiable at 0? V_K(r) ~ r^n/n as r → 0, so f(r) → 1 and f'(r) → 0. f is C¹ on [0, R]? f'(0) = 0 makes it C¹. But proving differentiability at 0 is annoying. Alternative: prove monotonicity via the integral inequality directly (no derivative): the claim "f nonincreasing" ⟺ for 0 ≤ s ≤ r ≤ R: V_{K'}(r)/V_K(r) ≤ V_{K'}(s)/V_K(s) ⟺ V_{K'}(r) V_K(s) ≤ V_{K'}(s) V_K(r).
+
+   Hmm, but the task explicitly says: "prove via derivative sign computation". So they want: derivative of f is ≤ 0 on (0, R), hence f antitone (by antitoneOn_of_deriv_nonpos), stated on [0, R]? The derivative at 0... antitoneOn_of_deriv_nonpos works on a convex set where f is continuous on the closure and differentiable on interior. Set Icc 0 R, interior = Ioo 0 R. f continuous on [0,R]: V's are continuous (integral of continuous), V_K(r) ≠ 0 for r > 0 (since j_K > 0 on (0, R] for R < first zero, so ∫ > 0). And at r = 0: f(0) = V(0)/V(0) = 0/0 — undefined! f(0) := ... The ratio at 0 is 0/0. Hmm. So restrict to [ε, R] for ε > 0, or define f on (0, R]. Monotone on (0, R]: antitoneOn on Set.Ioc 0 R? antitoneOn_of_deriv_nonpos requires convex set. Set.Ioi 0 ∩ Iic R = Ioc 0 R is convex. Continuous on Ioc? Fine, use `Set.Ioc 0 R`. Hmm, but AntitoneOn on (0,R] plus limit → 1 at 0 gives full monotonicity including 0 if we define f(0) = 1... Let me keep it clean: 
+
+   **Theorem (Bishop–Gromov, model level):** for K₁ ≤ K₂ (comparison K₁, actual K₂), n ≥ 1, and R ≤ first zero of j_{K₂}: the function r ↦ V_{K₂}(r)/V_{K₁}(r) is monotone non-increasing on (0, R], where V_K(r) = ∫₀^r j_K^{n-1} (i.e., vol B_{K₂}(r)/vol B_{K₁}(r) nonincreasing). Prove: 
+   - f differentiable on (0,R], f' = (j₂^{n-1} V₁ - V₂ j₁^{n-1})/V₁²;
+   - integral inequality: j_K(s)^{n-1}... get V₂(r) j₁(r)^{n-1} ≥ V₁(r) j₂(r)^{n-1}? Wait let me redo: f' ≤ 0 ⟺ j₂(r)^{n-1} V₁(r) - V₂(r) j₁(r)^{n-1} ≤ 0. From step (2): for 0 ≤ s ≤ r: j₂(s) j₁(r) ≥ j₂(r) j₁(s) → j₂(s)^{n-1} j₁(r)^{n-1} ≥ j₂(r)^{n-1} j₁(s)^{n-1}. Integrate over s: j₁(r)^{n-1} V₂(r) ≥ j₂(r)^{n-1} V₁(r). ✓ so f' ≤ 0. ✓.
+
+   The "derivative sign computation" is: compute f' explicitly (via deriv of interval integrals = FTC: deriv (∫₀^r j^{n-1}) = j(r)^{n-1}), then the sign via the integral inequality. Both steps need care in Lean.
+
+   Also add the classic corollaries:
+   - volume monotonicity: V_{K₁}(r) ≥ V_{K₂}(r) (immediate, for r up to first zero of j₂) — from rauch_comparison + integral monotonicity.
+   - the "relative volume" statement: for 0 < s ≤ r ≤ R: V_{K₂}(s)/V_{K₁}(s) ≥ V_{K₂}(r)/V_{K₁}(r) (this is the AntitoneOn restated).
+
+   Also maybe define the full model ball volume including the sphere factor: vol(S^{n-1})·∫₀^r j^{n-1}. The sphere volume constant cancels in ratios. Defining vol(S^{n-1}) in Lean = ω_n·(surface measure) — too heavy; just note the constant cancels, and define `modelBallVolume (n) (j) (r) := ∫ x in Set.Ioo 0 r, j x^(n-1)` — hmm, or `∫ x in 0..r, j x ^ (n-1)` (interval integral). Since the constant ω_{n-1} factors out of both, the ratio is the same. I'll define `modelBallVolume` as the interval integral times a placeholder constant? Cleaner: define `modelBallVolume (n) (j) (r) : ℝ := ∫ x in 0..r, j x ^ (n - 1)` and document that the true volume is ω_{n-1}·modelBallVolume; all comparisons are invariant under the common factor ω_{n-1} > 0. Maybe also state the comparison with the common constant included... Not needed; document.
+
+2. **Laplacian comparison file** as discussed.
+
+3. **AxiomAudit** file with #print axioms.
+
+4. **Result card** longrun/results/D11-comparison-geometry-models.md + .json.
+
+Let me now think about the precise Lean formalization details. Key difficulty areas:
+
+**(A) Interval integrals.** Use `intervalIntegral` from mathlib: `∫ x in a..b, f x`. Available lemmas:
+- `intervalIntegral.integral_mono_on_of_le` etc.
+- For positivity: `intervalIntegral.integral_pos_of_pos_on`? There's `intervalIntegral.integral_pos_of_pos_on` (f > 0 on Ioo a b, a < b, integrable) I think. Also `intervalIntegral.integral_nonneg_of_forall`.
+- FTC: `intervalIntegral.integral_hasDerivAt_right`, `Continuous.integral_hasDerivAt` etc. For deriv of V(r) = ∫₀^r f: `intervalIntegral.integral_hasDerivAt_right` gives HasDerivAt on the right; to get plain `deriv` we need continuous f: `Continuous.integral_hasDerivAt`? Let me check names in Scratch.lean: `@intervalIntegral.integral_hasDerivAt_right`, `@intervalIntegral.integral_hasDerivAt_left`, `@Continuous.integral_hasDerivAt`, `@intervalIntegral.integral_hasStrictDerivAt`. `Continuous.integral_hasDerivAt` — I believe it's `Continuous.integral_hasDerivAt (h : Continuous f) (a b x : ℝ)` — hmm actually in mathlib there's `intervalIntegral.integral_hasDerivAt_of_tendsto_ae`... Let me check the actual signature by #checking. The scratch file has the list; I'll verify signatures at build time.
+
+**(B) Monotonicity of ratio via derivative.** `antitoneOn_of_deriv_nonpos` — check signature: `antitoneOn_of_deriv_nonpos {f : ℝ → ℝ} (hconv : Convex ℝ s) (hcont : ContinuousOn f s) (hdiff : DifferentiableOn ℝ f (interior s)) (hder : ∀ x ∈ interior s, deriv f x ≤ 0) : AntitoneOn f s`. I'll check.
+
+For this I need f = V₂/V₁: differentiable on interior (0, R): needs V₁ ≠ 0 on (0,R), continuity of V's. DifferentiableOn.div needs denominator ≠ 0. Fine.
+
+**(C) The log-derivative (Laplacian) comparison.** Two routes; I'll do the Wronskian route since it's clean and directly uses the D10 ODE conditions:
+
+W(s) = j₁'(s) j₂(s) - j₁(s) j₂'(s), where j₁ = jacobiSol K₁, j₂ = jacobiSol K₂, K₁ ≤ K₂.
+- W' = j₁'' j₂ - j₁ j₂'' = -K₁ j₁ j₂ + K₂ j₁ j₂ = (K₂ - K₁) j₁ j₂ ≥ 0 (for s ≥ 0, up to first zero of j₂, both j₁, j₂ ≥ 0: jacobiSol_nonneg; need j₁ ≥ 0 too — j₁ ≥ j₂ ≥ 0 by rauch_comparison! So j₁ ≥ 0 given j₂ ≥ 0). W(0) = j₁'(0)j₂(0) - j₁(0)j₂'(0) = 1·0 - 0·1 = 0. MonotoneOn_of_deriv_nonneg on [0, r] → W(r) ≥ 0. Then for j₁(r), j₂(r) > 0: divide: j₁'(r) j₂(r) ≥ j₁(r) j₂'(r) → j₂'(r)/j₂(r) ≤ j₁'(r)/j₁(r). ✓ 
+
+  Then multiply by (n-1) ≥ 0.
+
+  Then "the model Laplacian": Δ^{model} r = (n-1) j_K'/j_K for the model with curvature K: explicit computation of the radial Laplacian formula. And the comparison in the model case: Δ^{K'}r = (n-1)j_{K'}'/j_{K'} ≤ (n-1) j_K'/j_K when K ≤ K'. ✓.
+
+  Also nice: the Wronskian statement itself: `wronskian_nonneg : 0 ≤ jacobiDeriv K₁ r * jacobiSol K₂ r - jacobiSol K₁ r * jacobiDeriv K₂ r` for K₁ ≤ K₂, r ≥ 0, up to first zero of j₂ — hmm wait, but careful: W' = (K₂-K₁) j₁ j₂ needs j₁ j₂ ≥ 0 on [0, r]. j₂ ≥ 0 by jacobiSol_nonneg (ht: 0 ≤ t, hK: 0 < K₂ → t ≤ π/√K₂). j₁ ≥ 0: since K₁ ≤ K₂, by rauch_comparison... rauch_comparison gives j₂ ≤ j₁ for s up to first zero of j₂. So j₁ ≥ j₂ ≥ 0 → j₁ j₂ ≥ 0. ✓. 
+
+  But wait — there's subtlety with K₂ ≤ 0: first-zero hypothesis vacuous, j₂ > 0 for r > 0 (t > 0: flat gives t > 0, hyperbolic gives sinh > 0). ✓. K₁ ≤ K₂ ≤ 0: j₁ ≥ j₂ > 0. ✓.
+
+  Then for the divisibility step need j₁(r) ≠ 0 and j₂(r) ≠ 0: given 0 < r and r before first zero of j₂, j₂(r) > 0. j₁(r) ≥ j₂(r) > 0. Need `jacobiSol_pos`: positive for 0 < r up to first zero. In D10 Basic we have `jacobiSolSphere_pos`; flat positivity = r > 0; hyperbolic: sinh(√(-K) r)/√(-K) > 0. I need a general `jacobiSol_pos {K r} (hr : 0 < r) (hK : 0 < K → r ≤ π/√K) : 0 < jacobiSol K r`. This is easy from the branches. I'll add it in my own file (namespace Poincare.D11) rather than modifying D10.
+
+**(D) Bishop–Gromov derivative computation.** 
+
+f(r) = V₂(r)/V₁(r), V_i(r) = ∫ x in 0..r, j_i x ^ (n-1). 
+
+f' = (V₂' V₁ - V₂ V₁')/V₁² = (j₂^{n-1} V₁ - V₂ j₁^{n-1})/V₁².
+
+Need: `deriv (V_i) r = j_i(r)^(n-1)` for r > 0 — from `Continuous.integral_hasDerivAt` hmm, the correct lemma for two-sided deriv: `intervalIntegral.integral_hasDerivAt_right` is one-sided. There's `intervalIntegral.integral_hasDerivAt_of_tendsto_ae`? Actually simplest: `Continuous.integral_hasDerivAt` — I recall in mathlib `Continuous.integral_hasDerivAt` might be `integral_hasDerivAt` for `∫ a..x`. Let me just #check at build time. If `intervalIntegral.integral_hasDerivAt_right` only, then deriv on the right = deriv for continuous f at interior points since the right derivative agrees... I can use `HasDerivAt` from `integral_hasDerivAt_right` and then `HasDerivAt.deriv`? HasDerivAt implies deriv agrees: `HasDerivAt.deriv : HasDerivAt f f' x → deriv f x = f'`. If `integral_hasDerivAt_right` gives `HasDerivWithinAt` on the right... it gives `HasDerivAt`? Let me check: `intervalIntegral.integral_hasDerivAt_right {f : ℝ → E} {a b : ℝ} (hf : IntervalIntegrable f volume a b) (ha : a < b) : HasDerivWithinAt (fun u => ∫ x in a..u, f x) (f b) (Ioi b) b` — it's HasDerivWithinAt on Ioi b. Hmm. Then getting plain `deriv` requires more. But mathlib also has `intervalIntegral.integral_hasDerivAt`? Let me check via grep in mathlib source later. There's `Continuous.integral_hasDerivAt` mentioned in Scratch: `#check @Continuous.integral_hasDerivAt` — that's for `∫₀^x`? It might be `Continuous.integral_hasDerivAt (f : ℝ → E) (a : ℝ) : Continuous f → HasDerivAt (fun u => ∫ t in a..u, f t) (f a)`? Not sure about the exact shape. I'll check.
+
+Simpler alternative: avoid `deriv` of V entirely by using `intervalIntegral` FTC with `HasDerivAt`: there's `intervalIntegral.integral_hasStrictDerivAt_of_continuous`? Hmm.
+
+OK let me now check what's actually available. Actually — since f' ≤ 0 via the integral inequality, and I want `antitoneOn_of_deriv_nonpos`, I need deriv f. Alternatively, prove AntitoneOn directly: for 0 < s ≤ r: f(r) ≤ f(s) via direct double-integral argument: 
+
+f(r) ≤ f(s) ⟺ V₂(r) V₁(s) ≤ V₂(s) V₁(r) ⟺ ∫₀^r j₂^{n-1} · ∫₀^s j₁^{n-1} ≤ ∫₀^s j₂^{n-1} · ∫₀^r j₁^{n-1}. 
+
+Hmm, that's the "average ratio" inequality again — cleanest via derivative anyway, or via a double integral + the pointwise comparison j₂(u)/j₁(u) ≥ j₂(v)/j₁(v) for u ≤ v: ∫₀^s∫₀^r j₂(u)^{n-1} j₁(v)^{n-1} du dv ≤ ∫₀^s∫₀^r j₂(v)^{n-1} j₁(u)^{n-1} du dv — by antisymmetry of the integrand. This is the standard "two-point" Bishop–Gromov proof. In Lean, double interval integrals with Fubini... mathlib has `intervalIntegral.integral_prod`? There's `intervalIntegral.integral_integral_swap`? That would be heavy.
+
+The task explicitly says "prove via derivative sign computation", so let's do the derivative route: it also naturally uses `antitoneOn_of_deriv_nonpos`. Plan:
+
+1. `V_i` continuous everywhere (integral of continuous function: `continuousOn_intervalIntegral`... there's `intervalIntegral.continuousOn_integral_of_continuous` or just `Continuous` via `intervalIntegral.continuous_...`? We can use `hasDerivAt` at each point: `intervalIntegral.integral_hasDerivAt_right` gives differentiability on the right... For continuity: there's `intervalIntegral.continuousOn_primitive`? I'll find the right lemmas by grepping mathlib.
+
+Actually, simpler for continuity of V on (0, R]: For the AntitoneOn proof, set s = Ioc 0 R (convex). ContinuousOn f s where f = V₂/V₁: V_i continuous (there's a standard lemma `intervalIntegral.continuousOn_integral_of_continuous`: for ContinuousOn f, the map (a, b) ↦ ∫ a..b is continuous on... hmm). I can also prove continuity directly via HasDerivAt: if I manage `HasDerivAt V r (j r^(n-1))` at every r ∈ Ioo 0 R (via `Continuous.integral_hasDerivAt` or similar), continuity follows.
+
+2. Differentiability: same HasDerivAt. Then f = V₂/V₁: `HasDerivAt.div` with V₁ r ≠ 0.
+
+3. Sign: numerator = j₂(r)^{n-1} V₁(r) - V₂(r) j₁(r)^{n-1} ≤ 0 via the integral inequality.
+
+4. `antitoneOn_of_deriv_nonpos` on convex Ioc 0 R.
+
+Wait — antitoneOn_of_deriv_nonpos might need `Convex ℝ s`; Ioc 0 R is convex. DifferentiableOn ℝ f (interior (Ioc 0 R)) = Ioo 0 R. Need f continuous on Ioc 0 R: V₁ ≠ 0 there (j₁ > 0 on (0,R]... j₁ > 0 for r ∈ (0, R] where R ≤ first zero of j₂ ≤ first zero of j₁? j₁ ≥ j₂, and first zero of j₁ ≥ first zero of j₂? For K₁ ≤ K₂ > 0: π/√K₁ ≥ π/√K₂ ✓. So j₁ > 0 on (0, R]. ✓). Division by continuous nonvanishing is continuous: use `ContinuousOn.div`? Hmm, ContinuousOn.div requires denominator ≠ 0 on the set. Or pointwise: `continuousAt_div`... I'll use `ContinuousOn.div` or build continuity pointwise via HasDerivAt. Since I'll have HasDerivAt V on Ioo 0 R (open), continuity on the whole Ioc 0 R needs the endpoints. Continuity at R: fine since R > 0 (from the HasDerivAt at R if it's in an open interval... HasDerivAt requires f defined in a neighborhood; for V(r) = ∫₀^r, the integral is defined for all r ∈ ℝ, so HasDerivAt at any r ∈ ℝ actually! V : ℝ → ℝ is smooth everywhere if f is continuous on ℝ. j^p is continuous on ℝ. So `V_i : ℝ → ℝ`, `Continuous (V_i)`, `Differentiable ℝ (V_i)`, `HasDerivAt (V_i) (j_i r^(n-1)) r` for ALL r ∈ ℝ (integral from 0 to r of continuous integrand). ✓ That's the way: total functions, differentiability everywhere, then restrict.
+
+So: does mathlib give `HasDerivAt (fun u => ∫ x in 0..u, f x) (f u) u` for continuous f? `Continuous.integral_hasDerivAt`... I think the name is `intervalIntegral.integral_hasDerivAt_right` (one-sided) and the two-sided version is `Continuous.integral_hasDerivAt`? Hmm, `Continuous.integral_hasDerivAt` might be for `∫ 0..x`. Let me just grep mathlib source. The mathlib is at /data3/.../poincare-lab/.lake/packages or the worktree's release/.lake/packages symlink. I'll locate it.
+
+Also `intervalIntegral.integral_hasStrictDerivAt`: from Scratch check — probably `intervalIntegral.integral_hasStrictDerivAt {f : ℝ → E} {a b c : ℝ} (hf : ContinuousAt f c) : HasStrictDerivAt (fun u => ∫ x in a..u, f x) (f c) c` — that would be ideal: HasStrictDerivAt at every c where f is continuous at c. For continuous f: everywhere. ✓.
+
+So:
+```lean
+theorem modelVolume_hasDerivAt (n : ℕ) (K : ℝ) (r : ℝ) :
+    HasDerivAt (fun u => modelVolume n K u) (jacobiSol K r ^ (n-1)) r := ...
+```
+Hmm, does `integral_hasStrictDerivAt` need `f` continuous at `c` only, or interval integrable on [a,c]? It's about the integral from a to u of f — HasStrictDerivAt means derivative as u → c of ∫ₐ^u f, which needs f continuous at c. I believe the lemma is:
+
+`intervalIntegral.integral_hasStrictDerivAt {f : ℝ → E} {a b c : ℝ} (hf : ContinuousAt f c) (ha : a < b) ...` hmm, actually I recall:
+
+```lean
+theorem integral_hasStrictDerivAt {f : ℝ → E} {a b : ℝ} (hf : ContinuousAt f b) (ha : a ≠ b) :
+    HasStrictDerivAt (fun u => ∫ x in a..u, f x) (f b) b
+```
+
+Not sure about ha. I'll #check.
+
+Now, the details of the integral inequality for the numerator sign:
+
+Claim: for K₁ ≤ K₂, 0 < r ≤ R (R ≤ first zero of j₂): V₂(r) j₁(r)^{n-1} ≤ V₁(r) j₂(r)^{n-1}.
+
+Hmm wait, earlier I derived: f' ≤ 0 ⟺ j₂^{n-1} V₁ ≤ V₂ j₁^{n-1}. Let me re-derive: f = V₂/V₁. f' = (V₂' V₁ - V₂ V₁')/V₁² = (j₂^{n-1} V₁ - V₂ j₁^{n-1})/V₁². f' ≤ 0 ⟺ j₂^{n-1} V₁ ≤ V₂ j₁^{n-1} ⟺ V₁(r)/V₂(r) ≥ j₁(r)^{n-1}/j₂(r)^{n-1}... wait: j₂^{n-1} V₁ ≤ V₂ j₁^{n-1} ⟺ V₁/V₂ ≤ j₁^{n-1}/j₂^{n-1} (dividing by V₂ j₂^{n-1} > 0) ⟺ (j₂/j₁)^{n-1} ≤ V₂/V₁. Yes! "current ratio ≤ average ratio" — since s ↦ (j₂(s)/j₁(s))^{n-1} is nonincreasing from 1, its value at r is ≤ its average over [0,r]. ✓.
+
+Proof of the integrated inequality: from the log-derivative comparison at every s ∈ (0, r): j₂'(s) j₁(s) ≤ j₂(s) j₁'(s)... wait, j₂'/j₂ ≤ j₁'/j₁ ⟺ j₂' j₁ ≤ j₂ j₁' (positive). Define u(s) = j₂(s)/j₁(s)... or equivalently: (j₂/j₁)' = (j₂' j₁ - j₂ j₁')/j₁² ≤ 0 → j₂/j₁ antitone on (0, R] → for 0 < s ≤ r: j₂(s)/j₁(s) ≥ j₂(r)/j₁(r) → j₂(s) j₁(r) ≥ j₂(r) j₁(s) → (powers, nonneg) → integrate over s ∈ [0, r].
+
+But to avoid re-deriving antitone-ness from derivative on (0, R] (which needs the same antitoneOn_of_deriv_nonpos machinery), I can do the Wronskian monotonicity instead: W(s) := j₁'(s) j₂(s) - j₁(s) j₂'(s) ≥ 0 on [0, r] (W(0) = 0, W' ≥ 0, monotoneOn_of_deriv_nonneg on Icc 0 r). Then j₂(s) j₁'(s) - j₂'(s) j₁(s)... hmm W = j₁' j₂ - j₁ j₂' ≥ 0 ⟺ j₂ j₁' ≥ j₁ j₂' ⟺ j₂'/j₂ ≤ j₁'/j₁ ✓. So W ≥ 0 is the pointwise statement equivalent to the log-derivative comparison. And then the two-point inequality j₂(s) j₁(r) ≥ j₂(r) j₁(s): from (j₂/j₁) antitone... which is equivalent to W ≥ 0 via... For s ≤ r: j₂(s)/j₁(s) ≥ j₂(r)/j₁(r) ⟺ j₂(s) j₁(r) ≥ j₂(r) j₁(s). Is this a consequence of W ≥ 0 on [s, r]? Yes: (j₂/j₁)' ≤ 0 pointwise → monotone on [s,r]. Using antitoneOn_of_deriv_nonpos on [s, r] for the ratio q(u) = j₂(u)/j₁(u) (u ∈ (0, ∞), j₁ > 0). q' = (j₂' j₁ - j₂ j₁')/j₁² = -W/j₁² ≤ 0. ✓.
+
+Alternatively — a slicker route avoiding q (division) entirely: define w(s) = j₂(s) j₁(r) - j₂(r) j₁(s) for fixed r... w'(s) = j₂'(s) j₁(r) - j₂(r) j₁'(s). Hmm, sign? We want w(s) ≥ 0 for s ≤ r... w(r) = 0, so want w nonincreasing in s? w'(s) = j₂'(s)j₁(r) - j₂(r)j₁'(s) ≤ 0? ⟺ j₂'(s)j₁(r) ≤ j₂(r)j₁'(s) ⟺ j₂'(s)/j₁'(s) ≤ j₂(r)/j₁(r) — hmm that's another comparison (j₂'/j₁' ≤ j₂/j₁ — ratio of derivatives ≤ ratio of values — for s ≤ r). That follows from (j₂/j₁)' ≤ 0 AND j₂'/j₁'... no wait: j₂'/j₁' ≤ j₂/j₁ requires the ratio of DERIVATIVES ≤ ratio of values. Since j₂/j₁ is decreasing and j₂'/j₁' = (j₂/j₁)·(j₁... no. Hmm: j₂'(s)/j₁'(s) ≤ j₂(s)/j₁(s)? j₂'/j₁' = (j₂'/j₂)·(j₂/j₁)·(j₁/j₁') ≤ ... j₂'/j₂ ≤ j₁'/j₁ gives j₂'/j₁' ≤ j₂/j₁·(j₁'/j₁)·(j₁/j₁') = j₂/j₁. Wait: j₂'/j₂ ≤ j₁'/j₁ → j₂' j₁ ≤ j₁' j₂ → j₂'/j₁' ≤ j₂/j₁ (when j₁' > 0 ✓ since j₁' = jacobiDeriv K₁ ≥ cos ≥ ... for s < first zero, jacobiDeriv > 0? For sphere: cos(√K s) > 0 for s < π/(2√K) — only up to π/2! Beyond that j₁' < 0. Hmm, so j₁' > 0 only on the first half. So division by j₁' is problematic. Use the W-and-integral route instead.)
+
+So the cleanest, most robust route:
+
+**Step A (Wronskian):** for K₁ ≤ K₂, r ≥ 0, r ≤ first zero of j₂ (if K₂ > 0): `0 ≤ jacobiDeriv K₁ r * jacobiSol K₂ r - jacobiSol K₁ r * jacobiDeriv K₂ r`. Proof: W continuous on [0, r], differentiable, W' = (K₂ - K₁) j₁ j₂ ≥ 0 on [0, r] (via ODE + nonneg), monotoneOn_of_deriv_nonneg, W(0) = 0.
+
+W' computation: W = j₁' j₂ - j₁ j₂'. W' = j₁'' j₂ + j₁' j₂' - j₁' j₂' - j₁ j₂'' = j₁'' j₂ - j₁ j₂''. = -K₁ j₁ j₂ - j₁ (-K₂ j₂) = (K₂ - K₁) j₁ j₂. ✓ (using jacobiSol_ode: deriv(deriv j_i) = -K_i j_i.)
+
+In Lean: deriv_sub, deriv_mul, jacobiSol_deriv, jacobiSol_ode. Fine.
+
+**Step B (log-derivative / Laplacian comparison):** given 0 < r, r ≤ first zero of j₂ (if K₂ > 0): jacobiDeriv K₂ r / jacobiSol K₂ r ≤ jacobiDeriv K₁ r / jacobiSol K₁ r. Proof: from Step A: 0 ≤ j₁' j₂ - j₁ j₂' → j₁ j₂' ≤ j₁' j₂ → divide by j₁ j₂ > 0: j₂'/j₂ ≤ j₁'/j₁. (Via div_le_div_iff_of_pos or field_simp... `div_le_div_of_nonneg_right`? Standard: `div_le_div_iff_of_pos` for a/c ≤ b/d with c, d > 0. Or use `mul_le_mul_of_nonneg_right` style: j₁ j₂' ≤ j₁' j₂ → divide: j₂' * j₁ ≤ j₁' * j₂ → (j₂'/j₂)·(j₁ j₂) ≤ (j₁'/j₁)·(j₁ j₂) → cancel. Use `div_le_div₀`? I'll figure out with nlinarith + field_simp + positivity.)
+
+Then multiply by (n-1): need (n-1 : ℝ) ≥ 0 ✓ Nat.cast_nonneg.
+
+**Step C (two-point density inequality):** for 0 ≤ s ≤ r, r ≤ first zero of j₂: j₂(s)^{n-1} · j₁(r)^{n-1} ≥ j₂(r)^{n-1} · j₁(s)^{n-1}. Hmm wait — actually I realize I should double check the direction I need: I need j₂(r)^{n-1} V₁(r) ≤ V₂(r) j₁(r)^{n-1}? Let me redo. 
+
+f' ≤ 0 ⟺ j₂(r)^{n-1} V₁(r) - V₂(r) j₁(r)^{n-1} ≤ 0. Wait: f' = (V₂' V₁ - V₂ V₁')/V₁² = (j₂^{n-1} V₁ - V₂ j₁^{n-1})/V₁². Hmm — is f = V₂/V₁ or V₁/V₂? Bishop–Gromov: r ↦ vol B_{actual}(r)/vol B_{model}(r) nonincreasing, actual curvature K₂ ≥ K₁ = model. vol B_{actual} = V₂ (with j₂ ≤ j₁), model = V₁. f = V₂/V₁ ≤ 1, decreasing from 1. f' ≤ 0 ⟺ V₂' V₁ ≤ V₂ V₁' ⟺ j₂^{n-1} V₁ ≤ V₂ j₁^{n-1}. ✓.
+
+Now two-point: for 0 ≤ s ≤ r: j₂(s) j₁(r) ≥ j₂(r) j₁(s) (equivalently j₂(s)/j₁(s) ≥ j₂(r)/j₁(r), ratio nonincreasing in s). From Step B applied at... hmm, Step B is pointwise: j₂'/j₂ ≤ j₁'/j₁. To get the two-point inequality need monotonicity of the ratio — via antitoneOn_of_deriv_nonpos on [s, r] for q = j₂/j₁. q is differentiable on (0, ∞) (j₁ > 0 there... need j₁ > 0 on [s, r]: s > 0 for interior differentiability — hmm s could be 0; then use antitoneOn on Icc s r with interior (s, r); q defined on [s,r] needs j₁ > 0 on [s, r], in particular at s. If s = 0, j₁(0) = 0, q undefined at 0. 
+
+Alternative: integrate Step B instead of using q! From Step B at each u ∈ (0, r): j₂'(u) j₁(u) ≤ j₂(u) j₁'(u). Both sides ≥ 0? No — j₂' j₁ vs j₂ j₁': for u beyond π/2, j₂' < 0 while j₂ > 0 → LHS < 0, RHS = j₂ j₁' could be anything. The two-point inequality j₂(s) j₁(r) ≥ j₂(r) j₁(s) is equivalent to ∫_s^r (j₂' j₁ - j₂ j₁') ≤ 0 — but wait, actually the equivalence: (j₂ j₁' - j₂' j₁)(u) = W(u) ≥ 0 pointwise (Step A) → integrate over [s, r]: ∫_s^r W ≥ 0 → ∫_s^r j₁ j₂' ≤ ∫_s^r j₂ j₁'. Hmm, is that the two-point inequality? The two-point inequality j₂(s) j₁(r) ≥ j₂(r) j₁(s) is equivalent to... d/du log(j₂/j₁) = j₂'/j₂ - j₁'/j₁ = (j₂' j₁ - j₂ j₁')/(j₁ j₂) = -W/(j₁ j₂) ≤ 0. So d/du log(j₂/j₁) ≤ 0 pointwise. Integrate over [s, r]: log(j₂(r)/j₁(r)) - log(j₂(s)/j₁(s)) = ∫_s^r -W/(j₁ j₂) ≤ 0. That's the cleanest: log is a genuine "explicit computation" too. But integrating the derivative of log(j₂/j₁) over [s,r] via intervalIntegral.integral_eq_sub_of_hasDerivAt — doable: `intervalIntegral.integral_eq_sub_of_hasDerivAt` (FTC barrow: ∫ a..b f' = f b - f a when f' = deriv f on the interval). ✓.
+
+So two routes for Step C: 
+(C1) W-integral: ∫_s^r W ≥ 0 gives ∫ j₁ j₂' ≤ ∫ j₂ j₁'... that does NOT directly give the two-point inequality. Skip.
+(C2) log ratio: q(u) = log(j₂(u)) - log(j₁(u)); q' = j₂'/j₂ - j₁'/j₁ = -W/(j₁ j₂) ≤ 0; so q(r) ≤ q(s) for s ≤ r by monotoneOn_of_deriv_nonpos (q defined and differentiable on (0, R] since j₁, j₂ > 0 there, continuous); then exp monotone: j₂(r)/j₁(r) ≤ j₂(s)/j₁(s) → cross multiply. Hmm, exp step: q(r) ≤ q(s) → exp(q(r)) ≤ exp(q(s)) → (j₂(r)/j₁(r)) ≤ (j₂(s)/j₁(s)) → j₂(r) j₁(s) ≤ j₂(s) j₁(r). ✓. Uses Real.log/exp monotonicity — fine, mathlib has it.
+
+Actually — wait. Since q is defined on all of (0, R] and continuous on (0, R], I can use `antitoneOn_of_deriv_nonpos` on Ioc 0 R directly, then get the two-point inequality for 0 < s ≤ r ≤ R. For s = 0 case: j₂(0) j₁(r) ≥ j₂(r) j₁(0) ⟺ 0 ≥ 0 ✓ trivial. So handle s = 0 separately in the integration step (split interval [0, r] = {0} ∪ (0, r], measure-zero split not needed: intervalIntegral over [0, r] = [0, 0] + [0, r]... simpler: in the integral inequality proof, integrate the two-point inequality over s ∈ [0, r] — the endpoint s = 0 has measure zero and both integrands are continuous, so I can use `intervalIntegral.integral_mono_on` on Icc 0 r with the inequality holding on Ioo 0 r? There's `intervalIntegral.integral_mono_on_of_le` / `integral_mono_on`: needs pointwise inequality on the whole interval. For s = 0: j₂(0)^{n-1} j₁(r)^{n-1} = 0·j₁(r)^{n-1} = 0 and j₂(r)^{n-1} j₁(0)^{n-1} = 0 → equality ✓. But n-1 could be 0: n = 1: 0^0 = 1! Then j₂(0)^0 j₁(r)^0 = 1·1 = 1 = j₂(r)^0 j₁(0)^0 = 1 ✓ still equality. Great, so the two-point inequality holds on all of [0, r] including s = 0 (with equality at 0). For n ≥ 1, powers (n-1) of nonneg numbers: from a ≥ b ≥ 0 and n-1... `pow_le_pow_left₀` (needs 0 ≤ a; (ha : 0 ≤ a) : a^m ≤ b^m given...). mathlib: `pow_le_pow_left₀ (ha : 0 ≤ a) (hab : a ≤ b) : a ^ n ≤ b ^ n`? And for the (n-1)-th power of the two-point inequality: both sides ≥ 0: j₂(s) j₁(r) ≥ j₂(r) j₁(s) ≥ 0 → `pow_le_pow_left₀` ✓.
+
+Hmm wait, one more check on the two-point inequality for s ∈ (0, r]: from q antitone on Ioc 0 R: q(r) ≤ q(s) (s ≤ r). ✓. So define q on ℝ via q(u) = log(j₂(u)) - log(j₁(u))? j's are ≥ 0 but log needs > 0 — j₁(u) > 0 on (0, R] ✓, at u = 0 it's 0 — log undefined but q as a total function defined by `Real.log (jacobiSol K₂ u) - Real.log (jacobiSol K₁ u)` — at u = 0: log 0 = log 0 = ... Real.log 0 = 0 in mathlib (log defined as 0 at 0 via `if`). Fine — q is a total function; it's continuous/differentiable on (0, R] where j's > 0 (Real.log differentiable on {x | x ≠ 0}... Real.differentiableAt_log : x ≠ 0 → DifferentiableAt ℝ log x. ✓).
+
+So Step C proof: `AntitoneOn q (Ioc 0 R)` via antitoneOn_of_deriv_nonpos: 
+- convex Ioc 0 R ✓ (Ioc of an interval is convex).
+- ContinuousOn q (Ioc 0 R): composition of continuous functions on (0, R] — Real.log continuous at x ≠ 0 ✓.
+- DifferentiableOn q (interior (Ioc 0 R)) = Ioo 0 R: Real.differentiableAt_log with j₁(u) ≠ 0 (j₁(u) > 0).
+- derivative ≤ 0: q'(u) = j₂'(u)/j₂(u) - j₁'(u)/j₁(u) = -W(u)/(j₁(u) j₂(u)) ≤ 0 from Step A.
+
+Then `hq : q r ≤ q s`... wait AntitoneOn gives q r ≤ q s for s ≤ r, both in Ioc 0 R. Then `Real.exp_le_exp.mpr hq` → j₂(r)/j₁(r) ≤ j₂(s)/j₁(s). Then via `div_le_div_iff₀` or field_simp with positivity → j₂(r) j₁(s) ≤ j₂(s) j₁(r). ✓.
+
+Hmm, actually hold on. Let me reconsider — maybe simpler to avoid log entirely: since q' = -W/(j₁ j₂), and I want q antitone... I could use the W-integral route for the two-point inequality directly: 
+
+j₂(s) j₁(r) - j₂(r) j₁(s) = ∫... hmm, write j₂(s) j₁(r) ≥ j₂(r) j₁(s) ⟺ ... let's define h(u) = j₂(u)/j₁(u). h(r) ≤ h(s). h(r) - h(s) = ∫_s^r h' = ∫_s^r -W/(j₁j₂) ≤ 0. To prove this without log: h' = -W/j₁², so h(r) - h(s) = -∫_s^r W/j₁² ≤ 0 — even simpler, no log needed! h'(u) = (j₂' j₁ - j₂ j₁')/j₁² = -W(u)/j₁(u)² ≤ 0. ∫_s^r h' = h(r) - h(s) via `intervalIntegral.integral_eq_sub_of_hasDerivAt` (needs h' = deriv h on [s, r]... h differentiable on (s, r), continuous on [s, r] ✓ for s > 0). Then -∫ W/j₁² ≤ 0 since W ≥ 0, j₁² > 0 → integrand ≥ 0 → ∫ ≥ 0 → h(r) - h(s) ≤ 0. ✓. No exp/log — cleaner! And it's still "derivative sign computation".
+
+So Step C via: for 0 < s ≤ r: h(s) ≥ h(r) where h(u) = j₂(u)/j₁(u), using h' = -W/j₁² ≤ 0 and antitoneOn_of_deriv_nonpos on Icc s r (s > 0), or FTC integral.
+
+Actually simplest implementation: directly prove `AntitoneOn h (Ioc 0 R)` where h(u) = j₂(u)/j₁(u):
+- continuous on Ioc 0 R (j₁ ≠ 0 there) ✓
+- differentiable on Ioo 0 R ✓
+- h' = -W/j₁² ≤ 0 ✓ (from Step A: W ≥ 0, j₁² > 0)
+- → antitoneOn_of_deriv_nonpos.
+
+Then two-point: for 0 < s ≤ r ≤ R: h(r) ≤ h(s) → j₂(r)/j₁(r) ≤ j₂(s)/j₁(s) → cross-multiply with positivity: j₂(r) j₁(s) ≤ j₂(s) j₁(r) ✓.
+
+And then powers: j₂(r)^{n-1} j₁(s)^{n-1} ≤ j₂(s)^{n-1} j₁(r)^{n-1} (both sides ≥ 0 → pow_le_pow_left₀).
+
+**Step D (Bishop–Gromov derivative sign):** f = V₂/V₁ on (0, R], f'(r) = (j₂^{n-1} V₁ - V₂ j₁^{n-1})/V₁². Numerator ≤ 0 ⟺ j₂(r)^{n-1} V₁(r) ≤ V₂(r) j₁(r)^{n-1} ⟸ integrate the two-point inequality over s ∈ [0, r]:
+
+∫₀^r [j₂(s)^{n-1} j₁(r)^{n-1}] ds ≤ ∫₀^r [j₂(r)^{n-1} j₁(s)^{n-1}] ds → j₁(r)^{n-1} V₂(r) ≤ j₂(r)^{n-1} V₁(r) ✓ (constants pull out: j₁(r)^{n-1} and j₂(r)^{n-1} are constants in s). 
+
+Then f' = .../V₁² ≤ 0 since V₁² > 0 (V₁(r) = ∫₀^r j₁^{n-1} > 0 for r > 0: j₁ > 0 on (0, r] → integral_pos... `intervalIntegral.integral_pos_of_pos_on`? hmm wait — but I need V₁(r) ≠ 0 for the differentiability/div lemma, and V₁(r) > 0 for the sign. For r > 0, j₁(s) > 0 for s ∈ (0, r) (subset of (0, R]) → ∫₀^r j₁^{n-1} > 0 via `intervalIntegral.integral_pos_of_pos_on` (f > 0 on Ioo a b... j₁^{n-1} > 0 on (0, r): j₁(s) > 0 → j₁(s)^{n-1} > 0 ✓ n ≥ 1... for n = 1: j₁^0 = 1 > 0 ✓).
+
+**Step E (antitone):** `AntitoneOn f (Ioc 0 R)` via antitoneOn_of_deriv_nonpos with Steps D. Then the final theorem:
+
+`theorem bishopGromov_model {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) (n : ℕ) {R : ℝ} (hR : 0 < R) (hR2 : 0 < K₂ → R ≤ π/√K₂) : AntitoneOn (fun r => modelVolume n K₂ r / modelVolume n K₁ r) (Ioc 0 R)`
+
+Hmm wait, I should double check the direction of curvature indices: K₁ = model (comparison) curvature, K₂ = actual ≥ K₁. j₂ ≤ j₁ (Rauch: jacobiSol K₂ ≤ jacobiSol K₁ for K₁ ≤ K₂ ✓ matches D10 `rauch_comparison`). V₂ ≤ V₁. Ratio V₂/V₁ ≤ 1 decreasing. ✓. In the final statement I'll name them `Kmodel` and `Kspace` or keep K₁ K₂ with hK : K₁ ≤ K₂ and document.
+
+Also add:
+- `bishopGromov_ratio_le_one`: V₂(r)/V₁(r) ≤ 1 (from monotonicity + limit at 0 → 1? or directly from V₂ ≤ V₁ pointwise: integral_mono → V₂ ≤ V₁ → ratio ≤ 1). Direct is easy.
+- corollary for two radii: `0 < s ≤ r ≤ R → V₂(r)/V₁(r) ≤ V₂(s)/V₁(s)` (restate of AntitoneOn).
+- The classical corollary: relative volume `V₁(r)/V₁(R) ≥ ...` hmm, that involves the actual manifold's volumes only with comparison... skip or include the two-radii corollary of the antitone statement. Also `vol_ratio_bound`: V₂(r)/V₂(R) ≥ V₁(r)/V₁(R) for r ≤ R — this is the standard consequence: (V₂(r)/V₁(r)) ≥ (V₂(R)/V₁(R)) → V₂(r)/V₂(R) ≥ V₁(r)/V₁(R). ✓ Cross-multiply. Nice to include as the classical "relative volume comparison".
+
+Hmm wait, but there's a subtlety in the "vol" definition: `modelVolume n K r := ∫ x in 0..r, jacobiSol K x ^ (n - 1)`. For n = 0 (dimension 0): n-1 = 0 in Nat → j^0 = 1, volume = r. Dimension 0 is degenerate but fine — or restrict to n ≥ 1. Bishop–Gromov is for n ≥ 1 (dim ≥ 2 usually; dim 1: Ric bound vacuous, n-1 = 0, everything trivial). I'll state for all n : ℕ but note n ≥ 1 in docs; actually for n = 0 the statements still hold formally (V = r, ratio = 1, monotone ✓; Laplacian comparison with factor 0: 0 ≤ 0 ✓). So no restriction needed. Nice — unconditional for all n.
+
+Wait, one more check on `modelVolume` positivity: `V₁(r) > 0` for r > 0: integrand j₁^{n-1} > 0 on Ioo 0 r requires j₁(s) > 0 for all s ∈ (0, r). j₁ = jacobiSol K₁ with K₁ ≤ K₂; R ≤ π/√K₂ (first zero of j₂). j₁ ≥ j₂ > 0 on (0, R] → j₁ > 0 on (0, R]. Hmm wait — need j₂ > 0 on (0, R]: R ≤ first zero, and for K₂ ≤ 0 trivially. Need a lemma `jacobiSol_pos_of_lt_firstZero {K t} (ht : 0 < t) (hK : 0 < K → t ≤ π/√K) : 0 < jacobiSol K t`. In D10 we have `jacobiSolSphere_pos` (strict version with √K t < π), `jacobiSol_nonneg`. I'll add `jacobiSol_pos` and also `jacobiSol_strictPosOn`... in my D11 file (namespace Poincare.D11, or reuse Poincare.D10? I shouldn't modify D10 files — I can add new lemmas in my own namespace importing D10). For t ≤ π/√K: need non-strict: sin(√K t)/√K > 0 for √K t ≤ π and t > 0: √K t ∈ (0, π] → sin ≥ 0, sin = 0 only at 0 and π; sin(√K t) > 0 on (0, π]... at exactly π: sin π = 0! If t = π/√K exactly, j₂(t) = 0 — that's the first zero. So on (0, R] with R < π/√K strictly, j > 0. If R = π/√K, j(R) = 0 — the ratio f at R: V₁(R) > 0 fine, j₂(R) = 0, f(R) = V₂(R)/V₁(R) well-defined and fine (V₂(R) = volume of the whole sphere, positive). The two-point inequality at s = R: 0·j₁(R)... j₂(R) = 0: j₂(R)^{n-1} = 0 for n ≥ 2; for n = 1: 0^0 = 1. Hmm n = 1 case: V_K(r) = ∫₀^r 1 = r, ratio = 1 constant ✓ monotone ✓. The derivative formula f' = (1·V₁ - V₂·1)/V₁² = (r - r)/r² = 0 ✓. OK so n = 1 works out algebraically as long as I don't divide by j₂(R) = 0 anywhere. Let me trace: Step B (Laplacian comparison) requires j₁(r), j₂(r) > 0 — strict positivity — so restrict to r < π/√K₂ when K₂ > 0. Hmm — the two-point inequality at s < r ≤ R uses h on (0, R] which needs j₁ > 0 on (0, R] ✓ (j₁ ≥ j₂ ≥ 0, and j₁ > 0 since... hmm wait j₁(u) > 0 for u ∈ (0, R): j₁ ≥ j₂ and j₂(u) > 0 for u < first zero ✓; at u = R if R = π/√K₂: j₁(R) ≥ j₂(R) = 0, but j₁(R) > 0? j₁ = jacobiSol K₁ with K₁ ≤ K₂: first zero of j₁ is at π/√K₁ ≥ π/√K₂ = R, and at u = R < π/√K₁ strictly (if K₁ < K₂) j₁(R) > 0; if K₁ = K₂, j₁(R) = 0 — hmm then h(R) = j₂(R)/j₁(R) = 0/0. So the two-point inequality with s or r = R = π/√K₂ when K₁ = K₂: j₂(R) j₁(s) = 0·j₁(s) = 0 ≤ j₂(s)·0 ✓ still true (equality 0 = 0 for n ≥ 2; for n = 1: 0^0 = 1: j₂(R)^0 j₁(s)^0 = 1 ≤ j₂(s)^0 j₁(R)^0 = 1 ✓). But to prove it I need h = j₂/j₁ continuous up to R — fails when both vanish at R.
+
+Simplest: make the Bishop–Gromov theorem require R < π/√K₂ when K₂ > 0 (strictly before the first zero). That's the standard formulation anyway (balls up to the injectivity radius). Then everything is strict positive on (0, R]. Let me define:
+
+`hR2 : 0 < K₂ → R < π/√K₂` — strict. Hmm, D10's rauch_comparison uses `t ≤ π/√K₂` non-strict. For my needs strict is cleaner. But then "unconditional" — the hypotheses are arithmetic conditions, fine. Also provide a version with `R ≤ π/(2·√K₂)`? No, keep it simple.
+
+Hmm, wait — actually I realize I should double-check j₂ > 0 on (0, R] under `hR2 : 0 < K₂ → R < π/√K₂`:
+- K₂ > 0: j₂(u) = sin(√K₂ u)/√K₂; u ∈ (0, R], √K₂ u < √K₂ R < π → sin > 0 ✓ (Real.sin_pos_of_mem_Ioo: 0 < √K₂ u < π).
+- K₂ = 0: j₂ = u > 0 ✓.
+- K₂ < 0: sinh(√(-K₂) u)/√(-K₂) > 0 ✓ (sinh x > 0 for x > 0: Real.sinh_pos_iff).
+
+So lemma `jacobiSol_pos_of_lt_firstZero {K t} (ht : 0 < t) (hK : 0 < K → t < π/√K) : 0 < jacobiSol K t`. I'll prove it in the D11 file. Similarly j₁ > 0: j₁ ≥ j₂ (rauch_comparison at u, u ≤ R < first zero of j₂ ✓).
+
+Hmm — actually for j₁ > 0 I can use the same lemma with K = K₁: need `0 < K₁ → u < π/√K₁`: if K₁ > 0 then K₂ ≥ K₁ > 0 → π/√K₁ ≥ π/√K₂ > u ✓ (√ monotone: √K₁ ≤ √K₂ → 1/√K₁ ≥ 1/√K₂ → π/√K₁ ≥ π/√K₂ > u ✓). 
+
+**Part 3 (Laplacian) theorem statement:**
+
+`theorem laplacian_comparison_model {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) {r : ℝ} (hr : 0 < r) (hr2 : 0 < K₂ → r < π/√K₂) (n : ℕ) : (n-1 : ℝ) * (jacobiDeriv K₂ r / jacobiSol K₂ r) ≤ (n-1 : ℝ) * (jacobiDeriv K₁ r / jacobiSol K₁ r)`
+
+And the model Laplacian computation: define
+
+```lean
+noncomputable def modelRadialLaplacian (n : ℕ) (j : ℝ → ℝ) (f : ℝ → ℝ) (r : ℝ) : ℝ :=
+  deriv (deriv f) r + (n - 1 : ℝ) * (deriv j r / j r) * deriv f r
+```
+
+Then `theorem laplacian_distance_model (n K r) (hr : jacobiSol K r ≠ 0) : modelRadialLaplacian n (jacobiSol K) (fun x => x) r = (n-1) * jacobiDeriv K r / jacobiSol K r := by` — (id)'' = 0: deriv (deriv id) = deriv (fun _ => 1)... `deriv_id'`? deriv id x = 1: `deriv_id''`? mathlib: `deriv_id` : deriv id x = 1? There's `deriv_id : deriv (id : ℝ → ℝ) x = 1` hmm I think `deriv_id'` or `HasDerivAt.id`. deriv (deriv id): deriv (fun x => x) = 1 constant → deriv of constant = 0. Need: `deriv_const : deriv (fun x => c) x = 0`. ✓.
+
+So laplacian_distance_model: modelRadialLaplacian n (jacobiSol K) id r = 0 + (n-1)·(j'/j)·1 = (n-1) j'/j ✓.
+
+And then the comparison as a corollary chain:
+
+`laplacian_comparison`: Δr (actual, curvature K₂) ≤ model value (curvature K₁). Formally:
+
+```lean
+theorem laplacian_comparison (hK : K₁ ≤ K₂) ... :
+  modelRadialLaplacian n (jacobiSol K₂) id r ≤ modelRadialLaplacian n (jacobiSol K₁) id r
+```
+
+= after rewriting both sides via laplacian_distance_model: (n-1) j₂'/j₂ ≤ (n-1) j₁'/j₁ ✓ Step B.
+
+Note: "Δr ≤ (n-1) j_K'(r)/j_K(r)": here the LHS is the actual manifold's Δr = model K₂'s (n-1) j₂'/j₂ and the RHS (n-1) j_K'/j_K with K = K₁. ✓ matches.
+
+Also I might add the **exact model Laplacian identity as "explicit radial computation"**: maybe also verify the formula "Δ_model f = f'' + (n-1) (j'/j) f'" is the actual polar-coordinate Laplacian of the warped metric by defining the metric explicitly... that's circular; the honest approach: DEFINE the model Laplacian in the polar chart by that formula (documenting it's the standard polar-coordinate expression), and separately provide the geometric ingredients: the metric g (part 1) and the radial vector field... I'll document clearly.
+
+Hmm, actually, wait. Let me reconsider — maybe I should define the model Laplacian more "geometrically" via the explicit divergence formula? That's heavy. The task says "explicit radial computation, unconditional" — the radial formula IS the explicit computation. The definition `modelRadialLaplacian n j f r = f''(r) + (n-1) j'(r)/j(r) f'(r)` is a legitimate definition of the Laplacian of radial functions in the polar chart of the warped product (standard formula, can cite the derivation in docs). Since we can't feasibly formalize the full Riemannian Laplacian machinery in this card, defining via the standard polar expression and documenting is the honest choice. I'll be explicit in the card about what is defined vs. derived.
+
+**Part 1 detail (warped product axioms):**
+
+Define:
+```lean
+-- sphere factor dimension m = n - 1
+abbrev SphereVec (n : ℕ) := EuclideanSpace ℝ (Fin (n - 1))  -- hmm, Fin (n-1) has issues for n = 0
+```
+
+Hmm, `Fin (n-1)` with n = 0 → Fin (0-1) = Fin 0 ✓ works (Nat subtraction). EuclideanSpace ℝ (Fin 0) = ℝ^0 ✓. OK.
+
+```lean
+abbrev PolarPoint (n : ℕ) := ℝ × EuclideanSpace ℝ (Fin (n - 1))
+
+noncomputable def warpedPolarMetric (j : ℝ → ℝ) (n : ℕ)
+    (p : PolarPoint n) (v w : ℝ × EuclideanSpace ℝ (Fin (n - 1))) : ℝ :=
+  v.1 * w.1 + (j p.1) ^ 2 * inner ℝ v.2 w.2
+```
+
+Hmm — maybe cleaner without n: the metric's domain M = ℝ × E where E is any inner product space. Let me generalize: `variable {E : Type*} [NormedAddCommGroup E] [InnerProductSpace ℝ E]`. Then M = ℝ × E, g j p v w = v.1*w.1 + j p.1² * ⟪v.2, w.2⟫_ℝ. This is more general and cleaner, and the sphere case is E = EuclideanSpace ℝ (Fin (n-1)). 
+
+Axioms:
+1. `warpedPolarMetric_add_left`: g j p (v + w) u = g j p v u + g j p w u — by inner_add_left etc.
+2. `warpedPolarMetric_smul_left`: g j p (c • v) w = c * g j p v w.
+3. `warpedPolarMetric_symm`: g j p v w = g j p w v.
+4. `warpedPolarMetric_nonneg`: 0 ≤ g j p v v.
+5. `warpedPolarMetric_pos_def`: for v ≠ 0 and j p.1 ≠ 0: 0 < g j p v v. Need: v.1*v.1 + j² * inner v.2 v.2 > 0: v.1² ≥ 0, inner ≥ 0; if v.1 ≠ 0 → v.1² > 0; if v.2 ≠ 0 → inner v.2 v.2 > 0 (inner_self_pos: v ≠ 0 → 0 < ⟪v,v⟫) and j² > 0 (j ≠ 0 → sq_pos). ✓.
+6. Degeneracy at the cone point in polar coordinates: at r with j(r) = 0, the metric kills the spherical directions: g p (0, v.2)... — the honest statement: `warpedPolarMetric_eq_zero_iff`: g j p v v = 0 ⟺ v.1 = 0 ∧ (j p.1 = 0 ∨ v.2 = 0). Nice completeness statement.
+7. `warpedPolarMetric_radialUnit`: g j p (1, 0) (1, 0) = 1 — the dr² term: radial vector field unit norm.
+8. The **warped-product metric axioms reduce to the ODE conditions**: define
+
+```lean
+structure ModelMetricAxioms (K : ℝ) (j : ℝ → ℝ) : Prop where
+  solvesJacobiODE : SolvesJacobiODE K j
+  normalizedInitial : HasNormalizedInitial j
+```
+
+Hmm, but "metric axioms" should be metric-flavored: symmetry, bilinearity, cone-point smoothness. Let me define:
+
+```lean
+structure WarpedProductAxioms (j : ℝ → ℝ) : Prop where
+  metric_symm : ∀ p v w, warpedPolarMetric j p v w = warpedPolarMetric j p w v
+  metric_add_left : ...
+  metric_smul_left : ...
+  conePointNormalized : j 0 = 0 ∧ deriv j 0 = 1
+```
+
+and a theorem: `WarpedProductAxioms (jacobiSol K)` — each field by construction. And the "reduction": the cone-point smoothness condition `j 0 = 0 ∧ deriv j 0 = 1` is exactly `HasNormalizedInitial`, and the constant-curvature condition is `SolvesJacobiODE K j`; prove
+
+```lean
+theorem warpedProductAxioms_of_jacobiSol (K : ℝ) : WarpedProductAxioms (jacobiSol K) := ...
+theorem warpedProductAxioms_conePoint_of_initial {j} (h : HasNormalizedInitial j) : j 0 = 0 ∧ deriv j 0 = 1 := h
+-- and the converse
+```
+
+Hmm, and also constant curvature: the theorem that the warped metric's radial Jacobi equation coincides with `SolvesJacobiODE K j`: I can define
+
+```lean
+def RadialJacobiEquation (K j : ℝ → ℝ) : Prop := ∀ t, deriv (deriv j) t + K * j t = 0
+-- = SolvesJacobiODE K j definitionally
+```
+
+Eh. I think the cleanest honest formalization of "the warped-product metric axioms reduce to the ODE conditions already proved":
+
+- Metric axioms (symmetric, bilinear, semidefinite, positive-definite where j ≠ 0): proved from inner product axioms — trivial reductions.
+- Smoothness through the cone point: stated as the pair of conditions `j 0 = 0 ∧ deriv j 0 = 1` — which is exactly D10's `HasNormalizedInitial` — and for `jacobiSol K` discharged by `jacobiSol_hasNormalizedInitial`.
+- Constant sectional curvature K of the model: equivalent to the warp function solving `j'' + Kj = 0` (the radial Jacobi equation) — `SolvesJacobiODE K j` — discharged by `jacobiSol_solvesJacobiODE`.
+
+So define a bundle:
+
+```lean
+structure ConstantCurvatureModel (n : ℕ) (K : ℝ) (j : ℝ → ℝ) : Prop where
+  metric_positive_semidefinite : ∀ p v, 0 ≤ warpedPolarMetric j p v v
+  metric_positive_definite : ∀ p v, v ≠ 0 → j p.1 ≠ 0 → 0 < warpedPolarMetric j p v v
+  metric_symmetric : ...
+  radial_unit : ...
+  cone_point_extension : HasNormalizedInitial j
+  radial_jacobi : SolvesJacobiODE K j
+
+theorem jacobiSol_constantCurvatureModel (n K) : ConstantCurvatureModel n K (jacobiSol K) := ...
+```
+
+And the key "reduction" theorems:
+```lean
+theorem conePointExtension_iff : ConePointSmooth j ↔ HasNormalizedInitial j := Iff.rfl
+theorem radialJacobi_iff : RadialJacobiEquation K j ↔ SolvesJacobiODE K j := Iff.rfl
+```
+
+plus, as the substantive content, maybe prove that the cone-point smoothness + positivity on an interval make the metric genuinely positive definite on the punctured ball — the polar metric g is positive definite on B(0,R) \ {0} when j > 0 on (0, R). And "positive semidefinite" always. OK.
+
+Additionally, part 1 could include verifying that jacobiSol satisfies j > 0 on (0, R) before the first zero — the "metric is nondegenerate" fact — which I need anyway for parts 2–3 (`jacobiSol_pos_of_lt_firstZero`). Good.
+
+Also maybe: the warped metric at r = 0 in polar coordinates is degenerate (the spherical directions are killed: g(0)(0, v.2)... = 0); the smooth extension through the cone point is the initial-condition condition. I'll state `warpedPolarMetric_conePoint_degenerate`: j 0 = 0 → warpedPolarMetric j (0, x) (0, v) (0, w) = 0. Trivial.
+
+Let me also double check the "three constant-curvature model metrics": sphere (K > 0, j = jacobiSolSphere K), flat (K = 0, jacobiSolFlat), hyperbolic (K < 0, jacobiSolHyperbolic K). I'll define three named metrics:
+
+```lean
+noncomputable def sphereModelMetric (K : ℝ) (n : ℕ) := warpedPolarMetric (jacobiSolSphere K)
+noncomputable def flatModelMetric (n : ℕ) := warpedPolarMetric jacobiSolFlat
+noncomputable def hyperbolicModelMetric (K : ℝ) (n : ℕ) := warpedPolarMetric (jacobiSolHyperbolic K)
+```
+
+and theorem `jacobiSolModelMetric (K n) : warpedPolarMetric (jacobiSol K) = if 0 < K then ... ` hmm, or simpler: for each branch show the general metric specializes: `warpedPolarMetric (jacobiSol K) p v w = ...` via jacobiSol_of_pos etc. I'll add three lemmas:
+
+```lean
+theorem sphereModelMetric_eq (hK : 0 < K) : warpedPolarMetric (jacobiSol K) = sphereModelMetric K := by funext; rw [jacobiSol_of_pos hK]; rfl
+```
+
+hmm, warpedPolarMetric j p v w depends on j through `j p.1`. `congrArg`. Fine.
+
+**Now the heavy lifting: Lean-specific lemma availability.** I need to check these mathlib lemmas:
+1. `intervalIntegral.integral_hasStrictDerivAt` or `Continuous.integral_hasDerivAt` — signature.
+2. `antitoneOn_of_deriv_nonpos` — signature.
+3. `monotoneOn_of_deriv_nonneg` — signature (D10 used it).
+4. `intervalIntegral.integral_mono_on` / `integral_mono_on_of_le` — signatures.
+5. `intervalIntegral.integral_pos_of_pos_on` — signature.
+6. `intervalIntegral.integral_const_mul` — for pulling constants out: `∫ x in a..b, c * f x = c * ∫ x in a..b, f x`? Signature from scratch: `@intervalIntegral.integral_const_mul`.
+7. `pow_le_pow_left₀` — signature: `(ha : 0 ≤ a) (h : a ≤ b) : a ^ n ≤ b ^ n`? Actually `pow_le_pow_left₀` is `0 ≤ a → a ≤ b → a ^ n ≤ b ^ n` hmm let me check name: mathlib has `pow_le_pow_left₀` (nPow) for OrderedSemiring: `pow_le_pow_left₀ : 0 ≤ a → a ≤ b → a ^ n ≤ b ^ n`. ✓
+8. `sq_pos_of_ne_zero`, `inner_self_pos` (v ≠ 0 → 0 < ⟪v, v⟫): `inner_self_pos : x ≠ 0 → 0 < ⟪x, x⟫_ℝ` ✓.
+9. `deriv_mul`, `deriv_sub`, `deriv_div`? I'll avoid deriv_div; use explicit.
+10. `Real.sin_pos_of_mem_Ioo` ✓ (used in D10), `Real.sinh_pos_iff`? D10 uses `Real.sinh_nonneg_iff`. For strict: `Real.sinh_pos_iff` exists: `0 < sinh x ↔ 0 < x`. ✓ (checked in Scratch list).
+11. `intervalIntegral.integral_eq_sub_of_hasDerivAt` — exists? `intervalIntegral.integral_eq_sub_of_hasDerivAt {f f' : ℝ → E} (hder : ∀ x ∈ [[a,b]], HasDerivAt f (f' x) x) (hcont : ContinuousOn f' [[a,b]]) : ∫ x in a..b, f' x = f b - f a`. ✓ I believe that's the signature.
+12. `continuous_intervalIntegral`... for continuity of V: I'll get it from `integral_hasStrictDerivAt` if available (gives HasStrictDerivAt → HasDerivAt → continuousAt → Continuous).
+13. `div_le_div_iff_of_pos`? or use `div_le_div₀`? I'll use the pattern: `have : j₂' * j₁ ≤ j₁' * j₂ := ...; have := div_le_div_of_nonneg_right this (mul_pos hj₁ hj₂)`? Hmm div_le_div_of_nonneg_right: a ≤ b → c ≥ 0 → a/c ≤ b/c — not what I need. Need: (j₂' j₁)/(j₁ j₂) ≤ (j₁' j₂)/(j₁ j₂) from j₂' j₁ ≤ j₁' j₂ via `div_le_div_of_nonneg_right` with c = j₁ j₂ > 0, then simp [div_mul...]: (j₂' j₁)/(j₁ j₂) = j₂'/j₂ (via field_simp), (j₁' j₂)/(j₁ j₂) = j₁'/j₁. ✓. So: `have hdiv := div_le_div_of_nonneg_right hw (le_of_lt (mul_pos hj₁ hj₂)); field_simp [hj₁.ne', hj₂.ne'] at hdiv; ...`. Good.
+
+Where does `jacobiSol_pos` get proved: I'll create `release/Poincare/D11/ComparisonModels/Basic.lean` (or name it `ModelSpaces.lean`) with: warped metric + axioms + positivity lemmas. Then `Laplacian.lean` (part 3 + Wronskian), `BishopGromov.lean` (part 2), `AxiomAudit.lean`.
+
+Let me think about the Wronskian proof in detail (Step A):
+
+```lean
+theorem wronskian_nonneg {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) {r : ℝ} (hr : 0 ≤ r)
+    (hr2 : 0 < K₂ → r ≤ π/√K₂) :
+    0 ≤ jacobiDeriv K₁ r * jacobiSol K₂ r - jacobiSol K₁ r * jacobiDeriv K₂ r := by
+```
+
+Proof: define W(u) = jacobiDeriv K₁ u * jacobiSol K₂ u - jacobiSol K₁ u * jacobiDeriv K₂ u. 
+- W continuous: products/subs of continuous: continuous_jacobiSol (D10 Comparison), jacobiDeriv continuous: need `continuous_jacobiDeriv`: jacobiDeriv = deriv (jacobiSol K) (by jacobiSol_deriv) → continuous = continuousOn_deriv? deriv of differentiable function isn't necessarily continuous in general, but our jacobiDeriv is explicitly cos/cosh/const — prove `continuous_jacobiDeriv K : Continuous (jacobiDeriv K)` by trichotomy cases using explicit formulas and Real.continuous_cos etc. Easy. Add in my Basic file.
+- W' computation: 
+  ```
+  deriv W u = deriv (jacobiDeriv K₁ * jacobiSol K₂) u - deriv (jacobiSol K₁ * jacobiDeriv K₂) u
+  ```
+  = (deriv(jacobiDeriv K₁) u * j₂(u) + jacobiDeriv K₁ u * deriv j₂ u) - (deriv j₁ u * jacobiDeriv K₂ u + j₁ u * deriv (jacobiDeriv K₂) u)
+  = ((-K₁ j₁) * j₂ + j₁' j₂') - (j₁' j₂' + j₁ (-K₂ j₂))
+  = (K₂ - K₁) j₁ j₂.
+  
+  Need `deriv_mul`: `deriv_mul (hf : DifferentiableAt ℝ f x) (hg : DifferentiableAt ℝ g x) : deriv (f * g) x = deriv f x * g x + f x * deriv g x` ✓. And `deriv (jacobiDeriv K) u = -(K * jacobiSol K u)` — from hasDerivAt_jacobiDeriv (D10 ODE) `.deriv` ✓. And `deriv (jacobiSol K) u = jacobiDeriv K u` (jacobiSol_deriv ✓). Ring to simplify.
+- W ≥ 0 on [0, r]: `monotoneOn_of_deriv_nonneg (convex_Icc 0 r) hcont hdiff (fun u hu => ...)` where the interior point u ∈ Ioo 0 r: deriv W u = (K₂ - K₁) j₁(u) j₂(u) ≥ 0: K₂ - K₁ ≥ 0 (hK), j₁(u) ≥ 0: from jacobiSol_nonneg ht... j₁(u) ≥ 0 via `jacobiSol_nonneg` (D10 Comparison): needs 0 ≤ u ✓ and `0 < K₁ → u ≤ π/√K₁`: given K₁ > 0 → K₂ ≥ K₁ > 0 → u < r ≤ π/√K₂ ≤ π/√K₁ ✓. And j₂(u) ≥ 0 via jacobiSol_nonneg with `0 < K₂ → u ≤ π/√K₂`: u ≤ r ≤ π/√K₂ (given hr2 for r) ✓. 
+  Then W(0) = jacobiDeriv K₁ 0 * j₂ 0 - j₁ 0 * jacobiDeriv K₂ 0 = 1·0 - 0·1 = 0 ✓ (simp [jacobiSol_zero, jacobiDeriv_zero]).
+  monotoneOn_of_deriv_nonneg gives W 0 ≤ W r (0 ∈ Icc 0 r, r ∈ Icc 0 r, 0 ≤ r) → 0 ≤ W r ✓.
+
+For continuity/differentiability of W on Icc 0 r: continuous_jacobiSol, continuous_jacobiDeriv, ContinuousOn.mul/sub ✓; differentiable: differentiable_jacobiSol (D10) + need differentiable_jacobiDeriv: jacobiDeriv K = deriv (jacobiSol K) — hmm, to show Differentiable ℝ (jacobiDeriv K): it's cos/cosh/const — explicit: `hasDerivAt_jacobiDeriv K u` gives HasDerivAt (jacobiDeriv K) (-(K j₁)) u ✓ so differentiableAt. So `differentiable_jacobiDeriv K : Differentiable ℝ (jacobiDeriv K) := fun u => (hasDerivAt_jacobiDeriv K u).differentiableAt` ✓ — wait hasDerivAt_jacobiDeriv K t : HasDerivAt (jacobiDeriv K) (-(K * jacobiSol K t)) t ✓ yes. 
+
+Similarly `continuous_jacobiDeriv K : Continuous (jacobiDeriv K) := fun u => (hasDerivAt_jacobiDeriv K u).continuousAt`.
+
+Step B (Laplacian/log-derivative comparison): given hr : 0 < r, hfirst : 0 < K₂ → r < π/√K₂:
+
+```lean
+theorem logDerivative_comparison ... :
+    jacobiDeriv K₂ r / jacobiSol K₂ r ≤ jacobiDeriv K₁ r / jacobiSol K₁ r := by
+  have hw := wronskian_nonneg hK (le_of_lt hr) (fun hK2 => le_of_lt (hfirst hK2))
+  have hj₂ : 0 < jacobiSol K₂ r := jacobiSol_pos hr hfirst   -- hmm for K₂: 0 < K₂ → r < π/√K₂ ✓
+  have hj₁ : 0 < jacobiSol K₁ r := jacobiSol_pos hr (fun hK1 => ...)  -- 0 < K₁ → r < π/√K₁
+  -- hw : 0 ≤ j₁' j₂ - j₁ j₂' → j₁ j₂' ≤ j₁' j₂
+  have hmul : jacobiSol K₁ r * jacobiDeriv K₂ r ≤ jacobiDeriv K₁ r * jacobiSol K₂ r := by linarith [hw]
+  have hdiv := div_le_div_of_nonneg_right hmul (le_of_lt (mul_pos hj₁ hj₂))
+  -- hdiv : (j₁ j₂')/(j₁ j₂) ≤ (j₁' j₂)/(j₁ j₂)
+  field_simp [hj₁.ne', hj₂.ne'] at hdiv
+  simpa [mul_comm] using hdiv
+```
+
+Hmm, `div_le_div_of_nonneg_right`: `(h : a ≤ b) (hc : 0 ≤ c) : a / c ≤ b / c` ✓. Then field_simp needs to clear denominators in the goal... field_simp at hdiv rewrites hdiv using the ne hypotheses? field_simp can use hypotheses listed: `field_simp [hj₁.ne', hj₂.ne'] at hdiv` — this rewrites hdiv's divisions. Hmm, hdiv is (j₁ * j₂') / (j₁ * j₂) ≤ (j₁' * j₂) / (j₁ * j₂). field_simp turns (j₁ j₂')/(j₁ j₂) into j₂'/j₂: cross-cancel: (a*b)/(a*c) = b/c ✓ via field_simp [hj₁.ne']. Should work.
+
+Then:
+```lean
+theorem laplacian_comparison ... (n : ℕ) :
+    (n - 1 : ℝ) * (jacobiDeriv K₂ r / jacobiSol K₂ r) ≤ (n - 1 : ℝ) * (jacobiDeriv K₁ r / jacobiSol K₁ r) :=
+  mul_le_mul_of_nonneg_left (logDerivative_comparison hK hr hfirst) (Nat.cast_nonneg _)
+```
+
+Step C (two-point inequality): 
+
+```lean
+theorem jacobiSol_ratio_antitone {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) {R : ℝ} (hR : 0 < R)
+    (hR2 : 0 < K₂ → R < π/√K₂) :
+    AntitoneOn (fun u => jacobiSol K₂ u / jacobiSol K₁ u) (Set.Ioc 0 R) := by
+  refine antitoneOn_of_deriv_nonpos (convex_Ioc 0 R) ?_ ?_ ?_
+  · -- continuous on Ioc 0 R
+    refine ContinuousOn.div ?_ ?_ (fun x hx => (jacobiSol_pos (hx.1) (fun hK1 => ...)).ne')
+    ...
+  · -- differentiable on interior = Ioo 0 R
+    ...
+  · -- derivative sign: deriv (j₂/j₁) u = (j₂' j₁ - j₂ j₁')/j₁² = -W/j₁² ≤ 0
+    intro u hu
+    rw [interior_Ioc] at hu   -- hu : u ∈ Ioo 0 R
+    have hderiv : deriv (fun u => jacobiSol K₂ u / jacobiSol K₁ u) u
+        = (jacobiDeriv K₂ u * jacobiSol K₁ u - jacobiSol K₂ u * jacobiDeriv K₁ u) / (jacobiSol K₁ u)^2 := by
+      rw [deriv_div (differentiable_jacobiSol K₂ u) (differentiable_jacobiSol K₁ u),
+          jacobiSol_deriv, jacobiSol_deriv]
+    rw [hderiv]
+    have hw : 0 ≤ jacobiDeriv K₁ u * jacobiSol K₂ u - jacobiSol K₁ u * jacobiDeriv K₂ u :=
+      wronskian_nonneg hK hu.1.le (fun hK2 => le_of_lt ((hR2 hK2).trans'? hu.2)) -- need u ≤ π/√K₂: u < R < π/√K₂
+    have hnum : jacobiDeriv K₂ u * jacobiSol K₁ u - jacobiSol K₂ u * jacobiDeriv K₁ u ≤ 0 := by
+      -- = -(W u), from hw
+      have : jacobiSol K₂ u * jacobiDeriv K₁ u - jacobiDeriv K₂ u * jacobiSol K₁ u ≥ 0 := by
+        -- W u = jacobiDeriv K₁ u * jacobiSol K₂ u - jacobiSol K₁ u * jacobiDeriv K₂ u
+        -- commutativity of mul: W u = jacobiSol K₂ u * jacobiDeriv K₁ u - jacobiDeriv K₂ u * jacobiSol K₁ u
+        simpa [mul_comm, mul_left_comm, mul_assoc] using hw
+      linarith
+    -- divide by j₁² > 0: (numerator)/(j₁²) ≤ 0
+    exact div_nonpos_of_nonpos_of_nonneg hnum (sq_nonneg _)
+```
+
+deriv_div signature: `deriv_div (hf : DifferentiableAt ℝ f x) (hg : DifferentiableAt ℝ g x) (hx : g x ≠ 0) : deriv (f/g) x = (deriv f x * g x - f x * deriv g x) / (g x)^2` ✓ (mathlib has deriv_div).
+
+For continuity: `ContinuousOn.div`? Hmm — j₁, j₂ continuous (continuous_jacobiSol) → j₂/j₁: pointwise `continuousAt` via `ContinuousAt.div` or use `ContinuousOn.div`. There might be friction with Ioc and the denominator condition `∀ x ∈ s, g x ≠ 0`. Fine.
+
+Then from AntitoneOn: for s ≤ r in Ioc 0 R: h(r) ≤ h(s) → cross multiply:
+
+```lean
+theorem jacobiSol_twoPoint {K₁ K₂} (hK) {s r : ℝ} (hs : 0 < s) (hsr : s ≤ r) {R} (hrR : r ≤ R)
+    (hR2 : 0 < K₂ → R < π/√K₂) :
+    jacobiSol K₂ r * jacobiSol K₁ s ≤ jacobiSol K₂ s * jacobiSol K₁ r := by
+  have hanti := jacobiSol_ratio_antitone hK ...
+  have hle : jacobiSol K₂ r / jacobiSol K₁ r ≤ jacobiSol K₂ s / jacobiSol K₁ s :=
+    hanti (show s ∈ Ioc 0 R from ⟨hs, hsr.trans hrR⟩) (show r ∈ Ioc 0 R from ⟨lt_of_lt_of_le hs hsr, hrR⟩) hsr
+  -- cross multiply: a/c ≤ b/d with c,d > 0 → a*d ≤ b*c
+  have hj1s : 0 < jacobiSol K₁ s := ...
+  have hj1r : 0 < jacobiSol K₁ r := ...
+  have := div_le_div_iff_of_pos hj1r hj1s  -- (a/c ≤ b/d ↔ a*d ≤ b*c)? 
+  hmm — `div_le_div_iff_of_pos (hd : 0 < d) (hb : 0 < b)`? I don't remember the exact signature; alternatives: 
+  exact (div_le_div_iff_of_pos_right hj1r ...)...
+```
+
+Let me think: want a/c ≤ b/d → a d ≤ b c. `div_le_div_iff₀`? In mathlib: `div_le_div_iff₀ (hb : 0 < b) (hd : 0 < d) : a / b ≤ c / d ↔ a * d ≤ c * b`. Hmm which argument order... Actually I recall `div_le_div_iff_of_pos_right : 0 < b → 0 < d → a/b ≤ c/d ↔ a*d ≤ c*b`? There are variants div_le_div_iff₀, div_le_div_iff_of_pos_right, div_le_div_iff_of_pos_left. I'll #check them. The Scratch file lists `@div_le_div_iff_of_pos`, `@div_le_div_iff₀`, `@div_le_div_iff`, `@div_le_div_of_nonneg_right`. `div_le_div_iff_of_pos (hd : 0 < d) (hb : 0 < b) : a/b ≤ c/d ↔ a*d ≤ c*b`? Hmm. I'll check at build.
+
+Also need jacobiSol_pos for u ∈ (0, R): for j₁: `0 < K₁ → u < π/√K₁`: K₁ > 0 → K₂ ≥ K₁ > 0 → √K₁ ≤ √K₂ → π/√K₁ ≥ π/√K₂ > u ✓. So:
+
+```lean
+lemma jacobiSol_pos_of_lt_firstZero (K : ℝ) {t : ℝ} (ht : 0 < t) (hfirst : 0 < K → t < π/√K) : 0 < jacobiSol K t
+```
+
+Case split trichotomy:
+- K < 0: jacobiSol_of_neg → jacobiSolHyperbolic = sinh(√(-K) t)/√(-K); √(-K) > 0, t > 0 → √(-K)·t > 0 → sinh > 0 (Real.sinh_pos_iff) → div_pos.
+- K = 0: t > 0 ✓.
+- K > 0: jacobiSol_of_pos → jacobiSolSphere_pos hK ht (√K t < π from hfirst: t < π/√K → √K t < π via mul_lt_mul_of_pos_left ✓).
+
+Then j₁ positivity helper: 
+```lean
+lemma jacobiSol_pos_of_le_of_lt_firstZero {K₁ K₂} (hK : K₁ ≤ K₂) {t} (ht : 0 < t) (h2 : 0 < K₂ → t < π/√K₂) : 0 < jacobiSol K₁ t :=
+  jacobiSol_pos_of_lt_firstZero K₁ ht (fun hK1 => ...)
+```
+where hK1 : 0 < K₁ → t < π/√K₁: since K₂ ≥ K₁ > 0: √K₁ ≤ √K₂ (sqrt_le_sqrt hK) → π/√K₁ ≥ π/√K₂: div_le_div_of_nonneg_left? π/√K₂ ≤ π/√K₁: since √K₁ ≤ √K₂ > 0 → 1/√K₁ ≥ 1/√K₂ → π/√K₁ ≥ π/√K₂: `div_le_div_of_nonneg_left hπ (sqrt_pos...) h`? Let me use: π / √K₂ < t → trans. Precisely: have hsqrt : 0 < √K₁; have hs : √K₁ ≤ √K₂ := Real.sqrt_le_sqrt hK; have hinv : 1 / √K₂ ≤ 1 / √K₁ := one_div_le_one_div_of_le hsqrt hs; have hpi : π/√K₂ ≤ π/√K₁ := mul_le_mul_of_nonneg_left hinv (le_of_lt Real.pi_pos); exact lt_of_le_of_lt hpi (h2 (lt_of_le_of_lt? ...)). Wait: h2 needs 0 < K₂: from hK1 : 0 < K₁ and hK : K₁ ≤ K₂ → 0 < K₂ ✓.
+
+Then (K₂ - K₁) ≥ 0: linarith.
+
+Step D & E (Bishop–Gromov):
+
+```lean
+noncomputable def modelVolume (n : ℕ) (K : ℝ) (r : ℝ) : ℝ := ∫ x in (0:ℝ)..r, jacobiSol K x ^ (n - 1)
+```
+
+Hmm, `∫ x in 0..r, ...` notation: `∫ x in a..b, f x` is intervalIntegral. I'll write `(∫ x in (0:ℝ)..r, jacobiSol K x ^ (n - 1))`.
+
+Derivative: `modelVolume_hasDerivAt (n K r) : HasDerivAt (modelVolume n K) (jacobiSol K r ^ (n-1)) r` — from `intervalIntegral.integral_hasStrictDerivAt` (need exact name; check: I believe it's `intervalIntegral.integral_hasStrictDerivAt {f : ℝ → E} {a b : ℝ} (hf : ContinuousAt f b) (ha : a ≠ b) : HasStrictDerivAt (fun u => ∫ x in a..u, f x) (f b) b`). If ha : a ≠ b is required, hmm — then at r = 0 not available, but I only need r > 0 ✓. Let me #check. Also `Continuous.integral_hasDerivAt` — might be `∫ 0..x`-specific. I'll check both.
+
+Wait, actually I recall in mathlib: `intervalIntegral.integral_hasStrictDerivAt (hf : ContinuousAt f b) (ha : a ≠ b)`? Hmm, why would a ≠ b matter... Actually the HasStrictDerivAt is w.r.t. u at u = b; the integral ∫ a..u exists for all u; the FTC needs f continuous at b. I think there's no ha. There's also `integral_hasDerivAt_of_tendsto_ae`. Let me just #check.
+
+Continuous integrand: jacobiSol K continuous → `(continuous_jacobiSol K).pow _` → continuousAt ✓. Integrable: `Continuous.intervalIntegrable`... For the derivative lemma only need ContinuousAt at the point, plus integrability near? The lemma probably requires `IntervalIntegrable f volume a b` too. Let me #check and adapt.
+
+For continuity of modelVolume on Ioc 0 R: from HasDerivAt at each point → continuousAt each point → ContinuousOn ✓ (for points in Ioc 0 R; need at 0? Ioc 0 R excludes 0 ✓ — Ioc is (0, R]. At R: HasDerivAt at R needs continuousAt of integrand at R ✓ and a ≠ R? no... fine.)
+
+V₁ > 0 on Ioc 0 R: 
+```lean
+theorem modelVolume_pos (n K) {R} (hR : 0 < R) (hfirst : 0 < K → R < π/√K) :
+    0 < modelVolume n K R
+```
+Proof: integrand j^p > 0 on Ioo 0 R (jacobiSol_pos with t ∈ (0,R) ⊂ (0, π/√K)) → `intervalIntegral.integral_pos_of_pos_on`? hmm wait but for n = 1: p = 0, j^0 = 1 > 0 ✓. For n ≥ 2: j > 0 → j^p > 0 ✓. `integral_pos_of_pos_on`? hmm — actual name: `intervalIntegral.integral_pos_of_pos_on`? hmm, hmm. Wait: the name might be `intervalIntegral.integral_pos_of_pos_on` with signature `(hab : a < b) (hf : IntervalIntegrable f μ a b) (h : ∀ x ∈ Ioo a b, 0 < f x) : 0 < ∫ x in a..b, f x`. I'll check.
+
+Also `modelVolume_nonneg`: 0 ≤ integrand → 0 ≤ ∫: `intervalIntegral.integral_nonneg_of_forall`? Scratch lists `@intervalIntegral.integral_nonneg_of_forall` — hmm wait it might need measure... let me check at build. Also `integral_mono_on_of_le`? hmm.
+
+Volume monotonicity (vol B_{K₁} ≥ vol B_{K₂}): from rauch pointwise j₂ ≤ j₁ → powers (n-1): j₂^p ≤ j₁^p (both ≥ 0 → pow_le_pow_left₀) → integral_mono_on ✓.
+
+Now the Bishop–Gromov antitone:
+
+```lean
+theorem bishopGromov_ratio_antitone {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) (n : ℕ) {R : ℝ} (hR : 0 < R)
+    (hR2 : 0 < K₂ → R < π/√K₂) :
+    AntitoneOn (fun r => modelVolume n K₂ r / modelVolume n K₁ r) (Set.Ioc 0 R) := by
+  refine antitoneOn_of_deriv_nonpos (convex_Ioc 0 R) ?_ ?_ ?_
+  · -- continuity: V₂ / V₁, V₁ > 0 on Ioc 0 R
+    ...
+  · -- differentiability on interior
+    intro r hr  -- r ∈ interior (Ioc 0 R) = Ioo 0 R
+    -- HasDerivAt (V₂/V₁) ...
+  · -- derivative sign
+    intro r hr
+    rw [interior_Ioc] at hr
+    have hderiv : deriv (fun r => modelVolume n K₂ r / modelVolume n K₁ r) r
+        = (jacobiSol K₂ r ^ (n-1) * modelVolume n K₁ r - modelVolume n K₂ r * jacobiSol K₁ r ^ (n-1)) / (modelVolume n K₁ r)^2 := by
+      rw [deriv_div (modelVolume_hasDerivAt n K₂ r).differentiableAt
+          (modelVolume_hasDerivAt n K₁ r).differentiableAt (ne_of_gt (modelVolume_pos n K₁ hr.1 ...)),
+        (modelVolume_hasDerivAt n K₂ r).deriv, (modelVolume_hasDerivAt n K₁ r).deriv]
+    rw [hderiv]
+    -- numerator ≤ 0
+    have hnum : jacobiSol K₂ r ^ (n - 1) * modelVolume n K₁ r - modelVolume n K₂ r * jacobiSol K₁ r ^ (n - 1) ≤ 0 := by
+      -- integral inequality: ∫₀^r [j₂(s)^{n-1} * j₁(r)^{n-1}] ≤ ∫₀^r [j₂(r)^{n-1} * j₁(s)^{n-1}]
+      ...
+    exact div_nonpos_of_nonpos_of_nonneg hnum (sq_nonneg _)
+```
+
+The integral inequality:
+```lean
+have htwo : ∀ s ∈ Set.Icc 0 r, jacobiSol K₂ s ^ (n-1) * jacobiSol K₁ r ^ (n-1) ≤ jacobiSol K₂ r ^ (n-1) * jacobiSol K₁ s ^ (n-1)
+```
+At s = 0: both sides: j₂(0)^p = 0^p, j₁(0)^p = 0^p. For p = n-1 ≥ 1: 0^p = 0 → 0 ≤ 0 ✓... but for n = 1, p = 0: j₂(0)^0 = 1, j₁(0)^0 = 1: LHS = 1·j₁(r)^0 = 1, RHS = j₂(r)^0·1 = 1 ✓ equality. For n ≥ 2: LHS = 0·j₁(r)^p = 0, RHS = j₂(r)^p·0 = 0 ✓. So case split n = 1 vs n ≥ 2? Ugh. Alternative: use `0^p` handling: `zero_pow` and `zero_pow'`: for p > 0: 0^p = 0; for p = 0: 0^0 = 1. Simplest: split into cases n = 0 / n ≥ 1: n = 0: p = 0 - 1 = 0 (Nat subtraction) → j^0 = 1 → everything 1 ≤ 1. n ≥ 1: p = n-1 ≥ 1 hmm wait n ≥ 1 → n - 1 ≥ 0, p could still be 0 when n = 1. Hmm: n = 1 → p = 0. So split: by_cases hn : n = 1? Or handle s = 0 uniformly: j₂(0)^{n-1}: use lemma: for p = n-1, j(0)^p = (0:ℝ)^p and `zero_pow` : (0:ℝ)^(p+1) = 0, `pow_zero` : x^0 = 1. by_cases p = 0.
+
+Alternatively — cleaner: at s = 0: j₁(0) = 0 = j₂(0) → j₂(0)·j₁(r) = 0·j₁(r) = 0 = j₂(r)·0 = j₂(r)·j₁(0) → the BASE inequality j₂(0) j₁(r) ≤ j₂(r) j₁(0) holds as equality (without powers) ✓; then take (n-1)-th powers of both sides: 0^p ≤ 0^p — trivially true for ANY p (including p = 0: 1 ≤ 1 ✓). So: prove base inequality j₂(s) j₁(r) ≤ j₂(s)... wait direction: j₂(r) j₁(s) ≤ j₂(s) j₁(r). At s = 0: j₂(r)·0 ≤ 0·j₁(r) ⟺ 0 ≤ 0 ✓. Then pow_le_pow_left₀ (needs both sides ≥ 0: j₂(r) j₁(s) ≥ 0 ✓ (r > 0 → j₂(r) ≥ 0, j₁(s) ≥ 0), 0 ≤ j₂(s) j₁(r) ✓) → (j₂(r) j₁(s))^p ≤ (j₂(s) j₁(r))^p → distribute powers: (j₂(r) j₁(s))^p = j₂(r)^p j₁(s)^p ✓ (mul_pow) — gives exactly j₂(r)^p j₁(s)^p ≤ j₂(s)^p j₁(r)^p ✓. And no zero_pow case analysis needed! The base inequality at s = 0: j₂(r)·j₁(0) = j₂(r)·0 = 0 and j₂(0)·j₁(r) = 0·j₁(r) = 0 → rfl after simp [jacobiSol_zero].
+
+For s ∈ (0, r]: base inequality from jacobiSol_twoPoint (Step C) ✓. So:
+
+```lean
+have hbase : ∀ s ∈ Icc 0 r, jacobiSol K₂ r * jacobiSol K₁ s ≤ jacobiSol K₂ s * jacobiSol K₁ r := by
+  intro s hs
+  by_cases hz : s = 0
+  · subst hz; simp [jacobiSol_zero, jacobiSol_zero] -- 0 ≤ 0: j₂ r * 0 ≤ 0 * j₁ r ✓
+  · have hs' : 0 < s := lt_of_le_of_ne hs.1 (Ne.symm hz)  -- s ≠ 0 → 0 < s
+    exact jacobiSol_twoPoint hK hs' hs.2 (hR2)  -- with r ≤ R
+have hpw : ∀ s ∈ Icc 0 r, jacobiSol K₂ r ^ (n-1) * jacobiSol K₁ s ^ (n-1) ≤ jacobiSol K₂ s ^ (n-1) * jacobiSol K₁ r ^ (n-1) := by
+  intro s hs
+  have hb := hbase s hs
+  have hnn : 0 ≤ jacobiSol K₂ r * jacobiSol K₁ s := mul_nonneg (jacobiSol_nonneg hr.1.le ...) (jacobiSol_nonneg hs.1 ...)
+  have hp := pow_le_pow_left₀ hnn hb
+  simpa [mul_pow] using hp
+```
+
+Wait — pow_le_pow_left₀ needs (0 ≤ a) where a = j₂(r) j₁(s) (the LOWER one). ✓. Then j₂(r)^p j₁(s)^p ≤ j₂(s)^p j₁(r)^p — that's what I need for the integral inequality? Let me recheck: I want to show ∫ j₂(s)^p j₁(r)^p ds ≥ ∫ j₂(r)^p j₁(s)^p ds, i.e., pointwise j₂(s)^p j₁(r)^p ≥ j₂(r)^p j₁(s)^p ✓ = what hpw gives (with mul_comm j₂(r)^p j₁(s)^p = j₁(s)^p j₂(r)^p ✓ simpa handles). 
+
+Then:
+```lean
+have hint := intervalIntegral.integral_mono_on (intervalIntegrable...) (intervalIntegrable...) (fun s hs => hpw s hs) (le_refl _)? 
+```
+Hmm — `intervalIntegral.integral_mono_on` signature? Probably: `integral_mono_on {f g} (hf : IntervalIntegrable f μ a b) (hg : IntervalIntegrable g μ a b) (h : ∀ x ∈ Ioo a b, f x ≤ g x) : ∫ x in a..b, f x ≤ ∫ x in a..b, g x`? With orientation a ≤ b needed. There's `integral_mono_on_of_le`? From Scratch: `@intervalIntegral.integral_mono_on_of_le_Ioo`? weird name. Let me check. Hmm, `integral_mono_on` might take the set condition `∀ x ∈ Icc a b` when a ≤ b. I'll check signatures.
+
+Then:
+```lean
+have hconst : (∫ s in 0..r, jacobiSol K₂ s ^ (n-1) * jacobiSol K₁ r ^ (n-1)) = (∫ s in 0..r, jacobiSol K₂ s ^ (n-1)) * jacobiSol K₁ r ^ (n-1) := by
+  rw [intervalIntegral.integral_mul_const]  -- ∫ f * c = (∫ f) * c ✓ (mul_const on the right)
+have hconst' : (∫ s in 0..r, jacobiSol K₂ r ^ (n-1) * jacobiSol K₁ s ^ (n-1)) = jacobiSol K₂ r ^ (n-1) * (∫ s in 0..r, jacobiSol K₁ s ^ (n-1)) := by
+  rw [intervalIntegral.integral_const_mul]
+have : jacobiSol K₂ r ^ (n-1) * modelVolume n K₁ r ≤ modelVolume n K₂ r * jacobiSol K₁ r ^ (n-1) := by
+  simpa [modelVolume, hconst... ] -- careful with mul_assoc
+```
+
+Hmm — careful: hconst gives ∫ [j₂(s)^p * j₁(r)^p] = V₂ * j₁(r)^p. hconst' gives ∫ [j₂(r)^p * j₁(s)^p] = j₂(r)^p * V₁. The monotone integral gives ∫ [j₂(s)^p j₁(r)^p] ≤ ∫ [j₂(r)^p j₁(s)^p] → V₂·j₁(r)^p ≤ j₂(r)^p·V₁. But hnum needs: j₂(r)^p · V₁ - V₂ · j₁(r)^p ≤ 0 ⟺ j₂(r)^p V₁ ≤ V₂ j₁(r)^p ✓ (same, with commutation). ✓.
+
+IntervalIntegrability: continuous integrands → `IntervalIntegrable`: use `Continuous.intervalIntegrable`? There's `intervalIntegral`... simplest: `(continuous_jacobiSol K₂).pow ... .mul (continuous_const)` → Continuous → `Continuous.intervalIntegrable`? Hmm the name is `Continuous.intervalIntegrable` I think? Or use `intervalIntegrable_const` and `intervalIntegrable.mul`. I'll #check.
+
+Then f' ≤ 0: div_nonpos_of_nonpos_of_nonneg hnum (sq_nonneg (modelVolume n K₁ r)) ✓ — denominator (V₁)² ≥ 0 ✓ (and ≠ 0 needed only for differentiability, which uses modelVolume_pos).
+
+For the differentiability on interior: 
+```lean
+intro r hr
+have hV1 : modelVolume n K₁ r ≠ 0 := ne_of_gt (modelVolume_pos n K₁ (hr.1) (fun hK1 => ...))
+exact ((modelVolume_hasDerivAt n K₂ r).div (modelVolume_hasDerivAt n K₁ r) hV1).differentiableAt
+```
+HasDerivAt.div signature: `HasDerivAt.div (hf : HasDerivAt f f' x) (hg : HasDerivAt g g' x) (hx : g x ≠ 0) : HasDerivAt (f/g) (f' - ... ) ...`. For DifferentiableOn we just need DifferentiableAt: `(hf.div hg hx).differentiableAt`? hmm, `HasDerivAt.div` might have an awkward derivative expression but we only need `.differentiableAt` — wait, does HasDerivAt.div exist with that signature? I think `HasDerivAt.div` exists: (hf : HasDerivAt f f' x) (hg : HasDerivAt g g' x) (h : g x ≠ 0) : HasDerivAt (fun y => f y / g y) ((f' * g x - f x * g') / (g x)^2) x. ✓ I believe so.
+
+modelVolume_pos for K₁ needs hfirst for K₁: `0 < K₁ → r < π/√K₁` from hR2 for K₂ and hK ✓ (as in jacobiSol_pos_of_le_of_lt_firstZero).
+
+Continuity on Ioc 0 R: 
+```lean
+refine ContinuousOn.div (?) (?) ?_
+```
+Hmm — `ContinuousOn.div`? There is `ContinuousOn.div` with (hf) (hg) (h : ∀ x ∈ s, g x ≠ 0). Fine:
+- ContinuousOn (modelVolume n K₂) (Ioc 0 R): from `modelVolume_hasDerivAt` → continuousAt each x ∈ Ioc 0 R → `continuousAt_imp_continuousOn`? Hmm, ContinuousOn from pointwise: `ContinuousOn.mono`... simpler: `(continuous_jacobiSol K₂).pow _ .intervalIntegral?` — hmm, there's a general continuity of ∫ a..u as function of u: `intervalIntegral.continuousOn_integral_of_continuous`? or `Continuous.integral_hasDerivAt` gives HasDerivAt → continuousAt. If `integral_hasStrictDerivAt` exists as a plain lemma, I get `HasStrictDerivAt` → `.continuousAt` ✓ then `continuous_iff_continuousAt.mpr` → `Continuous` → `.continuousOn`. Since modelVolume n K is continuous on ALL of ℝ (integrand continuous everywhere) ✓. Cleanest: prove `continuous_modelVolume (n K) : Continuous (modelVolume n K) := continuous_iff_continuousAt.mpr (fun r => (modelVolume_hasDerivAt n K r).continuousAt)`.
+
+Wait — but does modelVolume_hasDerivAt hold at every r ∈ ℝ? The lemma `integral_hasStrictDerivAt` with hypothesis `ha : a ≠ b`... if the lemma requires a ≠ b (0 ≠ r), it fails at r = 0. Alternative continuity source: `Continuous.integral_hasDerivAt`? Let me think about what mathlib offers:
+
+I recall in mathlib's IntervalIntegral/FundThmCalculus.lean:
+- `integral_hasDerivAt_right {f} (hf : IntervalIntegrable f volume a b) (ha : a < b) : HasDerivWithinAt (fun u => ∫ x in a..u, f x) (f b) (Ioi b) b`
+- `integral_hasDerivAt_left ...`
+- `Continuous.integral_hasDerivAt {f} (hf : Continuous f) (a : ℝ) : HasDerivAt (fun u => ∫ x in a..u, f x) (f a) a`?? Hmm — that's `integral_hasDerivAt_of_tendsto_ae`... Actually I'm fairly sure there's:
+
+```lean
+theorem integral_hasDerivAt_of_tendsto_ae {f : ℝ → E} (hf : IntervalIntegrable f volume a b)
+    (hmeas : StronglyMeasurableAtFilter f (𝓝 b)) (ha : Tendsto f (𝓝[>] b) (𝓝 (f b))) :
+    HasDerivAt (fun u => ∫ x in a..u, f x) (f b) b
+```
+Hmm not sure. And I do recall `Continuous.integral_hasDerivAt` exists in mathlib (it's used for `∫₀^x`): 
+
+```lean
+theorem Continuous.integral_hasDerivAt {f : ℝ → E} (hf : Continuous f) (a : ℝ) :
+    HasDerivAt (fun u => ∫ x in a..u, f x) (f a) a
+```
+
+Hmm wait, that can't be right — the derivative at u = a is f a, yes: ∫_a^u f ~ f(a)(u-a). ✓. I think the name might be `Continuous.integral_hasDerivAt`. The Scratch file lists `#check @Continuous.integral_hasDerivAt` — good, I'll check its exact signature. Also `intervalIntegral.integral_hasStrictDerivAt`. One of them will work.
+
+For continuity at r = 0 (if needed): the lemma with a = 0, at u = 0 — HasDerivAt at 0 needs nothing special (integral from 0 to u of continuous f is differentiable at u = 0 with derivative f 0 ✓ standard). If `Continuous.integral_hasDerivAt` gives HasDerivAt at every point including a, perfect: Continuous everywhere.
+
+Also, alternative: avoid needing continuity of modelVolume separately: `antitoneOn_of_deriv_nonpos` requires ContinuousOn on the set. Since Ioc 0 R ⊆ ℝ and modelVolume continuous on ℝ → continuousOn ✓.
+
+Now, `antitoneOn_of_deriv_nonpos` — need to confirm the signature. In mathlib: 
+
+```lean
+theorem antitoneOn_of_deriv_nonpos {f : ℝ → ℝ} (hf : Convex ℝ s) (h₀ : ContinuousOn f s)
+    (h₁ : DifferentiableOn ℝ f (interior s)) (h₂ : ∀ x ∈ interior s, deriv f x ≤ 0) :
+    AntitoneOn f s
+```
+
+Hmm, wait — is it `AntitoneOn` on convex s? For antitoneOn_of_deriv_nonpos I believe the hypotheses are Convex s, ContinuousOn f s, DifferentiableOn f (interior s), deriv ≤ 0 on interior → AntitoneOn f s. Let me check the name and signature in mathlib: it's in Mathlib/Analysis/Calculus/MeanValue.lean? Actually `monotoneOn_of_deriv_nonneg` and `antitoneOn_of_deriv_nonpos` are in Mathlib.Analysis.Calculus.MonotoneOn? or Darboux? I recall:
+
+```lean
+theorem monotoneOn_of_deriv_nonneg : Convex ℝ s → ContinuousOn f s → DifferentiableOn ℝ f (interior s) → (∀ x ∈ interior s, 0 ≤ deriv f x) → MonotoneOn f s
+theorem antitoneOn_of_deriv_nonpos : Convex ℝ s → ContinuousOn f s → DifferentiableOn ℝ f (interior s) → (∀ x ∈ interior s, deriv f x ≤ 0) → AntitoneOn f s
+```
+
+These are in `Mathlib.Analysis.Calculus.MeanValue`? or `Mathlib.Analysis.Calculus.MonotoneOn`? I'll find the import. D10's Comparison.lean imports Basic (which imports Mathlib.Analysis.Calculus.Deriv.MeanValue) and used `monotoneOn_of_deriv_nonneg` successfully with args (convex_Icc, cont, diff, intro x hx). ✓ so same import suffices for antitoneOn_of_deriv_nonpos.
+
+Ioc convex: `convex_Ioc`? Hmm — convex_Icc ✓, convex_Ioo ✓, convex_Ioc? I believe `convex_Ioc` exists. #check.
+
+interior_Ioc: for a < b: interior (Ioc a b) = Ioo a b. Lemma `interior_Ioc`? There's `interior_Icc` (checked in Scratch), `interior_Ico`, `interior_Ioc` presumably. For a = 0, b = R > 0: `interior_Ioc` might require a ≤ b / a < b. Let me check. Actually careful: Ioc 0 R with R > 0: interior = Ioo 0 R ✓ (since R is a right-limit point not in the set... wait R ∈ Ioc 0 R, and every neighborhood of R contains points > R not in Ioc 0 R ✓ so R ∉ interior ✓; 0 ∉ Ioc 0 R ✓). `interior_Ioc` : interior (Ioc a b) = Ioo a b with hypothesis a < b probably. ✓.
+
+Now for the Wronskian: I need interior points u ∈ Ioo 0 r for the derivative sign — j₁(u) ≥ 0, j₂(u) ≥ 0 needed for W' ≥ 0:
+- j₂(u) ≥ 0: jacobiSol_nonneg (le_of_lt hu.1) (fun hK2 => ...) — need 0 < K₂ → u ≤ π/√K₂: u ≤ r (hu.2) and r ≤ π/√K₂ (from hr2: if K₂ > 0, r ≤ π/√K₂ — note in wronskian_nonneg I'll use non-strict r ≤ π/√K₂ (matching D10); for u < r, u < π/√K₂ → j₂(u) > 0 even; but nonneg suffices: jacobiSol_nonneg ✓).
+- j₁(u) ≥ 0: jacobiSol_nonneg (le_of_lt hu.1) (fun hK1 => ...): 0 < K₁ → u ≤ π/√K₁: K₁ ≤ K₂ and 0 < K₁ → 0 < K₂ → r ≤ π/√K₂ ≤ π/√K₁ → u ≤ r ≤ π/√K₁ ✓.
+- (K₂ - K₁) ≥ 0: linarith [hK]... `sub_nonneg.mpr hK` ✓.
+
+Also the Wronskian at s where j₁, j₂ ≥ 0 is needed for W' = (K₂-K₁) j₁ j₂ ≥ 0: mul_nonneg (mul_nonneg (sub_nonneg...) (j₁ ≥ 0)) (j₂ ≥ 0) ✓.
+
+Then also I realize for the final ratio in Step B: `wronskian_nonneg` uses hr : 0 ≤ r and hr2 : 0 < K₂ → r ≤ π/√K₂ (non-strict, since D10's jacobiSol_nonneg uses ≤). For Laplacian comparison I need strict positivity j₂(r) > 0 → r < π/√K₂ strictly (or handle r = π/√K₂ separately — no, keep strict). Fine: `laplacian_comparison` with hr2 : 0 < K₂ → r < π/√K₂, then wronskian with `(le_of_lt hr2 ...)`.
+
+Hmm wait, one subtlety: jacobiSol_nonneg for j₂ at u ∈ (0, r) needs `0 < K₂ → u ≤ π/√K₂`; I have u < r and (hr2: K₂>0 → r ≤ π/√K₂) → u ≤ r ≤ π/√K₂ ✓.
+
+For j₁: `0 < K₁ → u ≤ π/√K₁`: hK1 : 0 < K₁ → K₂ ≥ K₁ > 0 → (hr2: r ≤ π/√K₂) and π/√K₂ ≤ π/√K₁: since √K₁ ≤ √K₂ (sqrt_le_sqrt (hK.trans... wait hK : K₁ ≤ K₂ → Real.sqrt_le_sqrt hK ✓), so 1/√K₁ ≥ 1/√K₂: `one_div_le_one_div_of_le (sqrt_pos_of_pos hK1) hs` gives 1/√K₂ ≤ 1/√K₁ ✓ then π·... `mul_le_mul_of_nonneg_left` with π ≥ 0. ✓.
+
+OK. Now — the two-point theorem needs hR2 : 0 < K₂ → R < π/√K₂ (strict, since the ratio is used on Ioc 0 R including R). And bishopGromov uses hR2 strict ✓.
+
+Let me now also think about `jacobiSol_pos_of_lt_firstZero` used at s and r for the ratio theorem, and cross-multiplication lemma for div_le_div: I'll #check `div_le_div_iff_of_pos` etc.
+
+Also `Real.pi_pos`, `Real.pi_nonneg`: π > 0: `Real.pi_pos`. `Real.pi_nonneg`? pi_pos.le ✓.
+
+Now let me consider **`sq_pos_of_ne_zero` vs `sq_nonneg`**, `mul_pow`, `pow_le_pow_left₀`: names confirmed in Scratch ✓.
+
+**Part 1 implementation details:**
+
+```lean
+import Poincare.D10.JacobiConstantCurvature.Comparison
+import Mathlib.Analysis.InnerProductSpace.PiL2  -- for EuclideanSpace and inner
+
+namespace Poincare.D11
+
+variable {E : Type*} [NormedAddCommGroup E] [InnerProductSpace ℝ E]
+
+/-- polar point = (r, x) ∈ ℝ × E -/
+abbrev PolarPoint (E : Type*) [NormedAddCommGroup E] [InnerProductSpace ℝ E] := ℝ × E
+
+noncomputable def warpedPolarMetric (j : ℝ → ℝ) (p : ℝ × E) (v w : ℝ × E) : ℝ :=
+  v.1 * w.1 + (j p.1) ^ 2 * inner ℝ v.2 w.2
+```
+
+Axioms:
+
+```lean
+theorem warpedPolarMetric_symm (j) (p v w) : warpedPolarMetric j p v w = warpedPolarMetric j p w v := by
+  unfold warpedPolarMetric
+  rw [real_inner_comm]
+  ring   -- hmm: w.1 * v.1 vs v.1 * w.1: ring handles comm? v.1*w.1 + j²*inner w v = w.1*v.1 + j²*inner v w. ring normalizes inner as atoms ✓
+```
+
+Wait — `real_inner_comm v.2 w.2 : inner ℝ v.2 w.2 = inner ℝ w.2 v.2` ✓. Then ring ✓.
+
+```lean
+theorem warpedPolarMetric_add_left (j) (p v w u) :
+    warpedPolarMetric j p (v + w) u = warpedPolarMetric j p v u + warpedPolarMetric j p w u := by
+  unfold warpedPolarMetric
+  rw [add_mul, inner_add_left]  -- inner_add_left : ⟪v + w, u⟫ = ⟪v,u⟫ + ⟪w,u⟫ ✓
+  ring
+```
+
+Hmm — `inner_add_left` might be `inner_add_left : ⟪x + y, z⟫_𝕜 = ⟪x, z⟫_𝕜 + ⟪y, z⟫_𝕜` ✓. And `add_mul : (a + b) * c = a * c + b * c` for (v.1 + w.1) * u.1 ✓.
+
+```lean
+theorem warpedPolarMetric_smul_left (j) (p) (c : ℝ) (v w) :
+    warpedPolarMetric j p (c • v) w = c * warpedPolarMetric j p v w := by
+  unfold warpedPolarMetric
+  rw [inner_smul_left]   -- ⟪c • x, y⟫ = c * ⟪x,y⟫ (real inner: conj c = c; inner_smul_left gives conj? For ℝ: inner_smul_left : ⟪a • x, y⟫ = conj a * ⟪x,y⟫, conj c = c for ℝ ✓)
+  ring
+```
+
+Careful: `inner_smul_left` gives `conj c * inner` — for ℝ, `conj c = c`: `isROrC_conj_to_real`? Hmm: `inner_smul_left` specialized: ⟪c • x, y⟫_ℝ = conj c * ⟪x,y⟫_ℝ. conj for ℝ: `conj_eq_self`? There's a simp lemma `conj_ofReal` or for ℝ `IsROrC.conj_to_real`... Standard: `simp [inner_smul_left, real_inner_smul_left]`? Let me use `real_inner_smul_left`? Hmm — there's `real_inner_smul_left : inner ℝ (c • x) y = c * inner ℝ x y`? I think `real_inner_smul_left` exists in mathlib (RealInnerProductSpace has its own lemmas: real_inner_smul_left, real_inner_smul_right ✓). Scratch lists `inner_smul_left` — and `real_inner_comm` exists. I'll #check real_inner_smul_left; if missing, simp [inner_smul_left] should discharge conj c = c via `IsROrC.conj_to_real`/simp. `simp [inner_smul_left]` — conj ℝ c = c: `IsROrC.conj_to_real : conj (x : ℝ) = x`? hmm it's `conj_to_real`? There's `isROrC_simps`. Simp probably knows `conj` of a real equals itself via `IsROrC.conj_ofReal`... The Real scalar: `[IsROrC ℝ]` instance: conj on ℝ: `IsROrC.conj (x : ℝ) = x` — simp lemma `IsROrC.conj_to_real` exists I believe. Fine, `simpa using` or just test.
+
+Similarly smul_right, add_right: for add_right I'll derive from add_left + symm (cleaner): `warpedPolarMetric_add_right := by rw [warpedPolarMetric_symm, warpedPolarMetric_add_left]; simp [warpedPolarMetric_symm]`.
+
+```lean
+theorem warpedPolarMetric_nonneg (j) (p v) : 0 ≤ warpedPolarMetric j p v v := by
+  unfold warpedPolarMetric
+  exact add_nonneg (mul_self_nonneg v.1) (mul_nonneg (sq_nonneg (j p.1)) (inner_self_nonneg))
+```
+
+`inner_self_nonneg : 0 ≤ ⟪x, x⟫_ℝ` ✓. `mul_self_nonneg` ✓.
+
+```lean
+theorem warpedPolarMetric_eq_zero_iff (j) (p v) :
+    warpedPolarMetric j p v v = 0 ↔ v.1 = 0 ∧ (j p.1 = 0 ∨ v.2 = 0) := by
+  unfold warpedPolarMetric
+  constructor
+  · intro h
+    have h1 : v.1 * v.1 = 0 := by
+      nlinarith [mul_self_nonneg v.1, mul_nonneg (sq_nonneg (j p.1)) (inner_self_nonneg), h]
+    -- from v.1 * v.1 = 0: v.1 = 0: sq_eq_zero_iff? `mul_self_eq_zero` ✓
+    have hv1 : v.1 = 0 := mul_self_eq_zero.mp h1
+    refine ⟨hv1, ?_⟩
+    -- remaining: (j p.1)^2 * inner v.2 v.2 = 0 → j = 0 ∨ v.2 = 0
+    have h2 : (j p.1) ^ 2 * inner ℝ v.2 v.2 = 0 := by nlinarith [h, hv1]
+    -- (j²)(⟪v,v⟫) = 0 and both ≥ 0 → one is 0
+    rcases mul_eq_zero.mp h2 with hsq | hinn
+    · left; exact sq_eq_zero_iff.mp hsq
+    · right; exact (inner_self_eq_zero.mp? hinn) -- inner_self_eq_zero : ⟪x,x⟫_ℝ = 0 ↔ x = 0 ✓
+  · rintro ⟨hv1, h⟩
+    rcases h with hj | hv2
+    · rw [hv1, hj]; norm_num  -- 0*0 + 0² * inner = 0: ring
+    · rw [hv1, hv2]; simp [inner_zero_right]  -- hmm inner v.2 v.2 with v.2 = 0 → inner 0 0 = 0: simp ✓
+```
+
+`inner_self_eq_zero` is an iff: `⟪x, x⟫_𝕜 = 0 ↔ x = 0` ✓ (in RealInnerProductSpace). `sq_eq_zero_iff` : x^2 = 0 ↔ x = 0 ✓ hmm name might be `sq_eq_zero_iff` ✓ exists.
+
+```lean
+theorem warpedPolarMetric_pos_def (j) {p v} (hv : v ≠ 0) (hj : j p.1 ≠ 0) :
+    0 < warpedPolarMetric j p v v := by
+  unfold warpedPolarMetric
+  have hsq : 0 < (j p.1)^2 := sq_pos_of_ne_zero hj
+  -- cases: v.1 ≠ 0 → v.1² > 0 → sum > 0; v.1 = 0 → v.2 ≠ 0 → inner > 0 → j²·inner > 0
+  by_cases hv1 : v.1 = 0
+  · have hv2 : v.2 ≠ 0 := by intro h; apply hv; ext <;> simp [hv1, h]
+    have hinn : 0 < inner ℝ v.2 v.2 := inner_self_pos.mpr hv2  -- hmm inner_self_pos: x ≠ 0 → 0 < ⟪x,x⟫ ✓
+    have hpos : 0 < (j p.1)^2 * inner ℝ v.2 v.2 := mul_pos hsq hinn
+    nlinarith [mul_self_nonneg v.1, hpos]
+  · have hv1sq : 0 < v.1 * v.1 := mul_self_pos.mpr hv1  -- mul_self_pos : a ≠ 0 → 0 < a*a ✓
+    nlinarith [hv1sq, mul_nonneg (sq_nonneg (j p.1)) (inner_self_nonneg)]
+```
+
+Careful: `hv : v ≠ 0` with v : ℝ × E: v = 0 ⟺ v.1 = 0 ∧ v.2 = 0. `ext` on Prod: v ≠ 0 → ¬(v.1 = 0 ∧ v.2 = 0). ext with Prod.ext: `apply hv; ext <;> simp [hv1, h]` — hv : (v.1, v.2) ≠ 0; to get contradiction: suffices v = 0: `apply hv; ext <;> simp [hv1, h]` — ext gives goals v.1 = 0 ✓ (hv1) and v.2 = 0 ✓ (h). Good.
+
+```lean
+theorem warpedPolarMetric_radial_unit (j) (p : ℝ × E) :
+    warpedPolarMetric j p (1, 0) (1, 0) = 1 := by
+  unfold warpedPolarMetric
+  simp
+```
+
+And the degenerate-at-cone-point statement:
+
+```lean
+theorem warpedPolarMetric_conePoint {j} (hj : j 0 = 0) (x : E) (v w : E) :
+    warpedPolarMetric j (0, x) (0, v) (0, w) = 0 := by
+  unfold warpedPolarMetric
+  simp [hj]
+```
+
+Then the bundle — "warped-product metric axioms":
+
+```lean
+structure WarpedProductMetricAxioms (j : ℝ → ℝ) : Prop where
+  symm : ∀ (p : ℝ × E) (v w : ℝ × E), warpedPolarMetric j p v w = warpedPolarMetric j p w v
+  add_left : ...
+  smul_left : ...
+  nonneg : ∀ p v, 0 ≤ warpedPolarMetric j p v v
+  pos_def : ∀ p v, v ≠ 0 → j p.1 ≠ 0 → 0 < warpedPolarMetric j p v v
+  radial_unit : ∀ p, warpedPolarMetric j p (1, 0) (1, 0) = 1
+  conePoint : j 0 = 0 ∧ deriv j 0 = 1
+```
+
+Hmm — wait: putting `j 0 = 0 ∧ deriv j 0 = 1` (HasNormalizedInitial) as the "cone point" axiom is the right move: the smooth extension through the cone point. Then:
+
+```lean
+theorem warpedProductMetricAxioms_of_jacobiSol (K : ℝ) :
+    WarpedProductMetricAxioms (jacobiSol K) := { ... conePoint := jacobiSol_hasNormalizedInitial K ... }
+```
+
+And the reduction theorems:
+
+```lean
+theorem conePoint_iff_initial (j : ℝ → ℝ) : (j 0 = 0 ∧ deriv j 0 = 1) ↔ HasNormalizedInitial j := Iff.rfl
+theorem radialJacobi_iff (K : ℝ) (j : ℝ → ℝ) : (∀ t, deriv (deriv j) t + K * j t = 0) ↔ SolvesJacobiODE K j := Iff.rfl
+```
+
+These are Iff.rfl since the definitions match literally (HasNormalizedInitial j := j 0 = 0 ∧ deriv j 0 = 1 ✓; SolvesJacobiODE K j := ∀ t, deriv (deriv j) t + K*j t = 0 ✓). Nice — this IS the "reduction" formally: the metric's cone-point axiom is definitionally the D10 initial condition, and the constant-curvature axiom is definitionally the D10 ODE. Then also a "three models" specialization: 
+
+```lean
+noncomputable def sphereModelWarp (K : ℝ) : ℝ → ℝ := jacobiSolSphere K  -- hmm, jacobiSolSphere K : ℝ → ℝ ✓
+def flatModelWarp : ℝ → ℝ := jacobiSolFlat
+noncomputable def hyperbolicModelWarp (K : ℝ) : ℝ → ℝ := jacobiSolHyperbolic K
+```
+
+Eh — simpler: just the three metric definitions + the theorem that the general jacobiSol metric reduces to them:
+
+```lean
+theorem warpedPolarMetric_of_pos {K : ℝ} (hK : 0 < K) (p v w : ℝ × E) :
+    warpedPolarMetric (jacobiSol K) p v w = v.1 * w.1 + (jacobiSolSphere K p.1)^2 * inner ℝ v.2 w.2 := by
+  unfold warpedPolarMetric
+  rw [jacobiSol_of_pos hK]
+```
+
+plus the same for zero/neg. Fine.
+
+Also, part 1 mentions "with the D10 Jacobi solutions j_K" — so the three models: sphere model (K > 0), flat (K = 0), hyperbolic (K < 0). I'll define:
+
+```lean
+noncomputable def modelMetric (K : ℝ) (p v w : ℝ × E) : ℝ := warpedPolarMetric (jacobiSol K) p v w
+noncomputable def sphereModelMetric (K : ℝ) := warpedPolarMetric (jacobiSolSphere K)
+def flatModelMetric : ℝ × E → ... := warpedPolarMetric jacobiSolFlat
+noncomputable def hyperbolicModelMetric (K : ℝ) := warpedPolarMetric (jacobiSolHyperbolic K)
+```
+
+with specialization lemmas. And ConstantCurvatureModel bundle for each branch too? The general one suffices; add branch versions as corollaries:
+
+```lean
+theorem sphereModel_axioms {K} (hK : 0 < K) : WarpedProductMetricAxioms (jacobiSolSphere K) :=
+  -- symm/bilinear/nonneg/posdef/radial: from warpedPolarMetric generic lemmas (they hold for ANY j!)
+  { symm := warpedPolarMetric_symm _, ... conePoint := jacobiSolSphere_hasNormalizedInitial hK }
+```
+
+Note: the metric axioms hold for any warp function j — they don't use any property of j! Only conePoint needs the initial conditions. That's exactly the point: "the warped-product metric axioms reduce to the ODE conditions already proved" — the algebraic axioms are automatic (proved once for arbitrary j), and the analytic/geometric condition at the cone point is exactly the D10 initial condition. I'll document this as the formal content of the reduction.
+
+Also the constant-curvature condition: add field `radialJacobi : SolvesJacobiODE K j`? But WarpedProductMetricAxioms doesn't mention K. Let me restructure:
+
+```lean
+structure ConstantCurvatureModelAxioms (K : ℝ) (j : ℝ → ℝ) : Prop where
+  metric : WarpedProductMetricAxioms j
+  radialJacobi : SolvesJacobiODE K j
+```
+
+and `constantCurvatureModelAxioms_of_jacobiSol (K) : ConstantCurvatureModelAxioms K (jacobiSol K) := ⟨warpedProductMetricAxioms_of_jacobiSol K, jacobiSol_solvesJacobiODE K⟩`.
+
+Then the reduction theorem: 
+
+```lean
+theorem constantCurvatureModelAxioms_of_odeConditions (K) {j} (hode : SolvesJacobiODE K j) (hinit : HasNormalizedInitial j) :
+    ConstantCurvatureModelAxioms K j :=
+  ⟨ { symm := ..., ..., conePoint := hinit }, hode ⟩
+```
+
+This is THE "axioms reduce to ODE conditions" theorem: any j satisfying the D10 ODE conditions gives a valid model metric. The proof fills all algebraic metric axioms generically and uses hinit for the cone point. 
+
+Then for the three branches:
+```lean
+theorem sphereModelAxioms (K) (hK : 0 < K) : ConstantCurvatureModelAxioms K (jacobiSolSphere K) :=
+  constantCurvatureModelAxioms_of_odeConditions (jacobiSolSphere_solvesJacobiODE hK) (jacobiSolSphere_hasNormalizedInitial hK)
+theorem flatModelAxioms : ConstantCurvatureModelAxioms 0 jacobiSolFlat := ...
+theorem hyperbolicModelAxioms (K) (hK : K < 0) : ConstantCurvatureModelAxioms K (jacobiSolHyperbolic K) := ...
+theorem modelAxioms (K) : ConstantCurvatureModelAxioms K (jacobiSol K) := ...
+```
+
+Great — part 1 done.
+
+**Part 3 file (Laplacian):**
+
+```lean
+noncomputable def radialLaplacian (n : ℕ) (j f : ℝ → ℝ) (r : ℝ) : ℝ :=
+  deriv (deriv f) r + (n - 1 : ℝ) * (deriv j r / j r) * deriv f r
+
+theorem radialLaplacian_id (n : ℕ) (K : ℝ) {r : ℝ} (hj : jacobiSol K r ≠ 0) :
+    radialLaplacian n (jacobiSol K) (fun x : ℝ => x) r = (n - 1 : ℝ) * (jacobiDeriv K r / jacobiSol K r) := by
+  unfold radialLaplacian
+  rw [deriv_id, jacobiSol_deriv]
+  ring
+```
+
+Hmm — `deriv (deriv (fun x => x)) r`: deriv id = 1: `deriv_id : deriv id x = 1`? mathlib name: `deriv_id` or `deriv_id''`... I think `deriv_id : deriv (id : ℝ → ℝ) x = 1`. Then deriv of constant 1 = 0: `deriv_const : deriv (fun _ => c) x = 0` ✓. So:
+
+```lean
+  have h1 : deriv (deriv (fun x : ℝ => x)) r = 0 := by
+    rw [deriv_id, deriv_const]
+```
+
+hmm `deriv_id` might have signature `deriv id x = 1` where id = fun x => x ✓. Then `deriv (fun _ => 1) r = 0`: `deriv_const (c := 1) (x := r)` ✓.
+
+Wait — careful: after `rw [deriv_id]` the expression becomes `deriv (fun _ => 1) r`; then `rw [deriv_const]`. `deriv_const : deriv (fun _ : 𝕜 => c) x = 0` ✓.
+
+Also `deriv id` vs deriv of `fun x : ℝ => x`: definitionally id = fun x => x ✓ (id unfolds). Might need `show deriv (fun x : ℝ => x) r = 1` ... `deriv_id (x := r)` — check name. Actually in mathlib: `deriv_id : deriv id x = 1`? hmm there's `deriv_id' : deriv (@id 𝕜) x = 1`? I'll #check deriv_id.
+
+The Laplacian comparison theorem (Wronskian route), stated cleanly:
+
+```lean
+theorem wronskian_nonneg {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) {r : ℝ} (hr : 0 ≤ r)
+    (hfirst : 0 < K₂ → r ≤ Real.pi / Real.sqrt K₂) :
+    0 ≤ jacobiDeriv K₁ r * jacobiSol K₂ r - jacobiSol K₁ r * jacobiDeriv K₂ r
+
+theorem logDerivative_comparison {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) {r : ℝ} (hr : 0 < r)
+    (hfirst : 0 < K₂ → r < Real.pi / Real.sqrt K₂) :
+    jacobiDeriv K₂ r / jacobiSol K₂ r ≤ jacobiDeriv K₁ r / jacobiSol K₁ r
+
+theorem laplacian_comparison (n : ℕ) {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) {r : ℝ} (hr : 0 < r)
+    (hfirst : 0 < K₂ → r < Real.pi / Real.sqrt K₂) :
+    radialLaplacian n (jacobiSol K₂) (fun x : ℝ => x) r ≤ radialLaplacian n (jacobiSol K₁) (fun x : ℝ => x) r := by
+  rw [radialLaplacian_id n K₂ (ne_of_gt (jacobiSol_pos ...)), radialLaplacian_id n K₁ ...]
+  exact mul_le_mul_of_nonneg_left (logDerivative_comparison hK hr hfirst) (Nat.cast_nonneg _)
+```
+
+and the "model value" formulation: `theorem laplacian_le_model (n) ... : radialLaplacian n (jacobiSol K₂) id r ≤ (n-1) * (jacobiDeriv K₁ r / jacobiSol K₁ r)`.
+
+**Part 2 file (BishopGromov):**
+
+- `modelVolume (n K r) : ℝ := ∫ x in (0:ℝ)..r, jacobiSol K x ^ (n-1)`
+- `modelVolume_hasDerivAt (n K r) : HasDerivAt (modelVolume n K) (jacobiSol K r ^ (n-1)) r`
+- `continuous_modelVolume (n K) : Continuous (modelVolume n K)`
+- `modelVolume_pos {n K r} (hr : 0 < r) (hfirst : 0 < K → r < π/√K) : 0 < modelVolume n K r`
+- `modelVolume_mono {K₁ K₂} (hK : K₁ ≤ K₂) {r} (hr : 0 ≤ r) (hfirst : 0 < K₂ → r ≤ π/√K₂) : modelVolume n K₂ r ≤ modelVolume n K₁ r` — from rauch_comparison pointwise.
+- `jacobiSol_ratio_antitone` (Step C)
+- `jacobiSol_twoPoint` (Step C')
+- `bishopGromov_ratio_antitone` (Step E): the main theorem.
+- `bishopGromov_ratio_le_one`, `relativeVolume_comparison` corollaries.
+
+Also maybe the "(n-1)-fold" model volume with the sphere constant: define `modelBallVolume (n) (K) (r) := ω * modelVolume n K r`? skip; document.
+
+Hmm, let me reconsider `modelVolume_pos`: integrand j^p > 0 on Ioo 0 r: for s ∈ Ioo 0 r: 0 < s < r < ... hfirst: 0 < K → r < π/√K → jacobiSol_pos_of_lt_firstZero K hs hfirst' where hfirst' : 0 < K → s < π/√K = (hfirst hK).trans'? s < r and r < π/√K → s < π/√K ✓ `lt_trans hs.2 (hfirst hK)`. Then j(s)^p > 0: for p = n - 1 ≥ 0: pow_pos (jacobiSol_pos...) p ✓ (0 < a → 0 < a^p for any p : ℕ ✓ `pow_pos`). Then `intervalIntegral.integral_pos_of_pos_on`? hmm — but wait: `integral_pos_of_pos_on` might need the measure version... Let me list what I need to #check:
+
+- intervalIntegral.integral_pos_of_pos_on — hmm, maybe it's `intervalIntegral.integral_pos_of_pos_on` with (hab) (hint) (h : ∀ x ∈ Ioo a b, 0 < f x) ✓ I'm fairly confident this exists.
+
+For `modelVolume_mono`: pointwise j₂(s)^p ≤ j₁(s)^p: rauch_comparison hK hs hfirst' gives j₂(s) ≤ j₁(s), with j₂(s) ≥ 0 (jacobiSol_nonneg hs hfirst') → pow_le_pow_left₀. Then integral_mono.
+
+Now the main event — Bishop–Gromov antitone — the derivative computation detail:
+
+deriv_div: `deriv_div (hf : DifferentiableAt ℝ f x) (hg : DifferentiableAt ℝ g x) (hx : g x ≠ 0) : deriv (f / g) x = (deriv f x * g x - f x * deriv g x) / (g x)^2` ✓ — I need to double check this exact statement exists; there's `deriv_div` ✓ I'm confident (in Mathlib/Analysis/Calculus/Deriv/Add?/Inv.lean).
+
+So:
+```lean
+have hderiv : deriv (fun r => modelVolume n K₂ r / modelVolume n K₁ r) r
+    = (jacobiSol K₂ r ^ (n - 1) * modelVolume n K₁ r - modelVolume n K₂ r * jacobiSol K₁ r ^ (n - 1))
+      / (modelVolume n K₁ r) ^ 2 := by
+  rw [deriv_div (modelVolume_hasDerivAt n K₂ r).differentiableAt
+      (modelVolume_hasDerivAt n K₁ r).differentiableAt (ne_of_gt (modelVolume_pos n K₁ hr.1 (jacobiSol_firstZero...)))]
+  -- hmm: modelVolume_pos needs hfirst for K₁
+  rw [(modelVolume_hasDerivAt n K₂ r).deriv, (modelVolume_hasDerivAt n K₁ r).deriv]
+```
+
+wait `(modelVolume_hasDerivAt n K₂ r).deriv : deriv (modelVolume n K₂) r = jacobiSol K₂ r ^ (n-1)` ✓.
+
+Then `rw [hderiv]` and prove the bound:
+
+```lean
+exact div_nonpos_of_nonpos_of_nonneg hnum (sq_nonneg _)
+```
+`div_nonpos_of_nonpos_of_nonneg : a ≤ 0 → 0 ≤ b → a / b ≤ 0` ✓.
+
+hnum:
+```lean
+have hnum : jacobiSol K₂ r ^ (n - 1) * modelVolume n K₁ r - modelVolume n K₂ r * jacobiSol K₁ r ^ (n - 1) ≤ 0 := by
+  -- from hint : jacobiSol K₂ r ^ p * modelVolume n K₁ r ≤ modelVolume n K₂ r * jacobiSol K₁ r ^ p
+  linarith
+```
+
+where hint comes from the integral monotonicity + const pull-out as designed. ✓.
+
+antitoneOn_of_deriv_nonpos needs DifferentiableOn ℝ f (interior (Ioc 0 R)). interior_Ioc: for 0 < R: `interior_Ioc : interior (Ioc a b) = Ioo a b` — hypothesis? Probably needs a < b. I'll pass and check. In the derivative-sign intro: `intro r hr; rw [interior_Ioc] at hr` — but interior_Ioc might need 0 < R as an explicit hypothesis; then `rw [interior_Ioc (lt_trans ... hR)]`? hmm interior_Ioc might take hab : a < b as argument: `interior_Ioc {a b} (h : a < b) : interior (Ioc a b) = Ioo a b`. Then `have hR' : (0:ℝ) < R := hR; rw [interior_Ioc hR'] at hr`. Let me check its signature at build.
+
+Alright, also `AntitoneOn` conclusion for the "two radii" corollary:
+
+```lean
+theorem bishopGromov {K₁ K₂ : ℝ} (hK : K₁ ≤ K₂) (n : ℕ) {s r : ℝ} (hs : 0 < s) (hsr : s ≤ r) {R : ℝ}
+    (hrR : r ≤ R) (hR2 : 0 < K₂ → R < Real.pi / Real.sqrt K₂) :
+    modelVolume n K₂ r / modelVolume n K₁ r ≤ modelVolume n K₂ s / modelVolume n K₁ s := by
+  exact bishopGromov_ratio_antitone hK n ... ⟨s ∈ Ioc 0 R ...⟩ ⟨r ∈ Ioc 0 R ...⟩ hsr
+```
+
+and relative volume:
+```lean
+theorem relativeVolume_comparison ... :
+    modelVolume n K₁ r / modelVolume n K₁ R ≤ modelVolume n K₂ r / modelVolume n K₂ R
+```
+from antitone: V₂(r)/V₁(r) ≥ V₂(R)/V₁(R) → V₂(r)/V₂(R) ≥ V₁(r)/V₁(R) → V₁(r)/V₁(R) ≤ V₂(r)/V₂(R). Cross-multiplies with positivity. ✓ — this is the standard "relative volume comparison" form.
+
+and `bishopGromov_ratio_le_one`: V₂(r)/V₁(r) ≤ 1 for r ∈ (0, R]: from modelVolume_mono: V₂ ≤ V₁ and V₁ > 0 → ratio ≤ 1 ✓.
+
+Now — imports. Let me figure out the right import list. D10 files import:
+- Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic/Bounds/DerivHyp
+- Mathlib.Analysis.SpecialFunctions.Sqrt
+- Mathlib.Analysis.Calculus.Deriv.MeanValue (which gives monotoneOn_of_deriv_nonneg? hmm — monotoneOn_of_deriv_nonneg might be in Mathlib.Analysis.Calculus.MonotoneOn? but D10 imported Deriv.MeanValue and used monotoneOn_of_deriv_nonneg — actually wait, let me check: D10 Comparison.lean imports only Poincare.D10.JacobiConstantCurvature.ODE, which imports Basic which imports Mathlib.Analysis.Calculus.Deriv.MeanValue. And monotoneOn_of_deriv_nonneg was usable. OK so Deriv.MeanValue (or one of its transitive imports) provides it. Good.)
+- For interval integrals: Mathlib.MeasureTheory.Integral.IntervalIntegral.FundThmCalculus (from Probe.lean imports) + Mathlib.MeasureTheory.Integral.IntervalIntegral.IntegralEqDeriv? Hmm — the general interval integral API: Mathlib.MeasureTheory.Integral.IntervalIntegral.Basic. Also `intervalIntegral.integral_mono_on` etc. Let me use `import Mathlib` — wait, does this project have a full `import Mathlib` available? The D10 files used targeted imports. Using `import Mathlib` would be simplest and compiles fine (mathlib is prebuilt). But compile time for `import Mathlib` might be long (needs the Mathlib mega-module... it's prebuilt as an olean, so loading is fast-ish, few seconds). Other D-days may have used `import Mathlib`. Let me check what other files do — maybe some use `import Mathlib`. I'll check quickly. If the mega-olean exists (it should since mathlib is fully built), `import Mathlib` is fine and the axiom audit still only shows propext/Classical.choice/Quot.sound. That's the pragmatic choice and avoids hunting imports. But it might be considered poor style... The instruction only requires `#print axioms` output [propext, Classical.choice, Quot.sound] for my theorems. Using `import Mathlib` doesn't change axioms of my definitions (axioms come from what the definitions use). Let me check if other D-days use `import Mathlib`.
+
+Let me look at the workflow: the gate compiles each file with `lake env lean <file>`. With import Mathlib it will just work.
+
+One concern: `#print axioms` on my theorems with `import Mathlib` — same result, since axioms are computed on the theorem's dependencies, and mathlib theorems are all built on the same 3 axioms. Fine.
+
+Plan of files:
+
+1. `release/Poincare/D11/ComparisonModels/ModelSpaces.lean` — warped polar metric, axioms, positivity, three models, ConstantCurvatureModelAxioms reduction. (Part 1 + shared positivity lemmas)
+2. `release/Poincare/D11/ComparisonModels/Laplacian.lean` — wronskian, log-derivative comparison, radialLaplacian, laplacian comparison. (Part 3)
+3. `release/Poincare/D11/ComparisonModels/BishopGromov.lean` — modelVolume, derivative, monotonicity, ratio antitone, main theorems. (Part 2)
+4. `release/Poincare/D11/ComparisonModels/AxiomAudit.lean` — #print axioms for everything.
+5. Delete/replace `Probe.lean` and `Scratch.lean`? The task says "Add files only under release/Poincare/D11/ComparisonModels/" — Probe.lean and Scratch.lean are already there from a previous attempt (probably by the previous invocation of this same task). I can modify/delete them. The final state should be clean: I'll remove Probe.lean and Scratch.lean (they're scratch) — hmm, "Add files only under..." — deleting is modifying, allowed presumably. To be safe I'll repurpose: delete Scratch and Probe at the end (they contain no content). Actually the constraint is about where I add files; removing scratch files is fine and keeps the tree clean. Let me delete them at the end (after verifying my files compile standalone).
+
+Also update `release/lakefile.toml`? No — the glob of the project picks up files automatically (`Poincare` modules are auto-discovered by the lakefile? Let me check the lakefile to see if modules are enumerated explicitly).
+
+Let me check the lakefile and whether `.lake` exists (previous repair note said release/.lake was recreated — hopefully persisted in this worktree since D10's repair was in a different worktree... wait, the repair note was for the D10 worktree. THIS worktree is D11 — it was pre-scaffolded from D6_weekly_release + D1–D10 integrated codebase. Does release/.lake exist here? Need to check. Also need elan/toolchain.
+
+Environment: ELAN_HOME=/data/home/guoshaoyang/workdir/lean_poincare/elan. Let me check toolchain availability and .lake presence first — critical for compilation.
+
+Also `checkpoint.json` — the task mentions it but I didn't find it at worktree root. Maybe it doesn't exist yet and I should create one (task says "Continue from existing files and checkpoint.json in this worktree" — perhaps none exists, so I just proceed). I'll create checkpoint.json as I go for the "checkpoint at least every hour" requirement.
+
+Let me start: check environment, then write files.
+
+First round of checks:
+1. ls release/.lake, release/lakefile.toml, release/lean-toolchain
+2. elan presence
+3. mathlib location and greps for the lemmas I need.
+
+Let me be efficient. Run a few bash commands.
+dsh: reasoning:
+Environment looks good: `.lake` exists with build/config/packages, elan present, `Poincare.+` glob auto-discovers my new files. Let me verify compilation works on an existing file, and find the mathlib source to check lemma signatures I need.
+dsh: reasoning:
+Compilation works. mathlib package is at `release/.lake/packages/mathlib` (a real directory here, not symlink). Let me check the mathlib source for the lemmas I need:
+
+1. `intervalIntegral.integral_hasStrictDerivAt` / `Continuous.integral_hasDerivAt`
+2. `antitoneOn_of_deriv_nonpos`
+3. `intervalIntegral.integral_mono_on`
+4. `intervalIntegral.integral_pos_of_pos_on` — hmm, name check
+5. `div_le_div_iff_of_pos`
+6. `pow_le_pow_left₀`
+7. `interior_Ioc`
+8. `convex_Ioc`
+9. `deriv_div`, `deriv_id`, `deriv_const`
+10. `real_inner_smul_left`, `inner_self_pos`
+
+Let me grep mathlib.
+dsh: reasoning:
+Let me look at the exact signatures of these lemmas:
+1. `antitoneOn_of_deriv_nonpos` at line 480 of MeanValue.lean
+2. `integral_hasStrictDerivAt_of_tendsto_ae_right` at 617
+3. `integral_mono_on` at 1434 (its full signature with IntervalIntegrable hypotheses)
+dsh: reasoning:
+Key findings:
+
+1. `antitoneOn_of_deriv_nonpos (hD : Convex ℝ D) (hf : ContinuousOn f D) (hf' : DifferentiableOn ℝ f (interior D)) (hf'_nonpos : ∀ x ∈ interior D, deriv f x ≤ 0) : AntitoneOn f D` ✓
+
+2. `integral_hasStrictDerivAt_right (hf : IntervalIntegrable f volume a b) (hmeas : StronglyMeasurableAtFilter f (𝓝 b)) (hb : ContinuousAt f b) : HasStrictDerivAt (fun u => ∫ x in a..u, f x) (f b) b` — needs IntervalIntegrable f volume a b (on the fixed interval a..b!) and hmeas. Hmm — the IntervalIntegrable hypothesis is for the FIXED interval a..b, which is awkward when I want the derivative at arbitrary points r. For `modelVolume_hasDerivAt n K r`, I'd need IntervalIntegrable f volume 0 r for the specific r. That's fine per-point: `(continuous_jacobiSol K).pow _ |>.intervalIntegrable 0 r`? The integrand j^p is continuous on ℝ → `Continuous.intervalIntegrable` — let me check the name. `intervalIntegrable` for a continuous function on [a,b]: `ContinuousOn.intervalIntegrable` : ContinuousOn f (uIcc a b) → IntervalIntegrable f μ a b ✓. And `Continuous.continuousOn` → continuousOn → intervalIntegrable.
+
+   hmeas : StronglyMeasurableAtFilter f (𝓝 b) — for continuous f: `Continuous.stronglyMeasurableAtFilter`? hmm. There's probably `stronglyMeasurableAtFilter` for continuous functions. Let me check... There's `Continuous.stronglyMeasurable` (a.e. strongly measurable). `StronglyMeasurableAtFilter` — for a continuous function, strongly measurable at any filter. I recall `continuous_functions.stronglyMeasurableAtFilter`? Let me grep. Alternatively use `integral_hasDerivAt_of_tendsto_ae_right (hf) (hmeas) (hb : Tendsto f (𝓝 b ⊓ ae volume) (𝓝 (f b)))` — the Tendsto for continuous f: `ContinuousAt` → tendsto at 𝓝 b → monotone inf → `hb.mono_left inf_le_left`. Same hmeas needed though.
+
+   Hmm, is there a simpler version specifically for continuous functions? Let me grep for `integral_hasDerivAt` variants taking `hf : Continuous f`. Also `deriv_integral` was mentioned in Probe.lean: `#check @Continuous.deriv_integral` — hmm that's `deriv_integral` for the Bochner integral over a fixed set (parametrized integrals). Actually there might be `intervalIntegral.deriv_integral`? Let me search.
+
+3. `integral_mono_on (h : ∀ x ∈ Icc a b, f x ≤ g x)` — where's hf/hg? The context has `hf : IntervalIntegrable f μ a b`, `hg : IntervalIntegrable g μ a b` as implicit context variables (they're in the section context `hab : a ≤ b`? Let me look above: the theorem is inside a section with variables {f g} (hf : IntervalIntegrable f μ a b) (hg : ...) (hab : a ≤ b)? Let me check the section header around line 1400.
+
+Let me also check:
+- `Continuous.intervalIntegrable` or `intervalIntegrable` of continuous functions
+- StronglyMeasurableAtFilter for continuous functions
+- `deriv_integral` variants
+- `div_le_div_iff_of_pos` etc.
+- `pow_le_pow_left₀`
+- `interior_Ioc`, `convex_Ioc`
+- `deriv_div`, `deriv_id`, `deriv_const`
+- `inner_self_pos`, `real_inner_smul_left`
+- `intervalIntegral.integral_pos_of_pos_on` — hmm, need exact name. Let me grep "integral_pos".
+Compilation works. Now let me check the exact signatures of the key mathlib lemmas I plan to use.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

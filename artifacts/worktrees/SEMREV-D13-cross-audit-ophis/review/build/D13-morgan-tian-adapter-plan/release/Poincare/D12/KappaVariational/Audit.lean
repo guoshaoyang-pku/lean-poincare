@@ -1,0 +1,150 @@
+/-
+Copyright (c) 2026 The Poincare formalization program. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: D12-kappa-variational builder
+-/
+import Poincare.D12.KappaVariational.Statements
+
+/-!
+# Poincare.D12.KappaVariational.Audit
+
+**Task-local audit module.**  `#print axioms` for every new declaration of the
+`Poincare.D12.KappaVariational` namespace.  The permitted axiom cones are
+`{propext, Classical.choice, Quot.sound}`, `{propext}` and `{}`; any other cone (in particular
+`sorryAx`, project postulates, `Lean.ofReduceBool`) is a failure of the programmatic
+fail-closed audit (`longrun/d12kv-logs/audit_axioms.py`).
+-/
+
+#check Poincare.D12.KappaVariational.gaussianVecTau
+#check Poincare.D12.KappaVariational.gaussianVecTauNormalized
+#check Poincare.D12.KappaVariational.gaussianVecTau_def
+#check Poincare.D12.KappaVariational.gaussianVecTauNormalized_def
+#check Poincare.D12.KappaVariational.integral_gaussianKernel_tau
+#check Poincare.D12.KappaVariational.gaussianKernel_tau_eq
+#check Poincare.D12.KappaVariational.integral_gaussianVecTau_fubini
+#check Poincare.D12.KappaVariational.integral_gaussianVecTau
+#check Poincare.D12.KappaVariational.integral_gaussianVecTau_eq_rpow
+#check Poincare.D12.KappaVariational.integral_gaussianVecTauNormalized
+#check Poincare.D12.KappaVariational.gaussianVecTau_eq_exp_neg_sum_sq
+#check Poincare.D12.KappaVariational.gaussianVecTau_eq_exp_neg_normSq_div
+#check Poincare.D12.KappaVariational.integral_exp_neg_normSq_div
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeDensity
+#check Poincare.D12.KappaVariational.gaussianReducedVolume
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_def
+#check Poincare.D12.KappaVariational.gaussianReducedVolume_def
+#check Poincare.D12.KappaVariational.integral_gaussianReducedVolumeDensity
+#check Poincare.D12.KappaVariational.gaussianReducedVolume_eq_one
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeViaL
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeViaL_eq_gaussianReducedVolume
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeViaL_eq_one
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_pos
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_ne_zero
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_two_half_zero
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_two_half_zero_ne_one
+#check Poincare.D12.KappaVariational.constantCurvatureFlow
+#check Poincare.D12.KappaVariational.constantCurvatureFlow_scalarCurvature
+#check Poincare.D12.KappaVariational.constantCurvatureFlow_metric
+#check Poincare.D12.KappaVariational.intervalIntegrable_sqrt
+#check Poincare.D12.KappaVariational.integral_sqrt
+#check Poincare.D12.KappaVariational.toGaussianPath
+#check Poincare.D12.KappaVariational.constantCurvature_length_le
+#check Poincare.D12.KappaVariational.constantCurvatureLPath
+#check Poincare.D12.KappaVariational.constantCurvature_LlengthAlong
+#check Poincare.D12.KappaVariational.constantCurvature_isLMinimizer
+#check Poincare.D12.KappaVariational.rpow_three_halves_eq_mul_sqrt
+#check Poincare.D12.KappaVariational.constantCurvature_reducedLength
+#check Poincare.D12.KappaVariational.constantCurvature_reducedLength_le
+#check Poincare.D12.KappaVariational.constantCurvatureReducedLengthData
+#check Poincare.D12.KappaVariational.constantCurvatureReducedLengthData_reducedLength
+#check Poincare.D12.KappaVariational.constantCurvatureLMinimizerExistence
+#check Poincare.D12.KappaVariational.constantCurvature_reducedLength_mono_in_R0
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeCertificate
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeCertificate_volume
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeCertificate_constant_one
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeCertificate_antitoneOn
+#check Poincare.D12.KappaVariational.gaussianReducedVolume_monotoneOn_and_antitoneOn
+#check Poincare.D12.KappaVariational.gaussianUniformReducedVolumeLowerBound
+#check Poincare.D12.KappaVariational.gaussianUniformReducedVolumeLowerBound_integral
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_shape
+#check Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_shape_integral
+#check Poincare.D12.KappaVariational.ClosureRecord
+#check Poincare.D12.KappaVariational.rlv10Statement
+#check Poincare.D12.KappaVariational.rlv10Closure
+#check Poincare.D12.KappaVariational.ncf12ModelStatement
+#check Poincare.D12.KappaVariational.ncf12ModelClosure
+#check Poincare.D12.KappaVariational.rlv1ModelStatement
+#check Poincare.D12.KappaVariational.rlv1ModelClosure
+#check Poincare.D12.KappaVariational.kappaVariationalClosures
+#check Poincare.D12.KappaVariational.kappaVariationalClosures_nonempty
+#check Poincare.D12.KappaVariational.ballVolumeComparisonExists
+#check Poincare.D12.KappaVariational.gaussianKappaNoncollapsing_of_ballVolumeComparison
+#check Poincare.D12.KappaVariational.kappaVariationalRemainingDependencies
+#check Poincare.D12.KappaVariational.kappaVariationalRemainingDependencies_length
+#check Poincare.D12.KappaVariational.kappaVariationalRemainingDependencies_all_named
+
+#print axioms Poincare.D12.KappaVariational.gaussianVecTau
+#print axioms Poincare.D12.KappaVariational.gaussianVecTauNormalized
+#print axioms Poincare.D12.KappaVariational.gaussianVecTau_def
+#print axioms Poincare.D12.KappaVariational.gaussianVecTauNormalized_def
+#print axioms Poincare.D12.KappaVariational.integral_gaussianKernel_tau
+#print axioms Poincare.D12.KappaVariational.gaussianKernel_tau_eq
+#print axioms Poincare.D12.KappaVariational.integral_gaussianVecTau_fubini
+#print axioms Poincare.D12.KappaVariational.integral_gaussianVecTau
+#print axioms Poincare.D12.KappaVariational.integral_gaussianVecTau_eq_rpow
+#print axioms Poincare.D12.KappaVariational.integral_gaussianVecTauNormalized
+#print axioms Poincare.D12.KappaVariational.gaussianVecTau_eq_exp_neg_sum_sq
+#print axioms Poincare.D12.KappaVariational.gaussianVecTau_eq_exp_neg_normSq_div
+#print axioms Poincare.D12.KappaVariational.integral_exp_neg_normSq_div
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeDensity
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolume
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_def
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolume_def
+#print axioms Poincare.D12.KappaVariational.integral_gaussianReducedVolumeDensity
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolume_eq_one
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeViaL
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeViaL_eq_gaussianReducedVolume
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeViaL_eq_one
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_pos
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_ne_zero
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_two_half_zero
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_two_half_zero_ne_one
+#print axioms Poincare.D12.KappaVariational.constantCurvatureFlow
+#print axioms Poincare.D12.KappaVariational.constantCurvatureFlow_scalarCurvature
+#print axioms Poincare.D12.KappaVariational.constantCurvatureFlow_metric
+#print axioms Poincare.D12.KappaVariational.intervalIntegrable_sqrt
+#print axioms Poincare.D12.KappaVariational.integral_sqrt
+#print axioms Poincare.D12.KappaVariational.toGaussianPath
+#print axioms Poincare.D12.KappaVariational.constantCurvature_length_le
+#print axioms Poincare.D12.KappaVariational.constantCurvatureLPath
+#print axioms Poincare.D12.KappaVariational.constantCurvature_LlengthAlong
+#print axioms Poincare.D12.KappaVariational.constantCurvature_isLMinimizer
+#print axioms Poincare.D12.KappaVariational.rpow_three_halves_eq_mul_sqrt
+#print axioms Poincare.D12.KappaVariational.constantCurvature_reducedLength
+#print axioms Poincare.D12.KappaVariational.constantCurvature_reducedLength_le
+#print axioms Poincare.D12.KappaVariational.constantCurvatureReducedLengthData
+#print axioms Poincare.D12.KappaVariational.constantCurvatureReducedLengthData_reducedLength
+#print axioms Poincare.D12.KappaVariational.constantCurvatureLMinimizerExistence
+#print axioms Poincare.D12.KappaVariational.constantCurvature_reducedLength_mono_in_R0
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeCertificate
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeCertificate_volume
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeCertificate_constant_one
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeCertificate_antitoneOn
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolume_monotoneOn_and_antitoneOn
+#print axioms Poincare.D12.KappaVariational.gaussianUniformReducedVolumeLowerBound
+#print axioms Poincare.D12.KappaVariational.gaussianUniformReducedVolumeLowerBound_integral
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_shape
+#print axioms Poincare.D12.KappaVariational.gaussianReducedVolumeDensity_shape_integral
+#print axioms Poincare.D12.KappaVariational.ClosureRecord
+#print axioms Poincare.D12.KappaVariational.rlv10Statement
+#print axioms Poincare.D12.KappaVariational.rlv10Closure
+#print axioms Poincare.D12.KappaVariational.ncf12ModelStatement
+#print axioms Poincare.D12.KappaVariational.ncf12ModelClosure
+#print axioms Poincare.D12.KappaVariational.rlv1ModelStatement
+#print axioms Poincare.D12.KappaVariational.rlv1ModelClosure
+#print axioms Poincare.D12.KappaVariational.kappaVariationalClosures
+#print axioms Poincare.D12.KappaVariational.kappaVariationalClosures_nonempty
+#print axioms Poincare.D12.KappaVariational.ballVolumeComparisonExists
+#print axioms Poincare.D12.KappaVariational.gaussianKappaNoncollapsing_of_ballVolumeComparison
+#print axioms Poincare.D12.KappaVariational.kappaVariationalRemainingDependencies
+#print axioms Poincare.D12.KappaVariational.kappaVariationalRemainingDependencies_length
+#print axioms Poincare.D12.KappaVariational.kappaVariationalRemainingDependencies_all_named

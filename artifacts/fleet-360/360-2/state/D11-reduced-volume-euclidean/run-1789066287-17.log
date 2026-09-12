@@ -1,0 +1,129 @@
+dsh: reasoning:
+Let me start by exploring the worktree structure to understand what's already there.
+dsh: reasoning:
+Interesting. The checkpoint says phase COMPLETE and the task has been finished before. Let me look at the rest of checkpoint.json and the results files to understand the current state, and verify the current state is actually valid (compile etc.). The task says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work."
+
+Since the checkpoint says COMPLETE and there are results files, my job is to verify everything still holds and ensure the final line TASK_DONE is present with card path. Let me check the details.
+dsh: reasoning:
+The task appears to have been completed previously. The checkpoint says phase COMPLETE, final_line TASK_DONE. My job now (as a new invocation) is to verify the current state: check the result card, verify compiles, run axiom audit, verify no forbidden tokens, and ensure everything is current. Since the checkpoint says it's complete, I should re-verify and update timestamps if needed, then report TASK_DONE.
+
+Let me first read the result card and check the current state of files.
+dsh: reasoning:
+The task appears complete from previous sessions. The card is thorough. My current invocation should:
+1. Re-verify everything fresh (compile 7 files, lake build, axiom audit, forbidden tokens, source hashes).
+2. Update checkpoint.json and the result card with a new re-verification section if the current session is a new one.
+3. Confirm final line TASK_DONE.
+
+Let me first check the current time and state of things, then run the fresh verification gates. I'll run them in background where they take long (lake build). Let me start with the per-file compiles and the forbidden token scan and hashes in parallel, then run the axiom audit and lake build.
+
+Let me check the toolchain and get current UTC time.
+dsh: reasoning:
+All 7 files compile with exit 0. Now run the forbidden-token scan, hash check, and the axiom audit in parallel; and lake build in the background.
+dsh: reasoning:
+All good so far:
+- Forbidden tokens: 0 hard, 0 soft.
+- Hashes: match the card's section 1 (388b62aef7d5d82c ✓, 16a1fa770ed2ccce ✓, a6d2bf62fc279a33 ✓, c823d0e7b7e07961 ✓, 0e8ef1d573d0f5e4 ✓, 81ebdefe23630cca ✓, 51c19cfae339da9c ✓).
+- Axiom audit: exit 0, 72 lines "depends on axioms". Hmm, 72 lines with "depends on axioms" but 74 declarations — 2 are "does not depend on any axioms". Need to verify the cones. Let me parse the audit log more carefully.
+
+Wait, the card says 74 declarations: 71 x [propext, Classical.choice, Quot.sound], 2 x [], 1 x [propext]. So 72 "depends on axioms" lines: 71 with the full triple + 1 with just propext. Let me verify by parsing the log.
+
+Also the lake build is running in the background (job bash-1).
+
+Let me parse the audit log to produce the axiom_audit.json summary.
+dsh: reasoning:
+Hmm, the audit parsed 47 declarations but the card says 74. The regex might miss some lines because the format might include additional text, or `#print axioms` output has different line formats. Let me look at the raw log more carefully. 72 lines contained "depends on axioms" per grep -c, plus 2 "does not depend". But my parse got only 47. Probably some lines have multi-line output or the format differs (e.g., declaration names with quotes, or extra spaces). Let me inspect the raw log.
+dsh: reasoning:
+The output is wrapped: when the axiom list is too long, Lean wraps lines. The `grep -c "depends on axioms"` gave 72, but those 72 include multi-line wrapped declarations — the continuation lines start with " Classical.choice,". So there are 72 lines matching "depends on axioms" but some are continuations of previous declarations. Total declarations = 74. Let me re-parse: a declaration begins with a line matching `^'...' depends on axioms:` and continuations start with spaces. Let me redo the parse properly.
+dsh: reasoning:
+The wrapping is more complex: the long names also wrap mid-name, e.g. a line like:
+
+```
+'Poincare.D11.ReducedVolume.flatReducedLength_eq_reducedLength' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+```
+
+Actually looking at the parse errors: the line `'Poincare.D11.ReducedVolume.flatReducedLength' depends on axioms: [propext,` was matched, and then the continuation lines contain "'Poincare.D11.ReducedVolume.flatReducedLength_eq_reducedLength' depends on axioms: [propext" — meaning the *name itself* was wrapped mid-name! The line probably looks like:
+
+```
+'Poincare.D11.ReducedVolume.flatReducedLength' depends on axioms: [propext,
+'Poincare.D11.ReducedVolume.flatReducedLength_eq_reducedLength' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+```
+
+Hmm, that suggests the actual log line was:
+```
+'Poincare.D11.ReducedVolume.flatReducedLength' depends on axioms: [propext,
+```
+No wait. Actually what happened: the output wraps at ~100 chars. A long name like `'Poincare.D11.ReducedVolume.flatReducedLength_eq_reducedLength' depends on axioms: [propext,` is 95+ chars — close to the wrap limit. So maybe Lean prints:
+
+```
+'Poincare.D11.ReducedVolume.flatReducedLength' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+```
+
+Hmm, but the continuation line in my parse contained `"'Poincare.D11.ReducedVolume.flatReducedLength_eq_reducedLength' depends on axioms: [propext"` as an *axiom token*. That means the raw line is something like:
+
+```
+'Poincare.D11.ReducedVolume.flatReducedLength' depends on axioms: [propext,
+'Poincare.D11.ReducedVolume.flatReducedLength_eq_reducedLength' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+```
+
+Wait no — that would mean the wrapping happened *inside the name*, i.e. the line is:
+
+```
+'Poincare.D11.ReducedVolume.flatReducedLength' depends on axioms: [propext,
+```
+
+and the next line starts with the remainder of the *next declaration's* name? No — wrapping happens within a line. Let me just look at raw lines around line 20 or so.
+
+Actually the simplest interpretation: Lean's message wrapping breaks long lines at the nearest whitespace near 100 columns. A declaration line `'<full name>' depends on axioms: [propext,` — if the full name is long, the line breaks after `[propext,` normally. But some lines broke *before* the end of the name? The continuation `"'Poincare...flatReducedLength_eq_reducedLength' depends on axioms: [propext"` as a token suggests the first line was:
+
+```
+'Poincare.D11.ReducedVolume.flatReducedLength' depends on axioms: [propext,
+```
+
+Hmm wait, that can't include the second name. Unless the log lines are interleaved... Actually wait, maybe the raw line is:
+
+```
+'Poincare.D11.ReducedVolume.flatReducedLength' depends on axioms: [propext,'Poincare.D11.ReducedVolume.flatReducedLength_eq_reducedLength' depends on axioms: [propext,
+```
+
+That looks like two `#print axioms` commands on one line? No — more likely: the terminal wrapping in my grep output earlier showed line numbers 1..5 fine. The 128-line log vs 74 declarations = 54 continuation lines. 72 "depends on axioms" grep hits but 74 declarations → 2 declarations have "depends on axioms" wrapped across... hmm, 72 = 74 - 2? The 2 "does not depend" declarations. Wait: 72 lines matching "depends on axioms" and 2 lines matching "does not depend" = 74 total declaration-start lines. But continuation lines like " Classical.choice," don't match "depends on axioms". So the log has 74 start lines + 54 continuation lines = 128 lines. That's consistent!
+
+So each declaration start line contains the full name and `depends on axioms: [propext,` possibly with trailing axioms. My regex `^'(.*)' depends on axioms: \[(.*)\]$` fails when the start line doesn't end with `]` (i.e., when axioms wrap). And for wrapped lines, the `.*` in group 1 is greedy: `'(.*)'` matched across multiple quoted names. The name regex should be `^'([^']*)' depends on axioms: \[(.*)$` — non-greedy within quotes, and allow missing closing bracket.
+
+Let me fix: match `^'([^']+)' depends on axioms: \[(.*)$`, then continuations are lines not starting with `'`. Let me re-parse.
+dsh: reasoning:
+Now the axiom audit matches the card: 74 declarations, 71 x [propext, Classical.choice, Quot.sound], 2 x [], 1 x [propext], 0 nonstandard.
+
+Now check the lake build job result.
+dsh: reasoning:
+Lake build: exit 0, 9155 jobs, "Build completed successfully", 0 error lines. All gates green in this fresh session:
+
+- Per-file compile: 7/7 exit 0 (longrun/d11rve-session11/compile_<F>.log, gate_exit_codes.txt)
+- lake build: exit 0, 9155 jobs, "Build completed successfully"
+- axiom audit: 74/74 declarations: cone {propext, Classical.choice, Quot.sound} (71), {} (2), {propext} (1); 0 nonstandard
+- forbidden tokens: 0 hard, 0 soft
+- source hashes: 7/7 match card section 1
+
+Now update:
+1. checkpoint.json — new fresh_reverification block with the current UTC time (2026-09-10T18:46Z session).
+2. Result card — add a new session re-verification section (16) and update the "Generated" timestamp? The card says "Generated (UTC): 2026-09-10T17:58:30Z". I'll add a section 16 for this session rather than changing the original generation time, but also could update the last-line. The last line currently is "**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`". The task requires "Last line: TASK_DONE or TASK_BLOCKED with the card path." — that's satisfied.
+
+Also update the .json result file. Let me check its current content and the DELIVERY.md conventions, and how previous sessions updated the .json. Let me read the json.
+dsh: reasoning:
+Now I understand the JSON structure. I'll:
+1. Update the .json: append a new session to `reverification_sessions`, update `session_reverification` and `reverified_at`.
+2. Add section 16 to the .md card with this session's fresh verification.
+3. Update checkpoint.json with a new fresh_reverification block for this session.
+
+Current UTC time: 2026-09-10T18:46:44Z (from the date command at the start). Let me get an exact timestamp for the session record.
+dsh: reasoning:
+Wait, I need to check the exact context — the old_string "No change to any authored file or verdict in this session.\n\n**Last line:** TASK_DONE..." — did that appear only once? The card has multiple
+Now I'll update the result card (.md), the .json, and checkpoint.json with this session's fresh re-verification.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

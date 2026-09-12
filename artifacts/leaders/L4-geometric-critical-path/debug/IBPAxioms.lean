@@ -1,0 +1,13 @@
+import Poincare.D13.ManifoldIBP.PartialChartModelPOU
+import Poincare.D13.ManifoldIBP.POUConstruction
+import Poincare.D13.ManifoldIBP.Transfer
+import Poincare.D13.ManifoldIBP.SmoothAtlasModel
+
+#print axioms Poincare.D13.ManifoldIBP.OverlapAtlas.halfSpaceAtlas_weightedIBP_unconditional
+#print axioms Poincare.D13.ManifoldIBP.SmoothOverlapAtlas.globalWeightedIBP_of_cover_partial_ae
+#print axioms Poincare.D13.ManifoldIBP.SmoothOverlapAtlas.globalWeightedIBP_of_pou_partial_ae
+#print axioms Poincare.D13.ManifoldIBP.OverlapAtlas.globalWeightedIBP_of_chartSupported
+#print axioms Poincare.D13.ManifoldIBP.manifoldWeightedIBP_of_atlasData
+#print axioms Poincare.D13.ManifoldIBP.ChartSumData.globalWeightedIBP
+#print axioms Poincare.D13.Riemannian.chartGramMatrix_det_change
+#print axioms Poincare.D13.VolumeForm.chartVolumeForm_pullback_general

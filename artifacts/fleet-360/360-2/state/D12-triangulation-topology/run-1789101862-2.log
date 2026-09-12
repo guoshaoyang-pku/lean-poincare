@@ -1,0 +1,1728 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree, checkpoint.json, and the relevant files.
+dsh: reasoning:
+This is a continuation of a long-running task. Let me understand the current state:
+
+1. The worktree is at `/data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D12-triangulation-topology`
+2. There's a checkpoint.json with 52 hours elapsed, status in_progress
+3. There's a results file with 205 audited declarations
+4. Previous invocations delivered SimplexCone.lean, SimplexBoundary.lean, HemisphereDisk.lean, SphereGluing.lean, Covering.lean, ProjectiveSpace.lean etc.
+
+Let me look at the full checkpoint.json and results to understand what's been done and what remains. Also I need to check the LONG_PLAN.json, the D7/D8/D10/D11 sources, and the current state of the release directory.
+
+Let me check the rest of checkpoint.json, the longrun/results markdown, the third_party frenzymath snapshot, and the current build state.
+dsh: reasoning:
+The task is well underway. Current state:
+- 52 hours elapsed
+- Invocation 5 was working on SphereSimplyConnected.lean — proving sphere simply connected (n≥2), which is needed for the covering lemma application.
+- The next plan: C5-C8, D, E, F steps, then downstream: SimplyConnectedSpace (Sphere 3) → covering lemma application.
+
+Let me check the current state of SphereSimplyConnected.lean, and check what compiles. Also let me look at the results md to see the full picture and remaining work.
+
+Key remaining objective items:
+1. Finish SphereSimplyConnected.lean (C5-C8, D, E, F) — proving `SimplyConnectedSpace (Sphere 3)`.
+2. Downstream: apply `coveringOfSimplyConnectedIsHomeo` to get something for sphere recognition.
+3. Precise dependency DAG for the general Moise/smoothing branch (MOISE_DAG.md exists).
+4. Final audit, results files, TASK_DONE.
+
+Let me check the state of the build first, and read the key files. Since this is a 4-hour invocation, I need to work efficiently. Let me first check if the build works currently.
+dsh: reasoning:
+The build succeeds. SphereSimplyConnected.lean compiles. Let me check what's the current state of this file - what's been proved (the notes said "lemma C machinery now COMPILES"), and what remains: C5-C8, D, E, F.
+
+Let me look at the tail of the file to see what state it's in, and check for any sorrys.
+dsh: reasoning:
+The current state:
+- SphereSimplyConnected.lean has 749 lines with the C machinery compiling (through `idChain_one`).
+- Remaining: C5 (per-piece homotopy), C6 (chain homotopy), C7/C8 (assembly), D (missed point), E (contractible complement), F (final assembly).
+
+Let me read the rest of the file (from line 740 onward) to see what's already there, and then look at the results md file fully to understand the overall plan. Let me also read LONG_PLAN.json quickly and MOISE_DAG.md.
+
+Let me continue reading the SphereSimplyConnected file.
+dsh: reasoning:
+Now I understand the state. The current invocation (this one) needs to:
+
+1. Continue SphereSimplyConnected.lean — remaining: C5-C8, D, E, F:
+   - C5: per-piece linear homotopy `restrictionPiece ~ segPiece`
+   - C6: chain homotopy in Path.Homotopic.Quotient
+   - C7/C8: reparam assembly `gamma ~ (restrictionChain gamma N N 0).cast hx hy`
+   - D: missed point
+   - E: contractible complement
+   - F: path-connectedness + `simply_connected_iff_loops_nullhomotopic` → `SimplyConnectedSpace (Sphere n)` for n ≥ 2
+
+2. Downstream: `SimplyConnectedSpace (Sphere 3)` → `SimplyConnectedSpace Poincare.Longrun.Topology.SphereThree`, then covering lemma application (spherical space form recognition becomes unconditional? Actually `sphericalSpaceFormRecognition` requires the covering map from S³ to quotient with S³ simply connected... let me check CoveringLemma.lean to see what's needed).
+
+Let me look at what's needed downstream. First let me read CoveringLemma.lean and MoiseBranch.lean to see the current state of downstream requirements.
+
+Also, given the 4-hour invocation limit, I should be strategic. The most valuable thing is finishing SphereSimplyConnected.lean (C5-C8, D, E, F) and then the downstream application.
+
+Let me check how much time is left in this invocation and check the remaining pieces. Let me read the middle part of SphereSimplyConnected.lean (lines 400-640) to understand segmentPath, clampedMap, subdiv, etc.
+dsh: reasoning:
+Now I understand the state of the file. The remaining work:
+
+- C5: per-piece linear homotopy `restrictionPiece ~ segPiece` (given the endpoints are within distance 1/4 — need `x ≠ -y` guarantee from `‖y - x‖ ≤ 1/4 < 2`).
+- C6: chain homotopy: `restrictionChain γ N m k` homotopic to `segChain γ N hseg m k` via `Path.Homotopic.Quotient` equality, using `hcomp` and `mk_trans`.
+- C7: reparam assembly: `γ ~ (restrictionChain γ N N 0).cast hx hy` via `Path.Homotopy.reparam` with the zigzag idChain.
+- C8: quotient equality to the polygonal loop `segChain N hseg N 0`, cast to a loop based at γ 0 = γ 1.
+- D: segChain range inside finite union of 2-dim spans; exists_not_mem_finset_submodule_union gives missed point v, unit-normalized.
+- E: stereographic contractible complement; loop nullhomotopic in complement.
+- F: path-connectedness + simply_connected_iff_loops_nullhomotopic.
+
+This is a big chunk. Given 4 hours per invocation and this invocation already started, I should aim to complete C5-C8 in this invocation, possibly starting D/E/F. Let me check the mathlib API available:
+
+- `Path.Homotopy.reparam` — need to check the exact signature.
+- `Path.Homotopic` API: `Path.Homotopic.Quotient`, `mk_trans`, `mk_cast`, etc.
+
+Let me check mathlib's Path API for the version pinned. Let me search in the .lake packages for relevant declarations. First, let me find the mathlib source location.
+
+Actually, before diving into that, let me set up a plan with todo list, then check mathlib APIs:
+1. `Path.Homotopy.reparam`
+2. `Path.Homotopic.Quotient` equality via `mk_trans`, `mk_cast`
+3. `Path.Homotopy.hcomp` (or `trans`)
+4. `simply_connected_iff_loops_nullhomotopic` in mathlib?
+5. mathlib's stereographic chart for the sphere.
+
+Let me check these quickly. Also check what `MoiseBranch.lean` currently states about vanKampen (vanKampenSimplyConnectedCover appears in AxiomAudit as a declaration — let me check what it is; it might be a stub that was removed, or an actual declaration).
+dsh: reasoning:
+`Path.Homotopy.reparam` exists. Let me look at the full API for `Path.Homotopy`, `Path.Homotopic`, and check key lemmas: `Path.Homotopy.trans`, `Path.Homotopy.cast`, `Path.Homotopy.symm`, `Path.Homotopy.refl`, `Path.Homotopy.hcomp`... Let me also check `Path.Homotopic.Quotient` API: `mk_trans`, `mk_cast`, etc.
+dsh: reasoning:
+Path API is all there. There's no SimplyConnected.lean in Homotopy directory of this version. Let me check where `SimplyConnectedSpace` lives.
+dsh: reasoning:
+Interesting. `SimplyConnectedSpace` is only in Lifting.lean in this mathlib version. Let me check the definition.
+dsh: reasoning:
+`simply_connected_iff_loops_nullhomotopic` exists in mathlib (this version). So the F step is: prove `PathConnectedSpace (Sphere n)` for n≥1 and every loop γ : Path x x on Sphere n (n ≥ 2) is null-homotopic. The null-homotopy will be produced by C-D-E.
+
+For E, the standard approach with mathlib: the complement of a point v in the n-sphere (n ≥ 2) is path connected, and by stereographic projection it's homeomorphic to ℝⁿ which is contractible. But proving a loop missing a point is null-homotopic IN THE WHOLE SPHERE requires: given γ : Path x x with range inside sphere \ {v}, first homotope γ to a path in the complement (as a subspace), which is contractible → null-homotopic there → null-homotopic in the sphere.
+
+Actually the classical argument: polygonal loop misses v → the loop lies in Sⁿ \ {v} ≅ ℝⁿ (via stereographic) → ℝⁿ contractible → loop null-homotopic in Sⁿ \ {v} → null-homotopic in Sⁿ.
+
+The subtlety: `Path x x` on `Sphere n` whose range lies in `{z | z ≠ v}`. We need `Path.Homotopic (γ) (Path.refl x)` in `Sphere n`. Given γ avoids v: define γ' : Path ⟨x, hx⟩ ⟨x, hx⟩ on the subspace `{z : Sphere n // z.1 ≠ v}`. Hmm, but v ∈ Sphere n as a point, and x is a point of Sphere n with x.1 ≠ v (since γ 0 = x is in the range).
+
+Plan for E:
+- `v : EuclideanSpace ℝ (Fin (n+1))`, `‖v‖ = 1`.
+- The complement `{x : Sphere n // x.1 ≠ v}`.
+- Contractibility: mathlib has `stereographic` as an `OpenPartialHomeomorph` from `Sphere n \ {v}` to `(ℝ ∙ v)ᗮ`. And mathlib has `ContractibleSpace` for any normed vector space (EuclideanSpace ℝ (Fin n) is contractible — `NormedSpace.instContractibleSpace`? Let me check. There is `ContractibleSpace` instance for `NormedAddCommGroup`? Actually there's `Pi.instContractibleSpace`? Let me check: mathlib has instance `ContractibleSpace E` for a normed vector space? I recall `SeminormedAddCommGroup.instContractibleSpace`? Hmm. There's `Metric.instContractibleSpaceClosedBall`? Let me check what's available.
+
+Simplest: use the homeomorphism from `Sⁿ \ {v}` to `ℝⁿ` (EuclideanSpace ℝ (Fin n)): mathlib's stereographic gives `(stereographic v).toPartialHomeomorph : Sphere n \ {v} ≃ₜ (ℝ ∙ v)ᗮ` roughly. And `(ℝ ∙ v)ᗮ ≃ₜ EuclideanSpace ℝ (Fin n)` requires identifying the orthogonal complement of the span of v with ℝⁿ — that's a nontrivial linear algebra step (orthogonal complement of a 1-dim subspace of ℝⁿ⁺¹ ≃ ℝⁿ via a linear isometry). Alternatively, since `(ℝ ∙ v)ᗮ` is a normed vector space, it is contractible directly! ContractibleSpace instance for normed vector spaces: I believe mathlib has `SeminormedAddCommGroup.instContractibleSpace`? Let me check Contractible.lean.
+
+Actually, in Mathlib there's `instContractibleSpace`: "Every normed space is contractible" — I recall `NormedAddCommGroup.instContractibleSpace`? Let me search.
+
+Let me search for contractible instances for normed spaces.
+dsh: reasoning:
+`stereographic hv : OpenPartialHomeomorph (sphere (0:E) 1) (ℝ ∙ v)ᗮ` with source `{⟨v,..⟩}ᶜ` and target `Set.univ`. So `stereographic hv` gives a homeomorphism `{x ∈ sphere | x ≠ v} ≃ₜ (ℝ ∙ v)ᗮ`.
+
+Now: is `(ℝ ∙ v)ᗮ` contractible? The orthogonal complement of a subspace of an inner product space is a closed submodule... mathlib has `OrthogonalContractible`? Hmm. The general fact: any normed vector space (more precisely, any `NormedAddCommGroup` with... actually a "contractible space" instance exists for any normed vector space: `NormedSpace.instContractibleSpace`? Let me check Analysis/Convex/Contractible.lean.
+dsh: reasoning:
+There's `RealTopologicalVectorSpace.contractibleSpace : ContractibleSpace E` for a real topological vector space `E`. Is `(ℝ ∙ v)ᗮ` a real topological vector space? It's a `Submodule ℝ E` with... For an inner product space, the orthogonal complement is a closed submodule, and there is a `RealTopologicalVectorSpace` instance? Let me check. Actually `RealTopologicalVectorSpace` is a class in mathlib defined for `E : Type*` with `[AddCommGroup E] [Module ℝ E] [TopologicalSpace E] [ContinuousAdd E] [ContinuousSMul ℝ E] [T2Space E]`? Let me check its definition.
+
+Actually simpler: `E` being a normed space gives `RealTopologicalVectorSpace E` (there's likely an instance `SeminormedAddCommGroup.toRealTopologicalVectorSpace` or similar). For a submodule of a normed space... there's `Submodule.instTopologicalSpace` and continuous add/smul instances. Let me check whether the instance search works: `RealTopologicalVectorSpace ((ℝ ∙ v)ᗮ)`.
+
+Let me test quickly in Lean. First, let me check the definition of RealTopologicalVectorSpace.
+dsh: reasoning:
+`RealTopologicalVectorSpace` is defined in `Analysis/Convex/Contractible.lean` itself. Let me look at it.
+dsh: reasoning:
+So the instance is `RealTopologicalVectorSpace.contractibleSpace : ContractibleSpace E` where `RealTopologicalVectorSpace` is presumably an abbreviation for the class `[AddCommGroup E] [Module ℝ E] [TopologicalSpace E] [ContinuousAdd E] [ContinuousSMul ℝ E]` (defined via the variable block? Actually it seems `RealTopologicalVectorSpace` is just the typeclass name — probably declared earlier in some other file; but the grep shows only this file references it. Let me grep the exact declaration.
+dsh: reasoning:
+So `RealTopologicalVectorSpace` is a class that must be defined elsewhere... `grep` found only the instance. It's probably defined in the same file earlier, or it's a `class` declared with a `where` block... Let me search more broadly (maybe with different case or in Basic files).
+dsh: reasoning:
+So `RealTopologicalVectorSpace` must be a variable-context "structure" declared via `section` + `variable`? No — `RealTopologicalVectorSpace.contractibleSpace` namespaced instance. It must be a class defined somewhere in the import closure. Let me grep in the .olean or check imports of Contractible.lean: it imports `Mathlib.Analysis.Convex.Star` and `Mathlib.Topology.Homotopy.Contractible`. Perhaps the class is defined in `Mathlib.Topology.Algebra.Module.Basic`? Let me grep with the class keyword in all mathlib.
+dsh: reasoning:
+Hmm. The class `RealTopologicalVectorSpace` is used in Contractible.lean as `instance (priority := 100) RealTopologicalVectorSpace.contractibleSpace` — with the variable context `{E : Type*} [AddCommGroup E] [Module ℝ E] [TopologicalSpace E] [ContinuousAdd E] [ContinuousSMul ℝ E]`. Maybe `RealTopologicalVectorSpace` is defined inside that file... let me just search for "RealTopologicalVectorSpace" across the whole mathlib repo via a different approach — maybe it's in an imported file but declared as `class`.
+dsh: reasoning:
+Odd — the class `RealTopologicalVectorSpace` isn't defined by that name anywhere in the sources I searched. Maybe it's a generated name: the instance `RealTopologicalVectorSpace.contractibleSpace`... Hmm wait, maybe it's defined via a `class` with a different spelling in `Mathlib/Topology/Algebra/Module/Basic.lean` — e.g. `class RealTopologicalVectorSpace` might actually be from `Mathlib.Topology.Algebra.Module.StrongTopology`... Let me just do a direct grep on the entire mathlib directory (not only .lean matching).
+dsh: reasoning:
+Weird. Let me check if `RealTopologicalVectorSpace` is defined inside Contractible.lean itself above line 39... I saw lines 1-39 of the file and there's no class definition. Wait — maybe it's in a namespace from an imported module that isn't in `Mathlib/` matching... Actually, maybe the class is `Mathlib.Analysis.Normed.Group.Basic`? No.
+
+Alternatively, `RealTopologicalVectorSpace` might be a **section variable structure** — no. Let me just test in Lean directly. I'll write a scratch file to test instance synthesis:
+
+```lean
+import Mathlib
+open scoped Topology
+#check RealTopologicalVectorSpace.contractibleSpace
+#check (inferInstance : ContractibleSpace (EuclideanSpace ℝ (Fin 3)))
+```
+
+and check the submodule case. Let me do that in /tmp style scratch under the release dir... Actually I should use a scratch file inside the worktree but not in the release package (a scratch dir at worktree root is fine, e.g., `scratch/Test.lean`, run with `lake env lean`). Wait — `lake env lean` from release works for files anywhere.
+
+Let me write the scratch file.
+dsh: reasoning:
+Excellent. Everything synthesizes:
+- `ContractibleSpace (ℝ ∙ v)ᗮ` works (the class `RealTopologicalVectorSpace` exists in the environment — probably a `class` from `Mathlib.Topology.Algebra.Module.Basic` that grep didn't catch due to some encoding; whatever, it works).
+- `stereographic hv : OpenPartialHomeomorph (Sphere) (ℝ ∙ v)ᗮ` with source `{⟨v,..⟩}ᶜ` and target univ.
+
+Wait, but the class must be defined somewhere — I wonder if it's `RealTopologicalVectorSpace` in `Mathlib/Topology/Algebra/Module/Basic.lean`... doesn't matter, it works.
+
+For E I need:
+1. `{x : Sphere n // x.1 ≠ v} ≃ₜ (ℝ ∙ v)ᗮ` via stereographic. The source of `stereographic hv` is `{⟨v, by simp [hv]⟩}ᶜ : Set (Sphere n)` = complement of the point v in the sphere. The subtype `{x : Sphere n // x ≠ ⟨v, ...⟩}`. Note: I need the homeomorphism on the source: `(stereographic hv).toHomeomorphOfSourceEqUnivTargetEqUniv` gives a homeo from the whole sphere — no. I need `source`-restricted: mathlib has `OpenPartialHomeomorph.toHomeomorphOnSource`? Hmm... Actually for OpenPartialHomeomorph there's `.toLocalHomeomorph` etc. The right approach: since `(stereographic hv).source = {⟨v,..⟩}ᶜ` and target = univ, I can build:
+
+```lean
+def sphereComplementHomeo (v : Sphere n) :
+    {x : Sphere n // x ≠ v} ≃ₜ (ℝ ∙ (v:E))ᗮ
+```
+
+via `Homeomorph` from the source subset. `OpenPartialHomeomorph` has:
+- `toPartialHomeomorph`
+- For a PartialHomeomorph `e : PartialHomeomorph X Y`, there's `e.toHomeomorphOnSource : e.source ≃ₜ e.target`? Let me check the API. In mathlib there is `PartialHomeomorph.toHomeomorphOfSourceEqUnivTargetEqUniv` and `OpenPartialHomeomorph.toHomeomorphOfSourceEqUnivTargetEqUniv`. Is there a `toHomeomorphOnSource`? Hmm. I recall `e.toPartialHomeomorph.toHomeomorphOfSourceEqUnivTargetEqUniv`... For the source-restricted version: I think there's `PartialHomeomorph.homeomorphOnSource`? Let me check quickly.
+dsh: reasoning:
+`e.toHomeomorphSourceTarget : e.source ≃ₜ e.target` exists on `PartialHomeomorph`. And `OpenPartialHomeomorph` coerces to `PartialHomeomorph` (it extends). So:
+
+```lean
+def sphereComplementHomeo (v : Sphere n) :
+    {x : Sphere n // x ≠ v} ≃ₜ (ℝ ∙ (v : EuclideanSpace ℝ (Fin (n+1))))ᗮ :=
+  let e : PartialHomeomorph (Sphere n) ((ℝ ∙ (v:E))ᗮ) := (stereographic (norm_eq_of_mem_sphere v)).toPartialHomeomorph
+  ...
+```
+
+Hmm, wait: the source is `{⟨v, by simp [hv]⟩}ᶜ` where hv = ‖v‖=1, and the subtype `{x : Sphere n // x ≠ v}`. If `v : Sphere n`, then `⟨v, by simp⟩ : Sphere n` equals `v` definitionally (⟨v.1, v.2⟩ = v by eta for subtypes). So `{⟨v, ..⟩}ᶜ = {x : Sphere n // x ≠ v}` — need to prove set equality `{x | x ≠ ⟨v, by simp[hv]⟩} = {x | x ≠ v}`. Fine.
+
+So the homeomorphism: `sphereComplementHomeo v : {x : Sphere n // x ≠ v} ≃ₜ (ℝ ∙ v.1)ᗮ` — and the target is contractible, so the source is contractible: `e.symm.contractibleSpace`? There's `Homeomorph.contractibleSpace_iff`? From Convex/Contractible.lean: `(Homeomorph.Set.univ E).contractibleSpace_iff` — there's `Homeomorph.contractibleSpace` and `.contractibleSpace_iff`. Let me check Topology/Homotopy/Contractible.lean.
+
+Then: loop γ : Path x x with range avoiding v.
+- Define the loop as a loop on the subspace `{x : Sphere n // x.1 ≠ v}`: γ' : Path ⟨x, hx_not_v⟩ ⟨x, hx_not_v⟩ on the contractible space → null-homotopic in the subspace (contractible ⇒ simply connected? ContractibleSpace gives HomotopyEquiv to Unit; mathlib has `ContractibleSpace.instSimplyConnectedSpace`? Actually `SimplyConnectedSpace.ofContractible` exists). In the subspace, `Path.Homotopic γ' (Path.refl _)` — then map back to the sphere by the inclusion map `Path.map` of the continuous inclusion, giving `Path.Homotopic γ (Path.refl x)` in `Sphere n`. 
+
+But careful: the inclusion map from the subtype `{x : Sphere n // x.1 ≠ v}` — I should phrase the complement as `{x : Sphere n // x ≠ v}` with equality of points. The range condition `∀ t, γ t ≠ v` gives a function `fun t => ⟨γ t, ht t⟩ : I → {x : Sphere n // x ≠ v}`; continuity: `Continuous.subtype_mk γ.continuous ...`. So:
+
+```lean
+theorem loopNullhomotopic_of_range_mem_complement {v : Sphere n} {x : Sphere n} (γ : Path x x)
+    (h : ∀ t : I, γ t ≠ v) : Path.Homotopic γ (Path.refl x) := by
+  -- lift γ to the complement
+  let U : Type _ := {x : Sphere n // x ≠ v}
+  haveI : ContractibleSpace U := ...
+  haveI : SimplyConnectedSpace U := SimplyConnectedSpace.ofContractible U
+  let γ' : Path (⟨x, by ...⟩ : U) (⟨x, by ...⟩ : U) := ⟨⟨fun t => ⟨γ t, h t⟩, by fun_prop⟩, by ext; simp, by ext; simp⟩
+  have hγ' : Path.Homotopic γ' (Path.refl _) := SimplyConnectedSpace.paths_homotopic γ' (Path.refl _)
+  -- push forward by inclusion
+  exact (hγ'.map ...?) 
+```
+
+There's `Path.Homotopic.map`? In Path.lean there is `Path.Homotopic.map : {p q : Path x₀ x₁} (h : p.Homotopic q) (f : C(X, Y)) : (p.map f.continuous).Homotopic (q.map f.continuous)` — yes (line ~274 area, `def map` was at 398 in Homotopic.Quotient; `Path.Homotopic.map` exists too). The inclusion: `ContinuousMap.mk Subtype.val continuous_subtype_val`? Actually there's `Subtype.val` as a continuous map: `⟨Subtype.val, continuous_subtype_val⟩`. Then `(Path.refl ⟨x, hx⟩).map continuous_subtype_val` — is that defeq `Path.refl x`? `Path.map` composition: `(p.map cf)` evaluates to `cf (p t)`, and refl maps to refl — `Path.refl_map`? There is `Path.map_refl`? Hmm, might need a small cast or `Path.ext`. Path.map of refl: `(Path.refl a).map hf : Path (hf a) (hf a)` — and `Path.refl (hf a)` is different but equal via `Path.ext`? Actually `Path.refl_map` exists in mathlib? Let me check. Simpler: after getting homotopy in the subspace, use `hγ'.map (⟨Subtype.val, continuous_subtype_val⟩ : C(U, Sphere n))` and then show `Path.refl ⟨x, _⟩.map ... = Path.refl x` via ext and `Path.refl` def... Let me check `Path.map_refl`/`refl_map`.
+
+Let me now check the key remaining mathlib APIs:
+1. `Path.Homotopy.reparam` — need exact statement: `reparam (p : Path x₀ x₁) (f : I → I) (hf : Continuous f) (hf₀ : f 0 = 0) (hf₁ : f 1 = 1) : Homotopy p (p.reparam f hf hf₀ hf₁)`. 
+2. `Path.reparam` def — `p.reparam f hf hf₀ hf₁ : Path x₀ x₁`.
+3. `Path.Homotopic.map`, `Path.Homotopic.map` for loops.
+4. `Path.Homotopic.hcomp`.
+5. `Path.map_refl` or similar.
+
+For C7: `γ ~ (restrictionChain γ N N 0).cast ...`:
+- `idChain N N 0 : Path (clampedMap id (subdiv N 0)) (clampedMap id (subdiv N (0+N)))` — clampedMap id (subdiv N 0) = clamp(0) = 0, and target = clamp(N/N) = 1 (for N≠0). So `idChain N N 0` cast to `Path 0 1` (on I). Call it `zigzag`.
+- `Path.reparam γ (fun t => (zigzag t : I)) ...` gives `Homotopy γ (γ.reparam ...)`.
+- `γ.reparam zigzag ...` pointwise equals `(restrictionChain γ N N 0).cast hx hy` where hx : γ 0 = clampedMap γ (subdiv N 0), hy : γ 1 = clampedMap γ (subdiv N (N+0)). Wait the cast direction: `restrictionChain γ N N 0 : Path (clampedMap γ (subdiv N 0)) (clampedMap γ (subdiv N N))`; cast hx hy gives `Path (γ 0) (γ 1)` — cast moves target: `Path.cast : Path x y → (x = x') → (y = y') → Path x' y'`? Let me check the direction: `def cast (γ : Path x y) (γ' : Path x' y') (hx : x' = x) (hy : y' = y)`? In mathlib Path.cast has signature `{x y x' y'} (γ : Path x y) (hx : x' = x) (hy : y' = y) : Path x' y'`? Let me check — in the existing file they wrote `(restrictionChain f N m (k+1)).cast (by congrArg ...)` with source/target equal to `clampedMap f (subdiv N (k+1))` and target `clampedMap f (subdiv N ((k+1)+m))`; so `cast hsource htarget` where hsource : x' = x... but there the types were syntactically equal up to `k+1` rewrite. In their usage, the two casts have hypotheses of the form `congrArg (fun t => clampedMap f (subdiv N t)) rfl` — equal to the existing source/target. Hmm, so `Path.cast (γ : Path x y) (hx : x' = x) (hy : y' = y) : Path x' y'`. 
+
+Let me verify `Path.cast`'s signature and `Path.cast_coe` etc. Also, for C7 I need:
+- `hx : γ 0 = clampedMap γ (subdiv N 0)`: `clampedMap γ (subdiv N 0) = clampedMap γ 0 = γ 0` (clampedMap_of_mem_Icc with 0). So hx is the reverse.
+- `hy : γ 1 = clampedMap γ (subdiv N (N+0))`: subdiv N N = N/N = 1 (N≠0), clampedMap γ 1 = γ 1.
+
+Then C8: segChain cast to Path (γ 0) (γ 1), plus homotopy `restrictionChain ~ segChain` (C6) gives in the quotient `mk ((restrictionChain ...).cast hx hy) = mk ((segChain ...).cast hx hy)` — via `Path.Homotopic.pathCast` or `Path.Homotopy.cast`. Then transitivity: `γ.Homotopic ((restrictionChain...).cast hx hy)` (C7) and `((restrictionChain...).cast hx hy).Homotopic ((segChain...).cast hx hy)` (C6 via Homotopic.pathCast?) gives `γ.Homotopic ((segChain γ N hseg N 0).cast hx hy)`.
+
+But wait — to get a LOOP we need the endpoints: γ 0 = γ 1 = x (γ : Path x x). The segChain cast has source γ 0 and target γ 1, i.e., Path x x — good, so no cast needed beyond hx hy.
+
+Then D: `segChain` range ⊆ finite union of 2-dim spans: span ℝ {a, b} where a, b are consecutive subdivision points. Actually each segPiece's range lies in span {a,b} where a = clampedMap γ (subdiv N k), b = clampedMap γ (subdiv N (k+1)). For n ≥ 2, `span_pair_ne_top : span ℝ {a, b} ≠ ⊤` requires 3 ≤ n+1... wait `span_pair_ne_top {m} (hm : 3 ≤ m) (a b : EuclideanSpace ℝ (Fin m))` — m = n+1, so need 3 ≤ n+1, i.e., 2 ≤ n. The claim: the span of two vectors in ℝ^{n+1} (n+1 ≥ 3) is not top. 
+
+Then exists_not_mem_finset_submodule_union over the finset of spans of consecutive pairs (k < N). Get unit vector v' (normalize — need v' ≠ 0: from not in span, and 0 ∈ span, so v' ≠ 0) outside all spans. Then the polygonal loop misses v' (as a point of the sphere after normalization).
+
+E: then `∀ t, (segChain ...) t ≠ ⟨v', ...⟩` from range-membership; loop nullhomotopic.
+
+Wait, but careful: in D, the spans are spans of pairs of points. The polygonal loop = segChain N hseg N 0 (after cast). Its range ⊆ ⋃_{k<N} range(segPiece γ N k). Each segPiece range ⊆ span{γ(k/N), γ((k+1)/N)}. Then the missed point v is outside every span → the loop range misses v.
+
+Then F: `Path.Homotopic γ (Path.refl x)` via C8 + E (nullhomotopy of the polygonal loop) — then `simply_connected_iff_loops_nullhomotopic` with `PathConnectedSpace (Sphere n)` for n ≥ 1... 
+
+Wait, but there's a subtlety: `hseg : ∀ k, clampedMap γ (subdiv N k) ≠ -clampedMap γ (subdiv N (k+1))` — for k < N this follows from ‖a - b‖ ≤ 1/4 < 2 (norm_segment non-antipodal). For k ≥ N, arbitrary (unused — hseg is for all k; we need it for all k in segChain usage; actually segChain needs hseg for k < N only). We can construct `hseg` from the fine subdivision bound: `‖γ(k/N) - γ((k+1)/N)‖ ≤ 1/4`, and if a = -b then ‖a - b‖ = ‖2a‖ = 2 > 1/4. So hseg k : a ≠ -b for all k. 
+
+Also the cast in segChain: the chain pieces are `Path (clampedMap γ (subdiv N k)) (clampedMap γ (subdiv N (k+1)))`.
+
+Now C5: per-piece homotopy. The segment piece `segPiece γ N k (hseg k) : Path (clampedMap γ (subdiv N k)) (clampedMap γ (subdiv N (k+1)))` is `segmentPath x y hxy` where x, y are the clamped points on the sphere. The restriction piece `restrictionPiece γ N k : Path (clampedMap γ (subdiv N k)) (clampedMap γ (subdiv N (k+1)))` evaluates at t to `clampedMap γ ((k + t)/N)`. Since t ∈ I and the argument (k+t)/N ∈ [0,1] (for k+1 ≤ N), `clampedMap γ ((k+t)/N) = γ ⟨(k+t)/N, h⟩`. 
+
+The segment piece evaluates to `(‖x + t•(y-x)‖⁻¹) • (x + t•(y-x))`.
+
+The homotopy: the "linear interpolation on the sphere": F(s, t) = normalized((1-s)·γ((k+t)/N) + s·(straight segment)). Actually simpler classical homotopy: use the convex combination IN THE AMBIENT SPACE then normalize:
+
+F(s,t) = ((1-s)·γₖ(t) + s·σ(t)) / ‖(1-s)·γₖ(t) + s·σ(t)‖
+
+where γₖ(t) = γ((k+t)/N) and σ(t) = normalized(x + t(y-x))... hmm wait, σ(t) = (x + t(y−x))/‖x+t(y−x)‖. Both are on the sphere. The denominator (1-s)γₖ(t) + s·σ(t) must be nonzero: since both endpoints are on the sphere and the segment σ stays within 2/3 of x (norm_segment_sub_left_le_two_thirds with hε : ‖y−x‖ ≤ 1/4), and γₖ(t) is within 1/4 of x (fine subdivision), the convex combination is within distance (1-s)·(1/4) + s·(2/3) ≤ 2/3 < 1 of x, so it can't be zero (‖x‖=1, and if the combination were 0, its distance from x would be 1). 
+
+This is the standard proof. Let me write C5:
+
+```lean
+theorem restrictionPieceHomotopySegPiece (γ : C(I, Sphere n)) (N k : ℕ)
+    (hN : k + 1 ≤ N)  -- actually we want k < N
+    (hε : ‖((clampedMap γ (subdiv N (k+1)) : Sphere n) : E) - ((clampedMap γ (subdiv N k) : Sphere n) : E)‖ ≤ 1/4)
+    (hsegk : ((clampedMap γ (subdiv N k) : Sphere n) : E) ≠ -((clampedMap γ (subdiv N (k+1)) : Sphere n) : E)) :
+    Path.Homotopy (restrictionPiece γ N k) (segPiece γ N k hsegk)
+```
+
+The homotopy map: F (s : I) (t : I) : Sphere n :=
+  ⟨ (‖(1-s)•γₖ(t) + s•σ(t)‖⁻¹) • ((1-s)•γₖ(t) + s•σ(t)), mem proof⟩
+
+Continuity: fun_prop with the denominators nonzero. The nonzero proof at each (s,t): need `(1-s)•γₖ(t) + s•σ(t) ≠ 0`. 
+
+Show `‖(1-s)•γₖ(t) + s•σ(t) − x‖ ≤ 2/3`:
+= ‖(1-s)•(γₖ(t) − x) + s•(σ(t) − x)‖ (since (1-s)+s = 1: (1-s)•x + s•x = x)
+≤ (1-s)‖γₖ(t) − x‖ + s‖σ(t) − x‖ ≤ (1-s)·(1/4) + s·(2/3) ≤ 2/3.
+Then if it were 0, ‖x‖ = ‖0 − x‖ ≤ 2/3 < 1 = ‖x‖, contradiction.
+
+The endpoints: F(0,t) = γₖ(t) = restrictionPiece value ✓; F(1,t) = σ(t) = segPiece value ✓; F(s,0) = x; F(s,1) = y ✓.
+
+So C5 is quite mechanical but requires the norm estimates. The distance γₖ(t) − x ≤ 1/4 comes from `exists_fine_subdivision`: dist (γ t) (γ t') ≤ 1/4 when |t − t'| ≤ 1/N. Here t' = k/N and t = (k+t)/N: |(k+t)/N − k/N| = t/N ≤ 1/N ✓ (t ≤ 1). Both in I. But note the clampedMap form: `clampedMap γ ((k+t)/N) = γ ⟨(k+t)/N, hk⟩` — requires (k+t)/N ∈ [0,1], i.e. k+t ≤ N: k+1 ≤ N suffices (k + t ≤ k+1 ≤ N). Good — the hypothesis `hN : k + 1 ≤ N` is the natural one. Hmm, wait — in segChain/restrictionChain the pieces run k = 0..N−1, so k + 1 ≤ N holds.
+
+But also the distance bound needs `dist (γ ⟨(k+t)/N, ·⟩) (γ ⟨k/N, ·⟩) ≤ 1/4` and the fine-subdivision guarantee `dist t t' ≤ 1/N → dist (γ t) (γ t') ≤ 1/4` where dist on I is `dist (t : ℝ) (t' : ℝ)`? For the subtype metric, dist ⟨a,ha⟩ ⟨b,hb⟩ = dist a b = |a − b|. And |(k+t)/N − k/N| = t/N ≤ 1/N. OK.
+
+C6: chain homotopy. By induction on m:
+- m=0: refl paths, `Path.Homotopy.refl`.
+- m+1: `(restrictionPiece γ N k).trans (restrictionChain γ N m (k+1)).cast _ _` vs `(segPiece γ N k hseg k).trans (segChain γ N hseg m (k+1)).cast _ _`.
+  hcomp of (C5 piece homotopy) and (cast of ih): `Path.Homotopy.cast (ih (k+1)) _ _`? `Path.Homotopy.cast : Homotopy p₀ p₁ → (p₀ = q₀) → (p₁ = q₁) → Homotopy q₀ q₁`. Hmm wait: from line 136: `def cast {p₀ p₁ q₀ q₁ : Path x₀ x₁} (F : Homotopy p₀ p₁) (h₀ : p₀ = q₀) (h₁ : p₁ = q₁) : Homotopy q₀ q₁`. And `pathCast : {x x' y y' : X} {p q : Path x y} (F : p.Homotopy q) (hx : x' = x) (hy : y' = y) : Homotopy (p.cast hx hy) (q.cast hx hy)`.
+
+So: piece homotopy `F₀ : Homotopy (restrictionPiece γ N k) (segPiece γ N k hsegk)`, and IH gives `F₁ : Homotopy (restrictionChain γ N m (k+1)) (segChain γ N hseg m (k+1))`. Then `F₁.cast h₀ h₁ : Homotopy (restrictionChain... .cast h₀ h₁) (segChain... .cast h₀ h₁)` where h₀ h₁ are the congruences in the chain definition. Then `F₀.hcomp (F₁.cast h₀ h₁) : Homotopy ((restrictionPiece ...).trans (restrictionChain...cast h₀ h₁)) ((segPiece ...).trans (segChain...cast h₀ h₁))` — and the LHS/RHS are defeq the chain definitions by `restrictionChain.eq_2`-style unfolding. Actually `restrictionChain` is a recursive def, so `(restrictionChain γ N (m+1) k) = (restrictionPiece γ N k).trans ((restrictionChain γ N m (k+1)).cast ... ...)` definitionally (via the equation lemma `restrictionChain.eq_2`? The existing file used `rw [restrictionChain.eq_2 f N k m]`). But here I need the homotopy BETWEEN the unfolded form and the def form: `Path.Homotopy.cast` again with the equation lemma as `h₀`/`h₁`? Simpler: state the induction as producing a Homotopy between the LITERAL recursive-def values, and in the succ case produce the homotopy of the unfolded form then `Path.Homotopy.cast F (restrictionChain.eq_2 ...) (segChain.eq_2 ...)`. Hmm, `Homotopy.cast` requires `p₀ = q₀` — the eq_2 gives `restrictionChain γ N (m+1) k = ...unfolded...`. So `cast F (eq_2.symm?) ...`. Let me think: F : Homotopy p₀ p₁ with p₀ = unfolded restriction, p₁ = unfolded seg. Want Homotopy (restrictionChain γ N (m+1) k) (segChain γ N hseg (m+1) k). h₀ : p₀ = (restrictionChain ...) i.e. h₀ : unfolded = actual, given by `(restrictionChain.eq_2 f N k m).symm`? Wait eq_2 states `restrictionChain f N (m+1) k = ...`? In the file: `rw [restrictionChain.eq_2 f N k m]` rewrote `restrictionChain f N (m + 1) k` to the unfolded form, so `eq_2 : restrictionChain f N (m+1) k = (restrictionPiece f N k).trans ...`. So `cast F (eq_2.symm) (seg_eq_2.symm)`.
+
+Hmm wait, what does `restrictionChain.eq_2` look like exactly? The def was:
+
+```
+def restrictionChain (f : C(I, X)) (N : ℕ) : (m k : ℕ) → Path ...
+  | 0, k => ...
+  | m + 1, k => (restrictionPiece f N k).trans ((restrictionChain f N m (k + 1)).cast ...)
+```
+
+The equation lemma `restrictionChain.eq_2 (f) (N) (k) (m)`? Order of parameters after fixed ones: for `restrictionChain f N m k`, eq_2 is for m+1 k: `restrictionChain f N (m + 1) k = ...`. In the file they used `rw [restrictionChain.eq_2 f N k m]` — so the equation lemma argument order is (f, N, k, m)? Hmm that's odd but fine, whatever compiles.
+
+Alternatively avoid the cast headache by defining `restrictionChainHomotopySegChain` as a mutual/nested recursion with explicit `Path.Homotopy` and using `Path.Homotopy.cast`; then quotient equality via `Path.Homotopic.Quotient.eq.mp (Quotient.sound h)`.
+
+C7: reparam. `Path.Homotopy.reparam γ zigzag hf hf₀ hf₁ : Homotopy γ (γ.reparam zigzag hf hf₀ hf₁)` where `zigzag : I → I := fun t => (idChain N N 0).cast hx' hy'` (as a path 0→1 in I, then `fun t => ((casted path) t : I)` — continuous since paths are continuous). hf₀ : zigzag 0 = 0, hf₁ : zigzag 1 = 1 — from idChain_zero/idChain_one (with the casts). Then show `γ.reparam zigzag hf hf₀ hf₁ = (restrictionChain γ N N 0).cast hx hy` — pointwise equality: `(γ.reparam zigzag hf hf₀ hf₁) t = γ ⟨zigzag t, ...⟩` and by restrictionChain_apply_eq_clampedMap_idChain: `(restrictionChain γ N N 0) t = clampedMap γ ((idChain N N 0) t : ℝ) = γ ⟨(idChain N N 0) t, ...⟩`. Need to relate `zigzag t` (the casted path value in I) with `(idChain N N 0) t` — cast of paths in I: values are equal as reals: `(Path.cast p hx hy) t = p t`? There's `Path.cast_coe`? Hmm: `Path.cast` — how is it defined? Let me check: `def Path.cast {x y x' y'} (γ : Path x y) (hx : x' = x) (hy : y' = y) : Path x' y' := { toContinuousMap := γ.1.cast hx hy, source' := ..., target' := ... }` and `ContinuousMap.cast` changes endpoints but evaluation is the same function. So `((p.cast hx hy) t : X) = (p t : X)` holds definitionally? Probably yes (ContinuousMap.cast is the same underlying function). Let me check ContinuousMap.cast in mathlib: `def cast {f g : C(X,Y)} (h : f = g) : C(X,Y) := h ▸ f`? Hmm. Actually for the interval-specific casts, in the existing file they used `Path.extend_cast` and `simp only [Path.extend_cast]`. There's a lemma `Path.cast_coe`? Let me check.
+
+Simplest: `simp [Path.cast]` or use `change` + rfl. I'll test in scratch.
+
+Note that C7/C8 involve equality of paths with endpoint casts. There might be a slicker route: instead of casting at the end, define everything so that endpoints are literally `γ 0` and `γ 1`... no, the chains' endpoints are clampedMap values, so casts are needed. The quotient machinery (`Path.Homotopic.Quotient.cast`, `mk_cast`, `cast_cast`) handles this.
+
+Alternative for C7: `Path.Homotopy.cast (Path.Homotopy.reparam ...) h₀ h₁` to move from `Path (γ 0) (γ 1)`... hmm, reparam's target is `γ.reparam zigzag ...` with endpoints γ 0 and γ 1 already (reparam preserves endpoints). And `(restrictionChain γ N N 0).cast hx hy : Path (γ 0) (γ 1)` — same endpoints. So I need `Homotopy (γ.reparam zigzag hf hf₀ hf₁) ((restrictionChain γ N N 0).cast hx hy)` — pointwise equality of paths: `Path.ext`? There's a lemma that two paths with same endpoints and same pointwise values are equal: `Path.ext` gives equality of `toContinuousMap`; then `Path.ext ...` — since Path is a structure with toContinuousMap + proof fields, `Path.ext h_toFun` requires proving only the map equality (proofs are subsingleton? Path ext: `theorem ext : ∀ {γ δ : Path x y}, (γ : I → X) = (δ : I → X) → γ = δ`). Then `Path.Homotopy.cast (Path.Homotopy.refl (γ.reparam ...)) h_eq rfl`? Or directly build `Path.Homotopy` by casting refl.
+
+So C7:
+```
+have h_eq : γ.reparam zigzag hf hf₀ hf₁ = (restrictionChain γ N N 0).cast hx hy := Path.ext (funext fun t => ...)
+have H : Path.Homotopy γ (γ.reparam zigzag hf hf₀ hf₁) := Path.Homotopy.reparam γ zigzag hf hf₀ hf₁
+exact H.cast rfl h_eq
+```
+
+Wait `Homotopy.cast (F : Homotopy p₀ p₁) (h₀ : p₀ = q₀) (h₁ : p₁ = q₁) : Homotopy q₀ q₁`.
+
+For the pointwise equality: `(γ.reparam zigzag hf hf₀ hf₁) t = γ ⟨zigzag t, (zigzag t).2⟩` and `((restrictionChain γ N N 0).cast hx hy) t = (restrictionChain γ N N 0) t` (cast doesn't change values — need lemma or simp). Then `(restrictionChain γ N N 0) t = clampedMap γ ((idChain N N 0) t : ℝ)` (C4) and `clampedMap γ ((idChain N N 0) t : ℝ) = γ ⟨(idChain N N 0) t, hmem⟩` (clampedMap_of_mem_Icc since (idChain N N 0) t ∈ I... wait `clampedMap γ r = γ ⟨min 1 (max 0 r), ...⟩`; by `clampedMap_of_mem_Icc` with `ht : r ∈ Set.Icc 0 1`: `(idChain N N 0) t : I` has value in [0,1] so r = ((idChain N N 0) t : ℝ) ∈ Icc ✓.
+
+And `γ ⟨zigzag t, hz⟩ = γ ⟨(idChain N N 0) t, hid⟩` — need `zigzag t = (idChain N N 0) t` as I elements: the casted path equals the original pointwise: `((p.cast hx hy) t : I) = (p t : I)` — this should be provable by `simp [Path.cast]` or rfl if Path.cast keeps the same underlying function. Let me verify Path.cast def. Actually wait — for the cast `(idChain N N 0).cast hx' hy'` where hx' : 0 = clampedMap id (subdiv N 0) and hy' : 1 = clampedMap id (subdiv N (N+0))... careful with direction. Let me check Path.cast signature precisely.
+
+OK — there are many details. Let me also plan C8/D/E/F:
+
+C8: `polygonalLoop` := `(segChain γ N hseg N 0).cast hx hy : Path (γ 0) (γ 1)`, then since γ : Path x x, γ 0 = γ 1 = x. `Path.Homotopic` equality via transitivity.
+
+D: For each k < N, the range of `segPiece γ N k hsegk ⊆ span ℝ ({a} ∪ {b})`? span ℝ {a, b} as a Submodule: `Submodule.span ℝ {a, b} : Submodule ℝ E`. The segmentPath value: `(‖x + t•(y-x)‖⁻¹) • (x + t•(y-x))` — a scalar multiple of x + t•(y−x) ∈ span {x, y} ✓ (x + t•(y−x) = (1−t)x + ty).
+
+So `segChain_range_subset_union_spans : ∀ t, (segChain γ N hseg m k) t ∈ ⋃ k' < m, span ℝ {a(k'), a(k'+1)}` — by induction on m.
+
+Hmm, actually the union: `Set.iUnion (fun k' : {k' : ℕ // k' < m} => ...)`. For the D step we take m = N, k = 0: `range (segChain γ N hseg N 0) ⊆ ⋃ k' ∈ Finset.range N, (span ℝ {(clampedMap γ (subdiv N k') : E), (clampedMap γ (subdiv N (k'+1)) : E)} : Set E)`.
+
+Then `exists_not_mem_finset_submodule_union` on the finset `(Finset.range N).image (fun k => span ℝ {a_k, a_{k+1}}) : Finset (Submodule ℝ E)` with `hprop : ∀ W ∈ s, W ≠ ⊤` from `span_pair_ne_top` (need `3 ≤ n+1` i.e. `2 ≤ n`; hm : 3 ≤ m where m = n+1: need `hm : 2 ≤ n`).
+
+Then get `w : E` with `∀ W ∈ s, w ∉ W`; w ≠ 0 since 0 ∈ every span; then v = ‖w‖⁻¹ • w : Sphere n (norm 1 ✓); and `v.1 ∉ W` for every W: since W is closed under scalar multiplication and w ∉ W, if ‖w‖⁻¹•w ∈ W then w = ‖w‖•(‖w‖⁻¹•w) ∈ W, contradiction. So `∀ t, (segChain ...) t ≠ v`.
+
+Hmm wait — `v` needs to be a POINT of Sphere n to feed E. So E's input: `v : Sphere n`, `h : ∀ t, (segChain ...) t ≠ v`.
+
+E: `loopNullhomotopic_of_range_avoids (γ : Path x x) (v : Sphere n) (h : ∀ t, γ t ≠ v) : Path.Homotopic γ (Path.refl x)` — as sketched above, via the subspace `{x : Sphere n // x ≠ v}` homeo to `(ℝ ∙ v.1)ᗮ` (contractible).
+
+Details of E:
+```lean
+def sphereComplement (v : Sphere n) := {x : Sphere n // x ≠ v}
+
+def sphereComplementHomeo (v : Sphere n) : sphereComplement v ≃ₜ (ℝ ∙ (v : E))ᗮ
+```
+Build: `let e := (stereographic (E := E) (norm_eq_of_mem_sphere v))` — wait, `stereographic (hv : ‖v‖ = 1) : OpenPartialHomeomorph (sphere (0:E) 1) (ℝ ∙ v)ᗮ`. Its `.toPartialHomeomorph` has source `{⟨v, by simp [hv]⟩}ᶜ` and target univ. `toHomeomorphSourceTarget : e.source ≃ₜ e.target`. Then compose with the subtype equivalence between `{x : Sphere n // x ≠ v}` and `e.source` (as a type `↥({⟨v,..⟩}ᶜ)`): the sets are equal (simp with subtype ext), and target univ: `(ℝ ∙ v)ᗮ ≃ₜ univ` hmm — `e.toHomeomorphSourceTarget : e.source ≃ₜ e.target` where `e.target = univ`, so I need to transport `e.target` to `(ℝ ∙ v)ᗮ` — the homeo `Homeomorph.Set.univ (ℝ ∙ v)ᗮ : (univ : Set (ℝ∙v)ᗮ) ≃ₜ (ℝ∙v)ᗮ`. Composition via `Homeomorph.trans` requires exactly matching types: `e.toHomeomorphSourceTarget : (e.source : Set E...) ≃ₜ (e.target : Set Y)` hmm — toHomeomorphSourceTarget has type `e.source ≃ₜ e.target` where these are coerced to types. So first transport source subtype: homeo between `{x // x ≠ v}` and `{x // x ∈ e.source}` via `Homeomorph.setCongr`? There's `Homeomorph.Set.congr : s = t → s ≃ₜ t`. 
+
+So:
+```lean
+def sphereComplementHomeo (v : Sphere n) : sphereComplement v ≃ₜ (ℝ ∙ (v:E))ᗮ :=
+  let e : PartialHomeomorph (Sphere n) ((ℝ ∙ (v:E))ᗮ) := (stereographic (E := E) (norm_eq_of_mem_sphere v)).toPartialHomeomorph
+  (Homeomorph.setCongr (by
+      ext x; simp [e.source_eq]... -- {⟨v,..⟩}ᶜ = {x | x ≠ v}
+    )).trans e.toHomeomorphSourceTarget ... 
+```
+
+Hmm, need to be careful with source = `{⟨v, by simp[hv]⟩}ᶜ` — as a Set (Sphere n), `⟨v, by simp [hv]⟩` : Sphere n where hv : ‖(v:E)‖ = 1. Note `norm_eq_of_mem_sphere v : ‖(v : E)‖ = 1`. So `⟨(v:E), by simp [hv]⟩ = v` by rfl? `⟨v.1, v.2⟩ = v` — for a subtype, `(⟨v.1, v.2⟩ : Sphere n) = v` is rfl (eta). So `{⟨(v:E), by simp[...]⟩}ᶜ = ({v}ᶜ : Set (Sphere n))` — the proofs differ but `by simp` with different hv arguments produce the same proposition `‖v.1‖ = 1` — irrelevant since the proposition is a proof term of the same Prop... two proofs of the same Prop are definitionally equal? NO — proof irrelevance is not definitional. But the set `{⟨v.1, hv1⟩}ᶜ = {x | x ≠ ⟨v.1, hv1⟩}` — when I ext x and simp, the goal becomes `x ≠ ⟨v.1, hv1⟩ ↔ x ≠ v` where v = ⟨v.1, v.2⟩. `⟨v.1, hv1⟩ = ⟨v.1, v.2⟩` requires hv1 = v.2 which holds by proof irrelevance via `Subtype.ext` + rfl — `simp` should close it since `Subtype.ext` uses the val equality only: `⟨v.1, hv1⟩ = v ↔ (⟨v.1, hv1⟩).1 = v.1` — the val equality is rfl, so by `Subtype.ext`/`simp [Subtype.ext_iff]`. Should be fine with `simp`.
+
+Then `e.toHomeomorphSourceTarget.trans` — target: `(e.target : Set ((ℝ∙v)ᗮ)) = univ` by `stereographic_target`. And `Homeomorph.Set.univ ((ℝ∙v)ᗮ) : (univ : Set ((ℝ∙v)ᗮ)) ≃ₜ (ℝ∙v)ᗮ`. But e.toHomeomorphSourceTarget's target type is `(e.target : Set ...)` coerced — `Set` coercion `e.target` as a type is `{x // x ∈ e.target}`. So I need `setCongr (by rw [stereographic_target]; rfl)` to get `e.target ≃ₜ (univ : Set ((ℝ∙v)ᗮ))`, then `.trans (Homeomorph.Set.univ _)`.
+
+Then contractibility: `haveI : ContractibleSpace (sphereComplement v) := (sphereComplementHomeo v).contractibleSpace` — check API: `Homeomorph.contractibleSpace`? In Convex/Contractible: `(Homeomorph.Set.univ E).contractibleSpace_iff.mp ...`. So there's `Homeomorph.contractibleSpace` (if target contractible then source contractible) — likely `e.contractibleSpace` hmm. Let me check `Mathlib.Topology.Homotopy.Contractible` for the Homeomorph API: `Homeomorph.contractibleSpace : ContractibleSpace Y → ContractibleSpace X`? Probably named `Homeomorph.contractibleSpace`? or `e.contractibleSpace_iff`. I'll test.
+
+Then:
+```lean
+haveI : SimplyConnectedSpace (sphereComplement v) := SimplyConnectedSpace.ofContractible (sphereComplement v)
+```
+
+Then the lift and push-forward: 
+
+```lean
+theorem loopNullhomotopic_of_range_avoids {x : Sphere n} (γ : Path x x) (v : Sphere n)
+    (h : ∀ t : I, γ t ≠ v) : Path.Homotopic γ (Path.refl x) := by
+  let U := sphereComplement v
+  haveI hsc : SimplyConnectedSpace U := SimplyConnectedSpace.ofContractible U
+  have hx : x ∈ sphereComplement v := by exact ⟨x, by intro hxv; exact h 0 (by simpa [hxv] using ...)⟩
+```
+
+Hmm wait: `γ 0 = x` (Path.source). `h 0 : γ 0 ≠ v` → `x ≠ v` via simpa [Path.source]? γ 0 = x definitionally? `Path.source' : p 0 = x` hmm, `γ 0` is defeq x? No — Path.source' is a proof field: `(γ : Path x x).source' : γ.toContinuousMap 0 = x`? Let me recall: Path structure: `{ toContinuousMap : C(I,X), source' : toContinuousMap 0 = x₀, target' : toContinuousMap 1 = x₁ }` — and `Path.instCoeFun` makes `γ 0` mean `γ.toContinuousMap 0`, so `γ 0 = x` is a theorem `Path.source` or by rfl? Actually with the structure field `source'`, `γ 0` is NOT defeq x; it's `γ.toContinuousMap 0` and source' proves equality. But in practice, `Path` in mathlib has `@[coe] def toFun`... Let me check: many path lemmas use `simp [Path.source]` or the ext. In practice `simpa using γ.source'`? Hmm, wait — actually in modern mathlib, `Path` is defined as:
+
+```
+structure Path {X : Type*} [TopologicalSpace X] (x₀ x₁ : X) extends C(I, X) where
+  source' : toFun 0 = x₀
+  target' : toFun 1 = x₁
+```
+
+and there are lemmas `Path.source (γ : Path x y) : γ 0 = x` and `Path.target`. But actually `Path` has a custom `toContinuousMap` field named... in the file above I saw `source' := ...` and `target' := ...` in structure literal syntax, matching this.
+
+Also `γ 0 = x` might just be `rfl`? No, because `γ 0` unfolds to `(γ.toContinuousMap) 0`? Hmm, with `extends C(I, X)`, `γ 0` means... For an extends structure, the coercion to function comes from the parent structure's CoeFun. So `γ 0 = (γ.toContinuousMap) 0` and `source' : (γ.toContinuousMap) 0 = x₀`? Wait, actually with `extends`, there is no projection `toContinuousMap`; fields are flattened? No — `extends C(I, X)` gives a field `toContinuousMap : C(I, X)`. And CoeFun via `Path.instCoeFun`. So `γ 0` = `γ.toContinuousMap 0` hmm, wait, the CoeFun instance for Path evaluates `γ t` as `γ.toContinuousMap t`. Hmm, but in the file above: `Path.refl` etc. Let me check `Path.source`:
+
+Actually since the machinery in the existing file used `Path.source`/`Path.target` (from `Path.trans` there are `Path.source`, `Path.target` lemmas), I'll just use those: `Path.source γ : γ 0 = x`, `Path.target γ : γ 1 = x`.
+
+For the lift: `γ' : Path (⟨x, hx⟩ : U) (⟨x, hx⟩ : U)`:
+```lean
+let γ' : Path (⟨x, hx⟩ : U) (⟨x, hx⟩ : U) := ⟨⟨fun t => ⟨γ t, h t⟩, by fun_prop⟩, by ext; exact (Path.source γ), by ext; exact (Path.target γ)⟩
+```
+
+Wait — Path.source γ : γ 0 = x. The subtype ext: `(⟨γ 0, h 0⟩ : U) = ⟨x, hx⟩` needs `γ 0 = x` ✓.
+
+Then `hγ' : Path.Homotopic γ' (Path.refl _) := SimplyConnectedSpace.paths_homotopic γ' (Path.refl _)`.
+
+Push forward with inclusion `f : C(U, Sphere n) := ⟨Subtype.val, continuous_subtype_val⟩`:
+`Path.Homotopic.map hγ' f : Path.Homotopic (γ'.map f.continuous) ((Path.refl ⟨x,hx⟩).map f.continuous)`.
+
+Then show `γ'.map f.continuous = γ`: `Path.map` def: `map (γ : Path x y) (f : C(X,Y)) : Path (f x) (f y) := ⟨f.comp γ.toContinuousMap, by simp [Path.source]...⟩`? Hmm, roughly `(γ'.map cf) t = cf (γ' t) = γ t` ✓. Equality `Path.ext (funext fun t => rfl)`? Since `cf (γ' t) = Subtype.val ⟨γ t, h t⟩ = γ t` — need `Subtype.val ⟨γ t, h t⟩ = γ t` which is rfl for subtypes. But is `(γ'.map cf) t` literally `cf (γ' t)`? Let me check `Path.map` def. And `(Path.refl ⟨x, hx⟩).map cf = Path.refl x`: `(Path.refl a).map cf : Path (cf a) (cf a)`, `cf ⟨x,hx⟩ = x` rfl; pointwise `(refl.map cf) t = cf ((Path.refl a) t) = cf a = x` ✓; `Path.refl x` evaluates to x pointwise. So `Path.ext` + funext + rfl.
+
+So E is doable but fiddly. Also `Path.Homotopic.map` name: from the grep, line ~398 in Homotopic.Quotient has `def map`; for `Path.Homotopic` there's `Path.Homotopic.map`? In Path.lean I saw at 274 `theorem hcomp`, 280 `theorem pathCast`, and further `def map`? Let me check what's in Path.lean Homotopic namespace: 241 `def Homotopic`, then refl/symm/trans/equivalence/hcomp/pathCast, then `mk`... I didn't see `Path.Homotopic.map` in the grep output (only `Path.Homotopic.Quotient.map` at 398 and `Homotopy.map` at 226). Hmm — 226 `def map {p q : Path x₀ x₁} (F : p.Homotopy q) (f : C(X, Y))`. So the homotopy-level map is `Path.Homotopy.map`? No wait — 226 is in namespace `Path.Homotopy`? The section was `namespace Path` ... Let me check: lines 209-226: `def symm₂`, `def map {p q : Path x₀ x₁} (F : p.Homotopy q) (f : C(X, Y))` — this is `Path.Homotopy.map`? Hmm, need the exact namespace. Let me look at lines 200-280 of Path.lean.
+dsh: reasoning:
+Good. Now I need `Path.cast` and `Path.map`, `Path.refl` definitions, plus `Path.ext`. Let me look at the beginning of Path.lean.
+dsh: reasoning:
+Key facts:
+- `Path.cast` has `toFun := γ` — so `(γ.cast hx hy) t = γ t` by `rfl`/`cast_coe` simp: `(γ.cast hx hy : I → X) = γ` — the casted path is the same function. 
+- `Path.map h : Path (f x) (f y)` with `(γ.map h : I → Y) = f ∘ γ` simp.
+- `Path.map_id`, `map_map`.
+- `cast_trans` and `cast_symm` are simp.
+
+Now, let me check `Path.refl` and its interaction with cast and map:
+- `Path.refl x` : toFun = fun _ => x? Line 142: `def refl (x : X) : Path x x where ...` — let me check whether `refl` is `fun _ => x`. Also `Path.refl` with map: `(Path.refl x).map h` has type `Path (f x) (f x)`, pointwise `f x` — and `Path.refl (f x)` — equal via `Path.ext` rfl? `refl_map`? Not in the simp list I saw. I'll handle via `Path.ext` + `funext` + rfl.
+
+Also `Path.ext` theorem: let me confirm its existence and signature. It's probably in Path.lean top: `@[ext] theorem ext : ∀ {γ δ : Path x y}, (γ : I → X) = δ → γ = δ := fun _ _ h => by cases γ; cases δ; congr`. Let me grep.
+dsh: reasoning:
+`Path.refl x` has `toContinuousMap := .const I x` and `source' := rfl`, `target' := rfl`. So `(Path.refl x) 0 = x` by rfl, and importantly `(Path.refl x) t = x` — `ContinuousMap.const` evaluation is `x` definitionally.
+
+Also note `Path.refl` has `@[simps!]` so `Path.refl_coe`? Hmm.
+
+There's no `Path.ext` theorem visible in Path.lean, but `Path` extends C(I,X) and there's `Path.ext`? Let me check for "ext" near the structure. Line 60: `structure Path (x y : X) extends C(I, X) where ...` — with `@[ext]`? Let me check. If no Path.ext, I can construct equality by `cases` + `rfl`... Actually with the structure having proof fields, equality of two Path values requires those proofs to match; `Path.ext` (if generated by `@[ext]` attribute on the structure) gives `(γ : I → X) = δ → γ = δ`. Let me check.
+dsh: reasoning:
+All the API pieces are in place:
+- `Path.ext : (γ₁ : I → X) = γ₂ → γ₁ = γ₂`
+- `Path.source`, `Path.target` (simp)
+- `Path.cast` — same underlying function (`cast_coe` simp)
+- `Path.map` — `(γ.map h : I → Y) = f ∘ γ` simp
+- `Path.Homotopy.reparam`, `Path.Homotopy.hcomp`, `Path.Homotopy.cast`, `Path.Homotopy.pathCast`
+- `Path.Homotopic.map`, `Path.Homotopic.hcomp`, `Path.Homotopic.pathCast`, `Path.Homotopic.trans`
+- `Path.Homotopic.Quotient` with mk, mk_cast, mk_trans, cast_cast
+
+Now, for the E step, I need to double check `SimplyConnectedSpace.ofContractible` and the contractible-instance transfer across a homeomorphism. Also for the "loop in the complement" construction I need the subspace's `SimplyConnectedSpace` via contractibility.
+
+Let me test a scratch file to confirm the E-step machinery works (sphereComplementHomeo, contractibility, SimplyConnectedSpace.ofContractible), and also verify `Homeomorph.contractibleSpace` naming. Let me grep Contractible.lean for Homeomorph API.
+dsh: reasoning:
+`Sphere` is defined in my SphereGluing.lean as `abbrev Sphere n := Metric.sphere (0 : EuclideanSpace ℝ (Fin (n+1))) 1`. In the scratch file I need to import that module (or define the same). Let me import `Poincare.D12.TriangulationTopology.SphereGluing` and use its namespace. Let me redo the scratch test importing SphereGluing.
+dsh: reasoning:
+All the pieces are available. Let me write the actual sphereComplementHomeo and test it fully:
+
+```lean
+def sphereComplementHomeo (v : Sphere n) : U v ≃ₜ (ℝ ∙ (v : E))ᗮ :=
+  (Homeomorph.setCongr (by
+        ext x
+        rw [stereographic_source (norm_eq_of_mem_sphere v)]
+        simp)).trans <|
+    ((stereographic (E := E) (norm_eq_of_mem_sphere v)).toHomeomorphSourceTarget.trans
+      ((Homeomorph.setCongr (by rw [stereographic_target (norm_eq_of_mem_sphere v)]; rfl)).trans
+        (Homeomorph.Set.univ ((ℝ ∙ (v : E))ᗮ))))
+```
+
+Wait — careful with types. Let me define `E := EuclideanSpace ℝ (Fin (n+1))`.
+
+- `e := stereographic (E := E) (norm_eq_of_mem_sphere v) : OpenPartialHomeomorph (Metric.sphere (0:E) 1) (ℝ ∙ (v:E))ᗮ`
+- `Sphere n = Metric.sphere (0 : E) 1` (abbrev) ✓.
+- `e.toHomeomorphSourceTarget : (e.source : Set (Sphere n)) ≃ₜ (e.target : Set ((ℝ∙v)ᗮ))` — coerced to types.
+- `Homeomorph.setCongr h : s ≃ₜ t` for h : s = t.
+- source equality: `{x : Sphere n // x ≠ v} = e.source` as SETS. `e.source = {⟨v, by simp⟩}ᶜ`. Note the element: `⟨(v:E), by simp [norm_eq_of_mem_sphere v]⟩` — hmm, `stereographic_source (norm_eq_of_mem_sphere v)` where `hv : ‖(v:E)‖ = 1`. The element in `{⟨v, by simp [hv]⟩}ᶜ` — inside it's `⟨v, by simp [hv]⟩ : Metric.sphere (0:E) 1` where v is coerced. So `{⟨(v:E), by simp [hv]⟩}ᶜ : Set (Sphere n)`. And `{x | x ≠ v} = ({v}ᶜ : Set (Sphere n))`. To show `{⟨(v:E), by simp[hv]⟩}ᶜ = {v}ᶜ` it suffices to show `⟨(v:E), by simp[hv]⟩ = v` — by `Subtype.ext rfl`? `⟨(v:E), p⟩ = v` — v : Sphere n so v = ⟨v.1, v.2⟩ — `Subtype.ext (rfl : (⟨(v:E), p⟩ : Sphere n).1 = v.1)`. Hmm wait — actually, is `(v : E)` in the element the same as `v.1`? Yes, coercion from Sphere n to E is Subtype.val. So `.1` of both is v.1 ✓ rfl.
+
+Then `ext x; rw [stereographic_source ...]; simp` — should work; let me test in scratch.
+
+- target: `e.target = univ` by `stereographic_target`. So `Homeomorph.setCongr (stereographic_target ...) : e.target ≃ₜ (univ : Set ((ℝ∙v)ᗮ))`, and `.trans (Homeomorph.Set.univ ((ℝ ∙ (v:E))ᗮ)) : e.target ≃ₜ (ℝ∙v)ᗮ`.
+
+Composition chain:
+1. `Homeomorph.setCongr hsrc.symm? : U v ≃ₜ e.source` — hsrc : e.source = {v}ᶜ hmm wait. I want `{x // x ≠ v} ≃ₜ e.source`. `Homeomorph.setCongr h : s ≃ₜ t` for `h : s = t`. So h : ({v}ᶜ : Set (Sphere n)) = e.source. Note `U v` as a type is `{x : Sphere n // x ≠ v} = {x : Sphere n // x ∈ {v}ᶜ}` — defeq: `x ≠ v` vs `x ∈ {v}ᶜ` — `mem_compl_singleton_iff`... defeq? `x ∈ {v}ᶜ` is `x ∉ {v}` = `¬ x = v` = `x ≠ v` ✓ definitionally (¬(x = v) and x ≠ v are defeq). So the type `U v` is defeq `({v}ᶜ : Set (Sphere n))` as a type. 
+
+Let me test the whole thing in scratch now. Also the `norm_eq_of_mem_sphere v` has type `‖(v : E)‖ = 1`? Let me double check — in the test above, `stereographic_source (norm_eq_of_mem_sphere v)` typechecked ✓.
+
+Then E:
+```lean
+theorem loopNullhomotopic_of_range_avoids {x : Sphere n} (γ : Path x x) (v : Sphere n)
+    (h : ∀ t : I, γ t ≠ v) : Path.Homotopic γ (Path.refl x) := by
+  haveI : ContractibleSpace (U v) := (sphereComplementHomeo v).contractibleSpace
+  haveI : SimplyConnectedSpace (U v) := SimplyConnectedSpace.ofContractible (U v)
+  have hx : x ∈ ({v}ᶜ : Set (Sphere n)) := by
+    intro hxv
+    have h0 := h 0
+    simpa [hxv, Path.source] using h0  -- γ 0 = x, γ 0 ≠ v → contradiction
+```
+
+Wait: `h 0 : γ 0 ≠ v`; `Path.source : γ 0 = x` (simp). So `hx : x ≠ v` = `simpa [Path.source] using h 0`? Hmm h 0 : γ 0 ≠ v — simpa [Path.source] gives x ≠ v ✓.
+
+```lean
+  let γU : Path (⟨x, hx⟩ : U v) (⟨x, hx⟩ : U v) :=
+    ⟨⟨fun t => ⟨γ t, h t⟩, by
+        exact Continuous.subtype_mk γ.continuous h?⟩, ...⟩
+```
+
+Hmm — continuity of `fun t => ⟨γ t, h t⟩` into the subtype `{x : Sphere n // x ≠ v}`: `Continuous.subtype_mk` needs the proof function to be continuous into the "set" (not needed — subtype_mk only needs the underlying map continuous). For the subtype topology: `Continuous.subtype_mk (γ.continuous) _` — the `_` is `fun t => h t` of type `∀ t, γ t ∈ ({v}ᶜ : Set ...)`? The signature of `Continuous.subtype_mk : Continuous f → (∀ x, f x ∈ s) → Continuous (fun x => (⟨f x, hx⟩ : s))` — wait, I recall `Continuous.subtype_mk {s} (h : Continuous f) (h' : ∀ x, f x ∈ s)`? The order might be: `Continuous.subtype_mk hf h_mem`. OK whatever, `fun_prop` or `by continuity` handles it.
+
+Actually the `toContinuousMap` is `⟨fun t => ⟨γ t, h t⟩, by fun_prop⟩`? For C(I, X) construction: `⟨f, hf⟩ : C(I, U v)`. The h t : γ t ≠ v — as membership in {v}ᶜ ✓ defeq.
+
+Then source'/target': `(⟨γ 0, h 0⟩ : U v) = ⟨x, hx⟩` — `Subtype.ext (Path.source γ)` — `Path.source : γ 0 = x` ✓. And target with `Path.target`.
+
+```lean
+  have hγ' : Path.Homotopic γU (Path.refl (⟨x, hx⟩ : U v)) :=
+    SimplyConnectedSpace.paths_homotopic γU (Path.refl (⟨x, hx⟩ : U v))
+  let f : C(U v, Sphere n) := ⟨Subtype.val, continuous_subtype_val⟩
+  have hmap := Path.Homotopic.map hγ' f
+  -- hmap : Homotopic (γU.map continuous_subtype_val) ((Path.refl ⟨x,hx⟩).map continuous_subtype_val)
+  have hmap' : Path.Homotopic γ (Path.refl x) := by
+    convert hmap using 1
+    · ext t; rfl  -- γU.map ... = γ pointwise? (γU.map cf) t = cf (γU t) = γ t ✓ rfl
+    · ext t; rfl  -- (Path.refl ⟨x,hx⟩).map cf = Path.refl x: cf ⟨x,hx⟩ = x ✓, pointwise rfl
+  exact hmap'
+```
+
+`convert hmap using 1` — should be fine; alternatively `simpa [Path.map_coe] using hmap` hmm. Path.map_coe simp: `(γ.map h : I → Y) = f ∘ γ`. So `(γU.map cf : I → Sphere n) = cf ∘ (γU : I → U v)` and `cf = Subtype.val` — `(cf ∘ γU) t = γ t` rfl? `cf (γU t)` — γU t = ⟨γ t, h t⟩, cf = Subtype.val — `Subtype.val ⟨γ t, h t⟩` = γ t — rfl ✓. So after `simp only [Path.map_coe]` the goal is `Subtype.val ∘ (fun t => ⟨γ t, h t⟩) = γ` — funext + rfl... `simp` with `Subtype.val` beta — `⟨γ t, h t⟩.1 = γ t` rfl ✓. Let me handle via `ext t; rfl`.
+
+For refl: `(Path.refl ⟨x,hx⟩).map cf` — `Path.refl ⟨x,hx⟩` has toContinuousMap := .const I ⟨x,hx⟩; map gives `cf ∘ (.const I ⟨x,hx⟩)` = `fun _ => cf ⟨x,hx⟩` = `fun _ => x`; `Path.refl x` = `.const I x` ✓ rfl pointwise.
+
+OK E works. Now D + the missed point. Let me also confirm `Path.Homotopic.pathCast` signature: `pathCast {p q : Path x₀ x₁} (hpq) (hsource : x₂ = x₀) (htarget : x₃ = x₁) : (p.cast hsource htarget).Homotopic (q.cast hsource htarget)`.
+
+Now for C7/C8 assembly. Define:
+
+```lean
+-- C7
+theorem loopHomotopyRestrictionChain (γ : C(I, Sphere n)) (N : ℕ) (hN : N ≠ 0) :
+    Path.Homotopic γ ((restrictionChain γ N N 0).cast (hsrc : γ 0 = clampedMap γ (subdiv N 0)) (htgt : γ 1 = clampedMap γ (subdiv N (N + 0))))
+```
+
+Hmm wait — but γ : C(I, Sphere n) here, a plain loop map without the loop condition. The target cast produces a Path (γ 0) (γ 1). For the loop version, we then further compose with the fact that γ 0 = γ 1 = x when γ : Path x x. Hmm — actually let me set up so that γ is a Path x x from the start: `γ : Path x x` where x : Sphere n, viewed as C(I, Sphere n) via coercion (Path → C(I,X) via `γ.toContinuousMap`). The chains: `restrictionChain (γ.toContinuousMap) N m k` etc. Simpler to state with `γ : C(I, Sphere n)` and hsrc/htgt casts, then specialize to loops later:
+
+```lean
+theorem polygonalApproximation (γ : C(I, Sphere n)) (N : ℕ) (hN : N ≠ 0)
+    (hseg : ∀ k, ...nonantipodal...) :
+    Path.Homotopic γ ((segChain γ N hseg N 0).cast hsrc htgt)
+```
+
+where hsrc : γ 0 = clampedMap γ (subdiv N 0) — actually direction: cast hx : x' = x. `(segChain γ N hseg N 0).cast hsrc htgt : Path (γ 0) (γ 1)` requires hsrc : γ 0 = clampedMap γ (subdiv N 0) ✓ and htgt : γ 1 = clampedMap γ (subdiv N (N + 0)) ✓.
+
+Steps:
+- hsrc : `clampedMap γ (subdiv N 0) = γ 0` by `clampedMap_of_mem_Icc` with subdiv N 0 = 0 ∈ [0,1] ✓. Direction: cast needs `γ 0 = clampedMap γ (subdiv N 0)` — take symm.
+- htgt : `clampedMap γ (subdiv N N) = γ 1` via subdiv N N = 1 (needs hN ≠ 0) and clampedMap_of_mem_Icc ✓.
+
+C7 inner: let `zigzag : Path (0 : I) (1 : I) := (idChain N N 0).cast hz₀ hz₁` where
+  hz₀ : (0 : I) = clampedMap id (subdiv N 0) — clampedMap id (subdiv N 0) = clamp(0/N)=0 hmm as elements of I: need `(0 : I) = ⟨min 1 (max 0 0), ...⟩` — Subtype.ext rfl: min 1 (max 0 0) = min 1 0 = 0 ✓.
+  hz₁ : (1 : I) = clampedMap id (subdiv N (N+0)): clamp(1) = 1, needs hN.
+
+`zigzagFun : I → I := fun t => zigzag t`, continuous ✓ (Path.continuous). `hz₀' : zigzagFun 0 = 0` — `(zigzag 0 : I) = (0 : I)` — by `Path.source` simp: `(zigzag 0 : I) = 0` hmm `Path.source zigzag : zigzag 0 = (0 : I)` ✓ since zigzag : Path (0:I) (1:I). ✓. `hz₁' : zigzagFun 1 = 1` ✓ `Path.target`.
+
+`H₇ : Path.Homotopy γ (γ.reparam zigzagFun zigzag.continuous? hz₀' hz₁') := Path.Homotopy.reparam γ zigzagFun ...` ✓ (Homotopy.reparam gives exactly this Homotopy).
+
+Then `γ.reparam zigzagFun ... = (restrictionChain γ N N 0).cast hsrc htgt` via Path.ext:
+pointwise: `(γ.reparam f hf hf₀ hf₁) t` — what is Path.reparam? `def reparam (γ : Path x y) (f : I → I) (hf) (hf₀) (hf₁) : Path x y where toFun := γ ∘ f ...` — need to check. And `(restrictionChain γ N N 0) t = clampedMap γ ((idChain N N 0) t : ℝ)` (C4) = `γ ⟨(idChain N N 0) t, ...⟩` hmm wait — clampedMap γ r = γ ⟨min 1 (max 0 r), _⟩; with r = ((idChain N N 0) t : ℝ) ∈ [0,1] (subtype property of I) so `clampedMap_of_mem_Icc` gives `clampedMap γ ((idChain N N 0) t : ℝ) = γ ⟨((idChain N N 0) t : ℝ), (idChain N N 0) t .2⟩` = γ ((idChain N N 0) t) hmm — the coercion `(idChain N N 0) t : I` → ℝ then back ⟨r, h⟩: `⟨((idChain N N 0) t : ℝ), ((idChain N N 0) t).2⟩ = (idChain N N 0) t` — for a subtype, `⟨x.1, x.2⟩ = x` rfl ✓ (eta). So `clampedMap γ ((idChain N N 0) t : ℝ) = γ ((idChain N N 0) t)` — wait, careful: `clampedMap_of_mem_Icc` gives `clampedMap γ r = γ ⟨r, ht⟩` where ht : r ∈ Icc 0 1, and `⟨r, ht⟩ : I`. And `(idChain N N 0) t : I` has val r. `γ ⟨r, ht⟩ = γ ((idChain N N 0) t)` — congrArg γ (Subtype.ext rfl) ✓.
+
+And `(zigzag t : I) = (idChain N N 0) t` — by cast_coe simp: `(zigzag : I → I) = (idChain N N 0 : I → I)` ✓ rfl after simp.
+
+And `γ.reparam f hf hf₀ hf₁` evaluates to `γ (f t)` — where f t = zigzag t — so `(γ.reparam zigzag ...) t = γ (zigzag t)` — is that rfl? Path.reparam def: `toFun := γ ∘ f`? Hmm — actually careful: Path.reparam uses `f : I → I` and `toFun t := γ ⟨f t, ...⟩`? Let me check Path.reparam's definition — I need to look. Actually from earlier: `reparam (p : Path x₀ x₁) (f : I → I) ...` and Homotopy.reparam references `p.reparam f hf hf₀ hf₁`. Let me check the def quickly. It's likely `toFun := p ∘ f`. Then `(γ.reparam zigzag hz... ) t = γ (zigzag t)` rfl ✓.
+
+Then path equality: `Path.ext (by ext t; rfl-ish)`. After simps the pointwise equality becomes `γ (zigzag t) = γ ((idChain N N 0) t)` — need zigzag t = idChain t ✓.
+
+Then `H₇.cast rfl h_eq : Path.Homotopy γ ((restrictionChain γ N N 0).cast hsrc htgt)` — `Homotopy.cast F h₀ h₁ : Homotopy q₀ q₁` with F : Homotopy p₀ p₁, h₀ : p₀ = q₀, h₁ : p₁ = q₁. Here p₀ = γ, p₁ = γ.reparam ...; q₀ = γ (h₀ = rfl), q₁ = casted chain (h₁ = h_eq) ✓.
+
+C6: `restrictionChainHomotopySegChain` — by induction:
+
+```lean
+theorem restrictionChainHomotopicSegChain (γ : C(I, Sphere n)) (N : ℕ)
+    (hseg : ∀ k, ...) (hclose : ∀ k < m? ...) -- need per-piece hypotheses for the pieces used: k in [k₀, k₀+m)
+    (hε : ∀ k, ‖a(k+1) − a(k)‖ ≤ 1/4 for the needed k) :
+    (restrictionChain γ N m k₀).Homotopic (segChain γ N hseg m k₀)
+```
+
+For the induction, we need hypotheses for k from k₀ to k₀+m−1. Cleanest: carry a hypothesis `H : ∀ k < m, PieceHyp (k₀ + k)` where PieceHyp k := (distance ≤ 1/4) ∧ (nonantipodal). Since C5 needs `k + 1 ≤ N` too, and the fine subdivision gives distance bound only for consecutive points within [0,1]. So: for k < N: `dist (γ (k/N)) (γ ((k+1)/N)) ≤ 1/4`. So the hypothesis for the whole chain: `hfine : ∀ k < N, dist-based bound` plus `kN : m + k₀ ≤ N` ensures every piece index k₀ + k ≤ N − 1.
+
+Hmm wait, also for C5, `hN : k + 1 ≤ N` needed for the (k+t)/N ∈ [0,1] argument. And dist bound from exists_fine_subdivision uses `dist t t' ≤ 1/N`. Let me define the fine bound more directly: from `exists_fine_subdivision` we get `∀ t t' : I, dist t t' ≤ 1/N → dist (γ t) (γ t') ≤ 1/4`. With t = ⟨(k+t)/N, mem⟩, t' = ⟨k/N, mem⟩: dist t t' = |(k+t)/N − k/N| = |t/N| = t/N ≤ 1/N ✓. Need (k+t)/N ∈ [0,1] → k+t ≤ N → k+1 ≤ N ✓ (t≤1).
+
+So C5 needs: `hN : k + 1 ≤ N` and `hf : ∀ t t', dist t t' ≤ 1/N → dist (γ t) (γ t') ≤ 1/4` (the fine uniform continuity witness). Actually simpler to define a packaged hypothesis. Let me define:
+
+```lean
+structure FineSubdivision (γ : C(I, Sphere n)) (N : ℕ) : Prop where
+  pos : N ≠ 0
+  fine : ∀ t t' : I, dist t t' ≤ (1 / N : ℝ) → dist (γ t) (γ t') ≤ (1 / 4 : ℝ)
+```
+
+Hmm — maybe keep it lightweight: pass the two hypotheses around. Induction over chains with hypotheses:
+
+```lean
+theorem restrictionChainHomotopicSegChain (γ : C(I, Sphere n)) {N m k₀ : ℕ}
+    (hfine : ∀ t t' : I, dist t t' ≤ (1 / N : ℝ) → dist (γ t) (γ t') ≤ (1 / 4 : ℝ))
+    (hseg : ∀ k : ℕ, ((clampedMap γ (subdiv N k) : Sphere n) : E) ≠ -((clampedMap γ (subdiv N (k + 1)) : Sphere n) : E))
+    (hN : k₀ + m ≤ N) :
+    Path.Homotopic (restrictionChain γ N m k₀) (segChain γ N hseg m k₀) := by
+  induction m generalizing k₀ with
+  | zero => exact Path.Homotopic.refl _
+  | succ m ih =>
+      -- unfold both chains via their equation lemmas, use hcomp of C5 and (ih cast)
+```
+
+C5 statement:
+
+```lean
+theorem restrictionPieceHomotopicSegPiece (γ : C(I, Sphere n)) (N k : ℕ)
+    (hN : k + 1 ≤ N)
+    (hfine : ∀ t t' : I, dist t t' ≤ (1 / N : ℝ) → dist (γ t) (γ t') ≤ (1 / 4 : ℝ))
+    (hsegk : ((clampedMap γ (subdiv N k) : Sphere n) : E) ≠ -((clampedMap γ (subdiv N (k + 1)) : Sphere n) : E)) :
+    Path.Homotopic (restrictionPiece γ N k) (segPiece γ N k hsegk)
+```
+
+Construction: let x := (clampedMap γ (subdiv N k) : Sphere n), y := (clampedMap γ (subdiv N (k+1)) : Sphere n).
+
+Homotopy F : restrictionPiece ~ segPiece:
+```lean
+let F : Homotopy (restrictionPiece γ N k) (segPiece γ N k hsegk) where
+  toFun p :=
+    let s : I := p.1
+    let t : I := p.2
+    let a : E := ((restrictionPiece γ N k) t : Sphere n)  -- γ((k+t)/N)
+    let b : E := ((segPiece γ N k hsegk) t : Sphere n)    -- normalized x + t(y−x)
+    ⟨(‖(1−s)•a + s•b‖⁻¹) • ((1−s)•a + s•b), mem_sphere⟩
+  ...
+```
+
+The mem proof: `‖(1−s)•a + s•b‖⁻¹ • ((1−s)•a + s•b)` has norm 1 when the vector is nonzero — standard: `norm_smul, Real.norm_eq_abs, abs_of_nonneg (inv_nonneg...), inv_mul_cancel₀ (ne_of_gt (norm_pos_iff.mpr hne))`.
+
+hne: `(1−s)•a + s•b ≠ 0`:
+- claim: `‖(1−s)•a + s•b − (x:E)‖ ≤ 2/3`:
+  `(1−s)•a + s•b − x = (1−s)•(a−x) + s•(b−x)`: since (1−s)•x + s•x − x = 0 (as (1−s)+s = 1).
+  So norm ≤ (1−s)‖a−x‖ + s‖b−x‖ (triangle + norm_smul, abs: (1−s) ≥ 0, s ≥ 0 on I) ≤ (1−s)(1/4) + s(2/3) ≤ max(1/4, 2/3) = 2/3.
+  
+  Hmm — (1−s)‖a−x‖ + s‖b−x‖ ≤ (1−s)·(1/4) + s·(2/3) — convex combination bounded by max of the two: `(1−s)·c₁ + s·c₂ ≤ c₁ + s·(c₂ − c₁) ≤ ...` — since s ≤ 1 and c₂ = 2/3 ≥ c₁ = 1/4: (1−s)·c₁ + s·c₂ ≤ c₂ ✓ (it's a convex combo ≤ max). nlinarith with s ∈ [0,1].
+
+  - ‖a−x‖ ≤ 1/4: a = γ((k+t)/N) (on the sphere; as E-vector), x = γ(k/N). Need dist bound: dist of the I-points = |(k+t)/N − k/N| = |t|/N ≤ 1/N ✓. So hfine gives `dist (γ t₁) (γ t₂) ≤ 1/4` where t₁ = ⟨(k+t)/N, h₁⟩, t₂ = ⟨k/N, h₂⟩. And dist on Sphere n (subtype of E with norm metric) = ‖γ t₁ − γ t₂‖? dist on a subtype metric space = dist of the values in E ✓ (dist_subtype... `dist_eq_norm` etc). Simpler: `dist (γ t₁) (γ t₂) = ‖(γ t₁ : E) − (γ t₂ : E)‖` by `dist_eq_norm` — for the sphere subtype, dist x y = dist (x:E) (y:E) = ‖x − y‖ ✓. So ‖a − x‖ ≤ 1/4 ✓.
+  - ‖b−x‖ ≤ 2/3: `segmentPath_sub_left_le_two_thirds x.2 y.2 hsegk hε t` — where hε : ‖y − x‖ ≤ 1/4 comes from the fine bound at t = 1 (hfine at t₁ = ⟨(k+1)/N⟩, t₂ = ⟨k/N⟩): dist = 1/N ✓. ✓ (b = (segPiece ...) t = segmentPath ... t — and `(segPiece γ N k hsegk) t = segmentPath x.2 y.2 hsegk t` rfl ✓.)
+
+- hne: if (1−s)•a + s•b = 0 then `‖x‖ = ‖0 − x‖ ≤ 2/3 < 1 = ‖x‖` contradiction. Note ‖(x:E)‖ = 1 since x ∈ Sphere n — `mem_sphere_iff_norm` or from the proof x.2: `(mem_sphere_iff_norm.mp x.2)`.
+
+- Continuity: `fun_prop` — needs the nonzero-ness continuous: `Continuous.inv₀` on `‖(1−s)•a + s•b‖` with the proof at each point... The map `(s,t) ↦ (‖...‖⁻¹) • (...)` — continuous via inv₀ with `fun x => proof of ne`. That's what was done in segmentPath — `Continuous.inv₀ (by fun_prop) (fun t => ...)`. Fine.
+
+- Boundary conditions: F(s,0): a(0) = γ(k/N) = x, b(0) = x (segmentPath source ✓ — `(segPiece ...) 0 = x` by Path.source). (1−s)•x + s•x = x (norm 1). So F(s,0) = ‖x‖⁻¹•x = x ✓. F(s,1) = y ✓. F(0,t) = a(t) = restrictionPiece value ✓. F(1,t) = b(t) ✓.
+
+The `map_zero_left`/`map_one_left`/`prop'` fields: `prop'` is the endpoints-in-path condition `F (t, 0) = x₀` and `F (t, 1) = x₁`; `map_zero_left : F (0, t) = p₀ t`; `map_one_left : F (1, t) = p₁ t`.
+
+This C5 proof is the biggest chunk. Let me write it.
+
+Now D. `segChain_range_subset`:
+
+```lean
+theorem segPiece_range_subset_span (γ : C(I, Sphere n)) (N k : ℕ)
+    (hsegk : ...) :
+    Set.range ((segPiece γ N k hsegk : C(I, Sphere n)) ...) ⊆ span ℝ ({a, b} : Set E)
+```
+
+where a = (clampedMap γ (subdiv N k) : E), b = (clampedMap γ (subdiv N (k+1)) : E). The range as a set of E: `(fun t => ((segPiece γ N k hsegk) t : E)) '' Set.univ`. Pointwise: `(segPiece ...) t = segmentPath x.2 y.2 hsegk t = ⟨(‖x + t•(y−x)‖⁻¹)•(x + t•(y−x)), _⟩` so the E-value is a scalar multiple of `x + t•(y−x) = (1−t)•x + t•y ∈ span {x, y}` ✓. `Submodule.smul_mem`, `add_mem` of `smul_mem`s.
+
+Then:
+```lean
+theorem segChain_range_subset_union_spans (γ : C(I, Sphere n)) (N : ℕ) (hseg : ∀ k, ...)
+    (m k₀ : ℕ) :
+    Set.range ((segChain γ N hseg m k₀ : I → Sphere n) hmm...) ⊆
+      ⋃ k' ∈ Finset.range m, (Submodule.span ℝ ({...} : Set E) : Set E)
+```
+
+Hmm — the range as a set of E (values coerced). Actually cleaner: state it in terms of Sphere n values and then project. Let me state:
+
+`∀ t : I, ∃ k' < m, ((segChain γ N hseg m k₀) t : E) ∈ Submodule.span ℝ ({a(k₀+k'), b(k₀+k')} : Set E)`.
+
+By induction on m using segChain.eq_2: t ≤ 1/2 → first piece (trans of paths: `(p.trans q) t = if t ≤ 1/2 then p.extend (2t) else q.extend (2t−1)` — extend of p at 2t for 2t ∈ [0,1] equals p (2t) via `Path.extend_extends'` ✓).
+
+Then missed point (D):
+
+```lean
+theorem exists_missed_point (γ : C(I, Sphere n)) (N m : ℕ) (hseg : ...) (hm : 2 ≤ n) :
+    ∃ v : Sphere n, ∀ t : I, (segChain γ N hseg m k₀) t ≠ v
+```
+
+Wait — v must be a Sphere n point, i.e. unit vector, and for `span_pair_ne_top` we need `3 ≤ n + 1` i.e. `hm : 2 ≤ n`. Note: the union spans W_k = span {a_k, b_k} for k < m. If some a_k = b_k, the span might be 0-dim — still proper ✓ (span of two vectors of ℝ^{n+1} with n+1 ≥ 3 is ≠ ⊤). `span_pair_ne_top (hm : 3 ≤ m')` uses EuclideanSpace ℝ (Fin m') with 3 ≤ m' — hmm the existing theorem: `span_pair_ne_top {m : ℕ} (hm : 3 ≤ m) (a b : EuclideanSpace ℝ (Fin m)) : Submodule.span ℝ ({a, b} : Set (EuclideanSpace ℝ (Fin m))) ≠ ⊤`. So with m' = n+1: need 3 ≤ n+1 ↔ 2 ≤ n ✓.
+
+Then `exists_not_mem_finset_submodule_union (s : Finset (Submodule ℝ E)) (hprop : ∀ W ∈ s, W ≠ ⊤)` where s = `(Finset.range m).image (fun k => Submodule.span ℝ ({a_k, b_k} : Set E))` — hprop from span_pair_ne_top ✓ (with E = EuclideanSpace ℝ (Fin (n+1))). Get `w : E, ∀ W ∈ s, w ∉ W` → for each k < m: w ∉ W_k. w ≠ 0: 0 ∈ W_0? For m ≥ 1: `W_0 ∈ s` (0 ∈ Finset.range m when 1 ≤ m) and 0 ∈ W_0, so w ≠ 0 — need m ≥ 1; in our use m = N ≥ 1 (hN : N ≠ 0 → 1 ≤ N). Or handle separately: if m = 0, segChain is the constant path and any v ≠ γ 0 works... hmm — but if m = 0, then the loop is just refl-ish... Let me require 1 ≤ m (our N satisfies it). Also `Submodule.zero_mem`.
+
+Then `v : Sphere n := ⟨‖w‖⁻¹ • w, mem_sphere_iff_norm...⟩`:
+- `‖‖w‖⁻¹ • w‖ = ‖w‖⁻¹·‖w‖ = 1` via norm_smul + norm_eq_abs + abs_of_nonneg (inv_nonneg of norm_nonneg) + inv_mul_cancel₀ (ne_of_gt (norm_pos_iff.mpr hw0)) ✓.
+- `∀ t, (segChain ...) t ≠ v`: suppose `(segChain γ N hseg m k₀) t = v` — then by range_subset_union: ∃ k < m, `((segChain ...) t : E) ∈ W_k`; so `v.1 ∈ W_k`; `v.1 = ‖w‖⁻¹•w`; then `w = ‖w‖ • (‖w‖⁻¹ • w) ∈ W_k` (smul_mem) — contradiction with `w ∉ W_k` ✓.
+
+So D's `exists_missed_point` needs m ≥ 1.
+
+E gives: `loopNullhomotopic_of_range_avoids` for the segChain cast to a loop. Hmm — wait, for the segChain as a loop based at x: `(segChain γ N hseg N 0).cast hsrc htgt : Path x x` where γ : Path x x. The range-avoidance: `∀ t, (segChain γ N hseg N 0) t ≠ v` — the casted chain has same values ✓ (cast_coe). 
+
+F: 
+```lean
+theorem sphereSimplyConnected {n : ℕ} (hn : 2 ≤ n) : SimplyConnectedSpace (Sphere n) := by
+  rw [simply_connected_iff_loops_nullhomotopic]
+  constructor
+  · exact spherePathConnectedSpace_of_pos (by omega)  -- check name from AntipodalQuotient.lean
+  · intro x γ
+    -- γ : Path x x on Sphere n, C(I, Sphere n) coerced
+    rcases exists_fine_subdivision γ.toContinuousMap? with ⟨N, hN, hfine⟩
+```
+
+Wait — `exists_fine_subdivision` was stated for `γ : C(I, Y)` with `[MetricSpace Y]` — Sphere n has a metric ✓. But the dist in the conclusion is the metric on Sphere n = subtype metric of E ✓.
+
+Then:
+- hseg : ∀ k, nonantipodal — from hfine at consecutive subdivision points: `dist (γ t₁) (γ t₂) ≤ 1/4` where t₁ = k/N, t₂ = (k+1)/N (both in I since k, k+1 ≤ N) and dist = 1/N ≤ 1/N ✓ → dist (γ t₁) (γ t₂) ≤ 1/4. If a = −b then dist a b = ‖a − b‖ = ‖a − (−a)‖ = 2 — contradiction with ≤ 1/4. So hseg k for all k.
+- C7+C6 give: `Path.Homotopic γ ((segChain γ N hseg N 0).cast hsrc htgt)`.
+- D gives v with `∀ t, (segChain γ N hseg N 0) t ≠ v` — careful: the missed-point theorem gives avoidance for the segChain with m = N, k₀ = 0 ✓.
+- E gives `Path.Homotopic ((segChain γ N hseg N 0).cast hsrc htgt) (Path.refl x)` — via loopNullhomotopic_of_range_avoids with the avoidance hypothesis lifted through cast ✓.
+- Transitivity → `Path.Homotopic γ (Path.refl x)` ✓.
+
+Wait — there's a subtlety in the E step for the casted path: `loopNullhomotopic_of_range_avoids` takes `γ : Path x x` and `h : ∀ t, γ t ≠ v`. For the casted segChain: `(segChain γ N hseg N 0).cast hsrc htgt : Path x x` — its values = segChain values ✓ rfl. The avoidance from D: `∀ t, (segChain γ N hseg N 0) t ≠ v` → simpa [cast_coe]? `((cast) t) ≠ v` — `(segChain ... .cast hsrc htgt) t = (segChain ... ) t` rfl ✓ so `simpa using h t` hmm — need rewriting with the simp lemma cast_coe: `simpa only [Path.cast_coe] using h t`? Path.cast_coe : `(γ.cast hx hy : I → X) = γ` so `simpa [Path.cast_coe] using h t`? h t : (segChain...) t ≠ v. Goal: ((segChain...).cast hsrc htgt) t ≠ v. rw [Path.cast_coe]? cast_coe is about the whole function equality: `(γ.cast hx hy : I → X) = γ` — hmm that's function equality, so `rw [Path.cast_coe]`? Hmm, rw might unfold `(cast) t`. `simpa only [Path.cast_coe] using h t`? cast_coe applied at function level... Actually the coercion `(γ : I → X)` — for the goal `((segChain...).cast hsrc htgt) t ≠ v`, `change (((segChain...).cast hsrc htgt : I → Sphere n) t) ≠ v` then `rw [Path.cast_coe]` gives `(segChain...) t ≠ v`? Hmm — `Path.cast_coe (γ) (hx) (hy) : (γ.cast hx hy : I → X) = γ` — `rw [Path.cast_coe]` rewrites the LHS pattern `(γ.cast hx hy : I → X)`? The function coercion in the goal appears as `((segChain...).cast hsrc htgt) t` — is `((segChain...).cast hsrc htgt) t` defeq `((segChain...).cast hsrc htgt : I → Sphere n) t`? Yes (the CoeFun). `rw [Path.cast_coe]` should work since the term `(segChain...).cast hsrc htgt` is the function. OK.
+
+One more subtlety: in D the segChain must be over the SAME hseg that F uses — consistent.
+
+Another subtlety in C6+C7: the final cast `hsrc htgt` on the segChain gives Path (γ 0) (γ 1) — and γ : Path x x means γ 0 = x and γ 1 = x via Path.source/target; the C7 statement should be for `γ : C(I, Sphere n)` (dropping the loop structure): `Path.Homotopic γ ((restrictionChain γ N N 0).cast hsrc htgt)` — but wait, `γ : C(I, Sphere n)` as a Path (γ 0) (γ 1)? A C(I,X) is not a Path. `Path.Homotopic` requires paths. Hmm — for C7 I need γ as a Path (γ 0) (γ 1). There's `Path.ofMap`? Hmm — for a continuous map f : C(I,X), the induced path `f` itself... Path has a coercion C(I,X) → Path? No. There's a constructor: `⟨f, rfl, rfl⟩ : Path (f 0) (f 1)` ✓ — since Path.extends C(I,X) with source' : toFun 0 = f 0 — rfl ✓. So define:
+
+```lean
+def toPath (γ : C(I, X)) : Path (γ 0) (γ 1) := ⟨γ, rfl, rfl⟩
+```
+
+And for γ : Path x x, `toPath γ.toContinuousMap = γ`? Pointwise rfl; endpoints: `Path.ext (by ext; rfl)` hmm — `(toPath γ.toContinuousMap : I → X) = γ` — γ.toContinuousMap as a function = γ ✓ (coe_toContinuousMap simp: `⇑γ.toContinuousMap = γ`) ✓.
+
+So the C7/C8 pipeline theorem:
+
+```lean
+theorem polygonalApproxHomotopic (γ : C(I, Sphere n)) (N : ℕ) (hN : N ≠ 0)
+    (hfine : ∀ t t' : I, dist t t' ≤ (1 / N : ℝ) → dist (γ t) (γ t') ≤ (1 / 4 : ℝ))
+    (hseg : ∀ k, ...nonantipodal...) :
+    Path.Homotopic (toPath γ) ((segChain γ N hseg N 0).cast hsrc htgt)
+```
+
+Hmm wait — the segChain cast: `(segChain γ N hseg N 0).cast hsrc htgt : Path (γ 0) (γ 1)` — hsrc : γ 0 = clampedMap γ (subdiv N 0), htgt : γ 1 = clampedMap γ (subdiv N (N+0)). 
+
+But hsrc/htgt depend on hN — make them explicit hypotheses or construct inside. Construct inside with hN:
+- hsrc: `clampedMap γ (subdiv N 0) = γ 0` — clampedMap_of_mem_Icc with subdiv N 0 = 0: `clampedMap γ (subdiv N 0) = γ ⟨subdiv N 0, by ...⟩` — hmm, `clampedMap_of_mem_Icc f ht : clampedMap f t = f ⟨t, ht⟩`; subdiv N 0 = 0, `⟨(0:ℝ), ht⟩ = (0 : I)` by Subtype.ext rfl; `γ (0 : I) = γ 0` rfl. So `hsrc : γ 0 = clampedMap γ (subdiv N 0)` by symm.
+- htgt needs `subdiv N N = 1`: `(N : ℝ)/N = 1` — div_self with (N:ℝ) ≠ 0 (from hN). And clampedMap γ 1 = γ ⟨1, ht⟩ = γ 1 ✓.
+
+The whole F assembly: `γ : Path x x` → `toPath γ.toContinuousMap = γ` — then `Path.Homotopic.cast`/`trans`:
+`polygonalApproxHomotopic γ.toContinuousMap ... : Homotopic (toPath γ.toContinuousMap) ((segChain ...).cast hsrc htgt)`; cast the LHS: `Path.Homotopy.cast` with `h₀ : toPath γ.toContinuousMap = γ`? `Homotopic.cast`? Hmm — `Path.Homotopic` is a Prop (Nonempty Homotopy) — I can use `Path.Homotopy.cast` on the witness... Since Homotopic is a Prop, I can just do `by rcases H with ⟨F⟩; exact ⟨F.cast h₀ rfl⟩` — hmm `Homotopy.cast (F : Homotopy p₀ p₁) (h₀ : p₀ = q₀) (h₁ : p₁ = q₁) : Homotopy q₀ q₁` ✓.
+
+Wait — actually for the D step I need the segChain as a loop: `(segChain γ N hseg N 0).cast hsrc htgt : Path (γ 0) (γ 1)` — for γ : Path x x, `γ 0 = x`, `γ 1 = x` — via Path.source/target the endpoints of the casted chain are x: `hsrc' : x = γ 0` = `(Path.source γ).symm`. So the loop: `((segChain γ.toContinuousMap N hseg N 0).cast hsrc htgt).cast (Path.source γ).symm (Path.target γ).symm : Path x x`? Wait direction: `cast (γ : Path x y) {x' y'} (hx : x' = x) (hy : y' = y) : Path x' y'` — so from Path (γ 0) (γ 1) to Path x x: hx : x = γ 0, hy : x = γ 1 ✓.
+
+Alternatively — simpler: prove the avoidance and nullhomotopy directly for the chain with endpoints γ 0, γ 1, and the loop-ness only enters at the very end: `Path.Homotopic γ (Path.refl x)` requires all three paths to have endpoints x. Chain casted to x. `Path.Homotopic.pathCast` handles moving: `pathCast (hpq : p.Homotopic q) (hsource : x₂ = x₀) (htarget : x₃ = x₁) : (p.cast hsource htarget).Homotopic (q.cast hsource htarget)` — for a homotopy between toPath γ and the chain, cast both to Path x x ✓.
+
+Then E's nullhomotopy of the chain-loop: `loopNullhomotopic_of_range_avoids (chain.cast hsrcx htgtx) v h` gives `Homotopic (chain.cast ...) (Path.refl x)`.
+
+Then `γ.Homotopic (Path.refl x)` by transitivity ✓.
+
+Then F: `simply_connected_iff_loops_nullhomotopic.mpr ⟨spherePathConnectedSpace_of_pos hn₁, fun x γ => ...⟩`.
+
+`spherePathConnectedSpace_of_pos : ∀ n, 0 < n → PathConnectedSpace (Sphere n)`? From AntipodalQuotient.lean: `spherePathConnectedSpace_of_pos` — let me check its exact statement. And note: for n ≥ 2, 0 < n ✓.
+
+Also careful: the fine subdivision for γ : Path x x — `exists_fine_subdivision (γ.toContinuousMap : C(I, Sphere n))` — MetricSpace (Sphere n) ✓.
+
+One more check: `Path.Homotopy.reparam` requires `f : I → I` continuous. zigzag : Path (0:I) 1 → `fun t => zigzag t` continuous via `zigzag.continuous`? Path is in ContinuousMapClass ✓ `fun_prop`.
+
+Now the D-step's use of `exists_not_mem_finset_submodule_union` needs E = EuclideanSpace ℝ (Fin (n+1)) as the ambient; the a_k, b_k are E-vectors ✓.
+
+Also — IMPORTANT — the hseg hypothesis: `∀ k : ℕ, ((clampedMap γ (subdiv N k) : Sphere n) : E) ≠ -((clampedMap γ (subdiv N (k+1)) : Sphere n) : E)`. From hfine for k < N: dist bound. But hseg is ∀ k — for k ≥ N we can't prove non-antipodal... Actually for k ≥ N, subdiv N k = k/N ≥ 1 and clampedMap clamps to 1: clampedMap γ (k/N) = γ 1, clampedMap γ ((k+1)/N) = γ 1. So non-antipodal means γ 1 ≠ −γ 1 — false in general!! Wait — −γ 1 ≠ γ 1 always on the sphere? γ 1 is a unit vector; γ 1 = −γ 1 ⟺ γ 1 = 0 — impossible (norm 1). `sphere_eq_neg_self_impossible` from AntipodalQuotient.lean! ✓ So for k ≥ N, both clamps equal γ 1 and `γ 1 ≠ −γ 1` by sphere_eq_neg_self_impossible ✓. So hseg holds for all k: split k < N (hfine) and k ≥ N (clamp collapse + sphere_eq_neg_self_impossible).
+
+Hmm — wait: for k ≥ N: clampedMap γ (subdiv N k): subdiv N k = k/N ≥ 1, clamp → 1 → γ ⟨1, ...⟩ = γ 1. And (k+1)/N ≥ 1 too ✓. So both are γ 1, and γ 1 ≠ −γ 1 ✓.
+
+But wait — do I even need hseg for k ≥ N? The segChain uses hseg k only for k < N... no — segChain is defined for all k via recursion using hseg k at each step; it uses hseg for k = k₀, k₀+1, ..., k₀+m−1. For m = N, k₀ = 0: k < N ✓. But the hypothesis type is ∀ k, so I must construct hseg for all k — fine as above.
+
+Alright — also, `dist (γ t) (γ t')` for t = ⟨k/N, ...⟩: careful, `k/N ∈ [0,1]` needs k ≤ N: for k < N ✓; for k = N... only used for k < N in the fine bound. OK.
+
+Now, in C5, note the segments: `segPiece γ N k hsegk` uses `segmentPath x.2 y.2 hsegk` where x = clampedMap γ (subdiv N k), y = clampedMap γ (subdiv N (k+1)). The homotopy must have matching endpoints: restrictionPiece : Path x y ✓ segPiece : Path x y ✓.
+
+In C5's norm estimate `‖b − x‖ ≤ 2/3`: `segmentPath_sub_left_le_two_thirds hx hy hsegk hε t` where hε : ‖(y:E) − (x:E)‖ ≤ 1/4 — from hfine: `dist (γ t₁) (γ t₂) ≤ 1/4` with t₁ = ⟨(k+1)/N⟩, t₂ = ⟨k/N⟩, dist = 1/N — and `dist x y` on Sphere n = `‖(x:E) − (y:E)‖`? For a metric space X and its subtype s, `dist (⟨a,ha⟩ : s) ⟨b,hb⟩ = dist a b` ✓ (dist_subtype). And `dist a b = ‖a − b‖` for normed E ✓ (dist_eq_norm). So hε : ‖(y:E) − (x:E)‖ ≤ 1/4 ✓.
+
+And ‖a − x‖ ≤ 1/4 where a = (restrictionPiece γ N k) t = clampedMap γ ((k+t)/N) = γ ⟨(k+t)/N, hkt⟩ (needs (k+t)/N ∈ [0,1] ← hN : k+1 ≤ N ✓); x = γ ⟨k/N, hk⟩. dist t₁ t₂ = |(k+t)/N − k/N| = t/N ≤ 1/N ✓. hfine gives dist (γ t₁) (γ t₂) ≤ 1/4 = ‖a − x‖ ✓.
+
+Note: `(restrictionPiece γ N k) t` is `clampedMap γ ((k + t)/N)` and clampedMap_of_mem_Icc converts to γ ⟨(k+t)/N, mem⟩. Let me define an abbreviation for cleanliness: in the C5 proof, `a : E := ((restrictionPiece γ N k) t : Sphere n)`.
+
+Hmm — one more thing: the segmentPath target type `Metric.sphere (0 : E) 1` = Sphere n ✓ (same abbrev — check SphereGluing: `abbrev Sphere (n : ℕ) := Metric.sphere (0 : EuclideanSpace ℝ (Fin (n + 1))) 1` — and segmentPath is defined with `{x y : E}` `(hx : x ∈ Metric.sphere (0 : E) 1)`. In the file, `segmentPath` is stated with `E` generic; for the sphere usage `E = EuclideanSpace ℝ (Fin (n+1))` ✓.
+
+OK. Also `spherePathConnectedSpace_of_pos` — check exact statement in AntipodalQuotient.lean.
+
+And there's the question of whether `Path.refl x` for the null-homotopy vs the `toPath` form etc.
+
+Let me also check `Homotopy` structure fields to write F in C5 correctly: from Homotopy.eval: `structure Homotopy (p₀ p₁ : Path x₀ x₁) extends C(I × I, X) where map_zero_left : ∀ x, toFun (x, 0) = x₀; map_one_left : ∀ x, toFun (x, 1) = x₁; prop' : ∀ t, ∀ x ∈ ({0, 1} : Set I), toFun (t, x) = p₀ x ∨ toFun (t, x) = p₁ x`. Hmm — the exact field names: from eval def: `map_zero_left`, `map_one_left`, `prop'`. Let me check lines 1-60 of Path.lean for the Homotopy structure.
+dsh: reasoning:
+`Path.Homotopy (p₀ p₁)` is an abbreviation for `ContinuousMap.HomotopyRel p₀.toContinuousMap p₁.toContinuousMap {0,1}`. So a Homotopy is built from: `toFun : I × I → X`, `continuous_toFun`, `map_zero_left : ∀ x, toFun (x, 0) = x₀`... wait for HomotopyRel: fields are `toFun : I × I → X`, `continuous_toFun`, `map_zero_left : ∀ x, toFun (x, 0) = x₀`, `map_one_left : ∀ x, toFun (x, 1) = x₁`, `prop' : ∀ t, ∀ x ∈ ({0,1} : Set I), toFun (t, x) = p₀ x ∨ toFun (t, x) = p₁ x`.
+
+Hmm, but in the existing segmentPath the structure was built via `where` with `toContinuousMap`, `source'`, `target'` for Path. For Homotopy, from hcomp def: `toFun`, `continuous_toFun`, `map_zero_left`, `map_one_left`, `prop'`. OK.
+
+The AntipodalQuotient grep failed because I was already in release/ — path issue. Let me check the spherePathConnectedSpace statement.
+dsh: reasoning:
+`spherePathConnectedSpace_of_pos {n} (hn : 0 < n) : PathConnectedSpace (Sphere n)` ✓.
+
+Now let me check what `MoiseBranch.lean` and `CoveringLemma.lean` need downstream (the `vanKampenSimplyConnectedCover` declaration referenced in AxiomAudit). Let me check MoiseBranch.lean for what's expected there.
+dsh: reasoning:
+Now I see the downstream structure. There's also `sphericalSpaceFormRecognition` in AntipodalQuotient.lean that presumably needs `SimplyConnectedSpace (Sphere 3)`. Let me check it.
+dsh: reasoning:
+Now I see the full downstream picture. The natural downstream use of `SimplyConnectedSpace (Sphere 3)`:
+
+The cleanest downstream applications:
+1. `SimplyConnectedSpace (Sphere 3)` → `SimplyConnectedSpace Poincare.Longrun.Topology.SphereThree` (via the existing homeomorphism `sphereThree_eq_sphere3` from Downstream.lean). Then sphere recognition: `S³ = D³ ∪ D³` is simply connected — feeds the Perelman/Grigori branch (`SphereThree` is the recognition target).
+2. A two-disk/three-disk cover application: the gluing `S³ = D³ ∪_{S²} D³` — with simply connected sphere: hmm.
+3. RP³: `sphericalSpaceFormRecognition` for G = ZMod 2 needs `SimplyConnectedSpace RP³` — which is FALSE (π₁RP³ = Z/2), so that's not the right direction. The right direction: if a quotient S³/G is simply connected AND G acts freely, then quotient ≅ S³. Non-vacuity: any example where the quotient is simply connected. E.g. trivial group: S³/{1} ≅ S³ — with hsc : SimplyConnectedSpace (Quotient (orbitRel of trivial action)) — the orbit space of the trivial action is homeomorphic to S³, and with `sphereSimplyConnected 2` we get `SimplyConnectedSpace (Sphere 3)`, transported through the homeo. That would be a CONCRETE checked use: `sphericalSpaceFormRecognition (PUnit or Subgroup trivial)` giving `Nonempty (S³/trivial ≃ₜ S³)` — and then a full example: the trivial group action orbit space ≅ S³.
+
+Also `diskCoverPipeline` in CoveringLemma.lean — let me look at what it is, plus the "Downstream.lean" file to see what's already there.
+
+The main valuable deliverables for THIS invocation:
+1. Complete C5–C8, D, E, F: `sphereSimplyConnected : 2 ≤ n → SimplyConnectedSpace (Sphere n)`.
+2. Downstream: `simplyConnectedSphereThree : SimplyConnectedSpace Poincare.Longrun.Topology.SphereThree` and the trivial-action example of `sphericalSpaceFormRecognition`, plus maybe the covering-pipeline example.
+3. Update MoiseBranch.lean: replace `def vanKampenSimplyConnectedCover : Prop` note with the elementary alternative — actually the van Kampen node becomes unnecessary for π₁(Sⁿ)=0 since the elementary route avoids van Kampen entirely. I should update MOISE_DAG.md and MoiseBranch.lean to record node 6 closed by the elementary route (`sphereSimplyConnected`), keeping the van Kampen statement as a separate remaining node (useful for connected-sum decompositions, still open).
+
+Let me check Downstream.lean and CoveringLemma.lean's diskCoverPipeline to see what's there and what a natural checked downstream use is.
+dsh: reasoning:
+The downstream structure is clear. The most valuable downstream uses for `SimplyConnectedSpace (Sphere 3)`:
+
+1. `simplyConnectedSphereThree : SimplyConnectedSpace Poincare.Longrun.Topology.SphereThree` — via the rfl equality `sphereThree_eq_sphere3` (transport is trivial — the types are defeq). This feeds the recognition target.
+
+2. Non-vacuity for `sphericalSpaceFormRecognition`: the trivial-group action on S³. `sphericalSpaceFormRecognition PUnit ...` with `SimplyConnectedSpace (Quotient (orbitRel PUnit (Sphere 3)))` — the orbit space of the trivial action. To get that: homeomorphism `Quotient (MulAction.orbitRel G X) ≃ₜ X` for the trivial action of a group with one element (orbit of x = {x}). Hmm — a general "trivial action quotient ≃ space" theorem: if `∀ g x, g • x = x` (action is trivial), then `Quotient (orbitRel) ≃ₜ X` via Quot.lift id. That's a nice small general lemma (needs the action to be trivial in the sense that the orbit relation = equality).
+
+Also: `diskCoverPipeline` — let me see its full statement, and there's likely an `example` using SimplyConnectedSpace (Disk n) with the covering pipeline. Let me check lines 175-230 of CoveringLemma.lean.
+dsh: reasoning:
+All clear. Now let me write the remaining part of SphereSimplyConnected.lean: sections C5-C8, D, E, F. This is a substantial chunk of code. I'll write it carefully, testing incrementally.
+
+Let me design the exact statements:
+
+```lean
+/-! ## C5: per-piece homotopy -/
+
+section PieceHomotopy
+
+variable {n : ℕ}
+variable (γ : C(I, Sphere n)) (N : ℕ)
+
+/-- **C5.** The `k`-th restriction piece is homotopic to the straight segment piece, whenever
+`k+1 ≤ N` and the subdivision is `1/4`-fine. -/
+theorem restrictionPieceHomotopicSegPiece (N k : ℕ)
+    (hN : k + 1 ≤ N)
+    (hfine : ∀ t t' : I, dist t t' ≤ (1 / N : ℝ) → dist (γ t) (γ t') ≤ (1 / 4 : ℝ))
+    (hsegk : ((clampedMap γ (subdiv N k) : Sphere n) : EuclideanSpace ℝ (Fin (n+1))) ≠
+      -((clampedMap γ (subdiv N (k + 1)) : Sphere n) : EuclideanSpace ℝ (Fin (n+1)))) :
+    Path.Homotopic (restrictionPiece γ N k) (segPiece γ N k hsegk)
+```
+
+Then the construction of the Homotopy. Let me think about how to write it cleanly.
+
+Let E := EuclideanSpace ℝ (Fin (n+1)); x := (clampedMap γ (subdiv N k) : Sphere n); y := (clampedMap γ (subdiv N (k+1)) : Sphere n).
+
+F (s t : I) := 
+  let a : E := ((restrictionPiece γ N k) t : Sphere n)
+  let b : E := ((segPiece γ N k hsegk) t : Sphere n)
+  ⟨(‖(1 - s) • a + s • b‖⁻¹) • ((1 - s) • a + s • b), by
+    -- norm 1
+  ⟩
+
+The continuity proof requires the invariant nonzero on all of I×I:
+hne (p : I × I) : (1 − p.1) • a(p.2) + p.1 • b(p.2) ≠ 0.
+
+The distance estimate: define
+```
+have hdist (s t : I) : ‖(1 - (s:ℝ)) • a(t) + (s:ℝ) • b(t) - (x:E)‖ ≤ 2/3
+```
+where a(t) := ((restrictionPiece γ N k) t : Sphere n), b(t) := ((segPiece γ N k hsegk) t : Sphere n).
+
+Components:
+- ‖a(t) − x‖ ≤ 1/4: 
+  a(t) = γ ⟨(k+t)/N, hmem⟩ — via `restrictionPiece_apply` + `clampedMap_of_mem_Icc`.
+  x = γ ⟨k/N, hk⟩ — via `clampedMap_of_mem_Icc` with subdiv N k = k/N ∈ [0,1] (k ≤ N since k+1 ≤ N).
+  hfine t₁ t₂ with dist t₁ t₂ = |(k+t)/N − k/N| = t/N ≤ 1/N.
+  dist (γ t₁) (γ t₂) = ‖a(t) − x‖ (dist on subtype).
+  
+- ‖b(t) − x‖ ≤ 2/3: `segmentPath_sub_left_le_two_thirds x.2 y.2 hsegk hε t` where hε : ‖(y:E) − (x:E)‖ ≤ 1/4 — from hfine at t = 1: t₁ = ⟨(k+1)/N⟩, t₂ = ⟨k/N⟩, dist = 1/N. So `dist (γ t₁) (γ t₂) ≤ 1/4` = `‖(γ t₁ : E) − (γ t₂ : E)‖ ≤ 1/4` — hmm, dist on the sphere subtype: `dist (γ t₁) (γ t₂) = dist ((γ t₁ : E)) ((γ t₂ : E))` — for a subtype metric space, `dist ⟨a, ha⟩ ⟨b, hb⟩ = dist a b` — simp lemma `dist_subtype`? Hmm, actually `Subtype.metricSpace`... In mathlib, for a subtype s of a metric space, the metric instance is `Subtype.metricSpace` with `dist x y = dist (x : X) (y : X)`. There's a simp theorem? Let me check: `dist_subtype_eq`? Hmm. Let me check via scratch. There might be `@[simp] theorem dist_subtype...`. Alternatively avoid the issue by using norm directly: `dist (γ t) (γ t') ≤ 1/4` — I need to convert to `‖(γ t : E) − (γ t' : E)‖ ≤ 1/4`. `dist_eq_norm` gives `dist a b = ‖a − b‖` for a normed group. For the subtype: `dist (γ t) (γ t') = dist ((γ t : E)) ((γ t' : E))` — simp should know `Subtype.dist_eq`? Let me test in scratch. 
+
+Actually — the classical proof text does everything in the ambient E. Let me define the fine hypothesis directly as a norm statement to avoid dist headaches:
+
+Alternative: restate the fine subdivision as: `∃ N, N ≠ 0 ∧ ∀ t t' : I, dist t t' ≤ 1/N → ‖(γ t : E) − (γ t' : E)‖ ≤ 1/4`. Since `dist (γ t) (γ t') = ‖(γ t : E) − (γ t' : E)‖` (dist_subtype + dist_eq_norm), the conversion is a rw. Let me check the simp lemmas for subtype dist:
+
+`Subtype.instMetricSpace` in Mathlib/Topology/MetricSpace/... The dist: `dist x y = dist (x : X) (y : X)`. I believe there's `@[simp] dist_subtype_eq`? Hmm. Or `Subtype.dist_eq`. Let me test:
+
+```
+example {X : Type*} [MetricSpace X] (s : Set X) (a b : s) : dist a b = dist (a : X) (b : X) := by rfl? simp?
+```
+
+Let me test this plus the norm conversion in scratch now. Also test `restrictionPiece_apply`-related conversions.
+
+Also for C5's Homotopy construction, I'll write helper lemmas first:
+
+```lean
+lemma restrictionPiece_sub_left_le_quarter (N k : ℕ) (hN : k + 1 ≤ N)
+    (hfine : ...) (t : I) :
+    ‖((restrictionPiece γ N k) t : Sphere n) − (clampedMap γ (subdiv N k) : Sphere n)‖ ≤ 1/4
+```
+
+Wait — cleaner to phrase with explicit point x. Let me define:
+
+```lean
+lemma distRestrictionPieceToLeft (N k) (hN) (hfine) (t : I) :
+    ‖(((restrictionPiece γ N k) t : Sphere n) : E) - (((clampedMap γ (subdiv N k) : Sphere n) : E))‖ ≤ (1 / 4 : ℝ) := by
+  have hmem : ((k + (t : ℝ)) / N) ∈ Set.Icc (0 : ℝ) 1 := by
+    constructor
+    · exact div_nonneg (by positivity [t.2.1]) (by positivity)
+    · rw [div_le_iff₀]? hmm: (k + t)/N ≤ 1 ↔ k + t ≤ N — from hN and t ≤ 1.
+      exact (div_le_one ...)
+```
+
+Hmm, need `0 < N` — from hN : k+1 ≤ N, N ≠ 0 ✓ (k+1 ≥ 1).
+
+`(k+t)/N ≤ 1 ↔ k + t ≤ N`: `div_le_one` needs 0 < N: `div_le_one (by positivity)`. Wait `div_le_one` : `a / b ≤ 1 ↔ a ≤ b` when 0 < b — as a theorem `div_le_one hb`. Then k + t ≤ N from hN and t ≤ 1: `nlinarith [hN, t.2.2]`.
+
+Then:
+```
+  have hdistI : dist (⟨(k + (t : ℝ)) / N, hmem⟩ : I) (⟨subdiv N k, by ...⟩ : I) ≤ (1 / N : ℝ) := by
+    rw [dist_eq_norm? -- for I: dist on I is the real distance
+```
+
+Hmm — dist on the subtype I (unitInterval = Set.Icc 0 1 with the induced metric): `dist ⟨a,ha⟩ ⟨b,hb⟩ = dist a b` where dist a b on ℝ = |a − b|. `dist_eq_norm` for ℝ: `dist a b = ‖a − b‖`; then `Real.norm_eq_abs`. So `dist ... = |(k+t)/N − k/N|`. And |(k+t)/N − k/N| = t/N ≤ 1/N ✓.
+
+Then `hfine ⟨(k+t)/N, hmem⟩ ⟨subdiv N k, hk⟩ hdistI : dist (γ ...) (γ ...) ≤ 1/4`, and convert to norm:
+`dist (γ t₁) (γ t₂) = ‖(γ t₁ : E) − (γ t₂ : E)‖` — then `(γ ⟨subdiv N k, hk⟩ : Sphere n)` vs `clampedMap γ (subdiv N k)` — by clampedMap_of_mem_Icc: `clampedMap γ (subdiv N k) = γ ⟨subdiv N k, hk⟩` ✓. And `(restrictionPiece γ N k) t = clampedMap γ ((k+t)/N) = γ ⟨(k+t)/N, hmem⟩` ✓.
+
+So the norm conversion needs:
+- `dist (γ a) (γ b) = dist ((γ a : E)) ((γ b : E))`: subtype dist.
+- `dist_eq_norm` : `dist ((γ a : E)) ((γ b : E)) = ‖(γ a : E) − (γ b : E)‖`.
+
+Let me check what simp gives. Test in scratch.
+
+For segmentPiece:
+```
+lemma segPiece_sub_left_le_two_thirds (N k) (hsegk) (hε : ‖(y:E) − (x:E)‖ ≤ 1/4) (t : I) :
+    ‖((segPiece γ N k hsegk) t : Sphere n) − x‖ ≤ 2/3 :=
+  segmentPath_sub_left_le_two_thirds x.2 y.2 hsegk hε t
+```
+
+and hε from hfine at t = ⟨1, ...⟩:
+`‖(γ ⟨(k+1)/N, h⟩ : E) − (γ ⟨k/N, h⟩ : E)‖ ≤ 1/4` — with dist ⟨(k+1)/N⟩ ⟨k/N⟩ = 1/N ✓.
+
+Then the main estimate:
+```
+lemma interp_sub_left_le_two_thirds (s t : I) :
+    ‖(1 − (s:ℝ)) • a + (s:ℝ) • b − (x:E)‖ ≤ 2/3
+```
+where a := ((restrictionPiece γ N k) t : E), b := ((segPiece γ N k hsegk) t : E).
+
+Proof:
+```
+have hxeq : (1 − (s:ℝ)) • (x:E) + (s:ℝ) • (x:E) = (x:E) := by
+  rw [← add_smul]  -- (1−s + s) • x = 1 • x = x
+  have : (1 − (s : ℝ)) + (s : ℝ) = 1 := by ring
+  simp [this]
+calc
+  ‖(1 − (s:ℝ)) • a + (s:ℝ) • b − (x:E)‖
+    = ‖(1 − (s:ℝ)) • (a − (x:E)) + (s:ℝ) • (b − (x:E))‖ := by
+        rw [← hxeq]
+        abel_nf? -- ring_nf should handle smul_sub
+        -- (1−s)•a + s•b − ((1−s)•x + s•x) = (1−s)•(a−x) + s•(b−x) — smul_sub: c•a − c•x = c•(a−x)
+        conv_lhs => rw [← hxeq]; rw [smul_sub, smul_sub]; abel
+  _ ≤ ‖(1 − (s:ℝ)) • (a − (x:E))‖ + ‖(s:ℝ) • (b − (x:E))‖ := norm_add_le _ _
+  _ = (1 − (s:ℝ)) * ‖a − (x:E)‖ + (s:ℝ) * ‖b − (x:E)‖ := by
+        rw [norm_smul, norm_smul]
+        rw [Real.norm_eq_abs, abs_of_nonneg (sub_nonneg.mpr s.2.2)]
+        rw [Real.norm_eq_abs, abs_of_nonneg s.2.1]
+  _ ≤ (1 − (s:ℝ)) * (1/4) + (s:ℝ) * (2/3) := mul_le_mul ... (nlinarith)
+  _ ≤ 2/3 := by nlinarith [s.2.1, s.2.2]
+```
+
+Wait: `norm_smul` gives `‖c • v‖ = ‖c‖ * ‖v‖` and `‖c‖ = |c|` on ℝ via `norm_eq_abs`. abs of 1−s: 1−s ≥ 0 since s ≤ 1 ✓; abs of s = s ✓.
+
+For `(1−s)•a + s•b − x = (1−s)•(a−x) + s•(b−x)`: 
+```
+  have hdecomp : (1 - (s : ℝ)) • a + (s : ℝ) • b - (x : E) =
+      (1 - (s : ℝ)) • (a - (x : E)) + (s : ℝ) • (b - (x : E)) := by
+    rw [← hxeq]
+    rw [smul_sub, smul_sub]
+    ring -- works? ring handles smul? `ring` normalizes semiring expressions with smul over ℝ? noncommutative-ish... `ring` works in semirings; with smul over ℝ of an additive group — `ring_nf`? Better: use `abel` + `smul_sub`:
+    -- (1−s)•a + s•b − ((1−s)•x + s•x) = (1−s)•a − (1−s)•x + (s•b − s•x)
+    -- = (1−s)•(a−x) + s•(b−x)
+```
+`abel` handles additive group commutativity with scalars treated as coefficients? `abel` works for abelian groups with integer coeffs; smul over ℝ — `abel_nf` might leave smuls. Actually there's `ring_nf` which handles smul? For modules, `ring` can't. Use `module` tactics: `linear_combination`? Simpler: `conv` + `rw [smul_sub, smul_sub]` then `abel`:
+
+(1−s)•a + s•b − ((1−s)•x + s•x)
+= (1−s)•a + s•b − (1−s)•x − s•x     (abel — careful sign: −(u+v) = −u−v ✓ abel handles)
+= ((1−s)•a − (1−s)•x) + (s•b − s•x)  (abel)
+= (1−s)•(a−x) + s•(b−x)              (rw [←smul_sub, ←smul_sub])
+
+So:
+```
+  calc
+    (1 - (s : ℝ)) • a + (s : ℝ) • b - (x : E)
+      = (1 - (s : ℝ)) • a + (s : ℝ) • b - ((1 - (s : ℝ)) • (x : E) + (s : ℝ) • (x : E)) := by rw [hxeq]
+    _ = ((1 - (s : ℝ)) • a - (1 - (s : ℝ)) • (x : E)) + ((s : ℝ) • b - (s : ℝ) • (x : E)) := by abel
+    _ = (1 - (s : ℝ)) • (a - (x : E)) + (s : ℝ) • (b - (x : E)) := by rw [← smul_sub, ← smul_sub]
+```
+
+hxeq: `(1 - s) • x + s • x = x`:
+```
+have hxeq : (1 - (s : ℝ)) • (x : E) + (s : ℝ) • (x : E) = (x : E) := by
+  calc
+    _ = ((1 - (s : ℝ)) + (s : ℝ)) • (x : E) := by rw [← add_smul]
+    _ = (x : E) := by
+      have : (1 - (s : ℝ)) + (s : ℝ) = 1 := by ring
+      rw [this, one_smul]
+```
+
+Then hne:
+```
+have hne (p : I × I) : (1 - (p.1 : ℝ)) • a(p.2) + (p.1 : ℝ) • b(p.2) ≠ 0 := by
+  intro hz
+  have hxnorm : ‖(x : E)‖ = 1 := by simpa [sub_zero] using (mem_sphere_iff_norm.mp x.2)
+  have hle := interp_sub_left_le_two_thirds p.1 p.2
+  have : ‖(x : E)‖ = ‖(0 : E) − (x : E)‖ := by simp
+  rw [this] at hxnorm  -- hmm simpler:
+  have hd : ‖((1 - (p.1 : ℝ)) • a(p.2) + (p.1 : ℝ) • b(p.2)) − (x : E)‖ ≤ 2/3 := ...
+  rw [hz, zero_sub, norm_neg] at hd
+  -- ‖x‖ ≤ 2/3 — contradiction with ‖x‖ = 1
+  nlinarith [hxnorm, hd]
+```
+
+Then the Homotopy:
+```
+theorem restrictionPieceHomotopicSegPiece ... : Path.Homotopic (restrictionPiece γ N k) (segPiece γ N k hsegk) := by
+  refine ⟨?_⟩
+  -- build F : Homotopy (restrictionPiece γ N k) (segPiece γ N k hsegk)
+  let F : Homotopy (restrictionPiece γ N k) (segPiece γ N k hsegk) where
+    toFun p := ...
+    continuous_toFun := ...
+    map_zero_left := ...
+    map_one_left := ...
+    prop' := ...
+```
+
+The toFun:
+```
+toFun p :=
+  let s : I := p.1
+  let t : I := p.2
+  ⟨(‖(1 - (s : ℝ)) • (a t : E) + (s : ℝ) • (b t : E)‖⁻¹) • ((1 - (s : ℝ)) • (a t : E) + (s : ℝ) • (b t : E)),
+    by
+      rw [mem_sphere_iff_norm, sub_zero, norm_smul, Real.norm_eq_abs]
+      rw [abs_of_nonneg (le_of_lt (inv_pos.mpr (norm_pos_iff.mpr (hne p))))]
+      exact inv_mul_cancel₀ (ne_of_gt (norm_pos_iff.mpr (hne p)))
+  ⟩
+```
+where `a t := ((restrictionPiece γ N k) t : E)`, `b t := ((segPiece γ N k hsegk) t : E)`.
+
+Hmm — careful with `a t : E` — let me define:
+```
+let a : I → E := fun t => ((restrictionPiece γ N k) t : E)
+let b : I → E := fun t => ((segPiece γ N k hsegk) t : E)
+```
+
+Note the `hne` above takes p : I × I and uses a(p.2) etc.
+
+Continuity:
+```
+continuous_toFun := by
+  apply Continuous.subtype_mk
+  · -- the E-valued map (p ↦ ‖...‖⁻¹ • (...)) is continuous
+    refine Continuous.smul (Continuous.inv₀ (by fun_prop) ?_) (by fun_prop)
+    intro p
+    exact norm_pos_iff.mpr (hne p) -- need 0 < ‖...‖ hmm inv₀'s hypothesis is `f x ≠ 0`? 
+```
+
+Hmm — `Continuous.inv₀` needs `∀ x, f x ≠ 0`. f = fun p => ‖(1−p.1)•a(p.2)+p.1•b(p.2)‖. f p ≠ 0 ↔ ‖...‖ ≠ 0 ↔ vector ≠ 0 (norm_eq_zero / norm_pos_iff) — `(norm_eq_zero).not.mpr (hne p)` or `norm_ne_zero_iff.mpr (hne p)`. Hmm the norm map: continuity of `p ↦ ‖(1−p.1)•a(p.2) + p.1•b(p.2)‖` — `by fun_prop` needs continuity of a and b as functions of p.2: `Continuous fun p : I × I => a p.2` — `(continuous_subtype_val.comp continuous_snd)`-ish — fun_prop should do it since a is continuous (restrictionPiece is a path, continuous). Let me set:
+```
+have hca : Continuous (fun p : I × I => (a p.2)) := by fun_prop
+have hcb : Continuous (fun p : I × I => (b p.2)) := by fun_prop
+```
+and then `Continuous.smul (Continuous.inv₀ (by fun_prop) (fun p => ...)) (by fun_prop)`.
+
+Actually simplest: `refine Continuous.smul ?_ ?_` with `fun_prop` closing each if the subgoals are set up right. I'll iterate with the compiler.
+
+map_zero_left s: F (s, 0) = x₀ — where x₀ = the path's start = clampedMap γ (subdiv N k) = x. F(s,0): a 0 = (restrictionPiece γ N k) 0 = x (Path.source simp? restrictionPiece's source': `(restrictionPiece γ N k) 0 = clampedMap γ (subdiv N k)` — so `a 0 = (x : E)` hmm — need `((restrictionPiece γ N k) 0 : Sphere n) = x` — by `Path.source (restrictionPiece γ N k)`? The definition of restrictionPiece had `source' := by apply congrArg (clampedMap γ); rw [subdiv]; norm_num` — so `(restrictionPiece γ N k) 0 = clampedMap γ (subdiv N k)` ✓ via Path.source (simp). Similarly b 0 = x via Path.source of segPiece — segPiece = segmentPath x.2 y.2 hsegk — segmentPath's source': `(segmentPath hx hy hxy) 0 = ⟨x, hx⟩` — proven in segmentPath by Subtype.ext; so `(segPiece ...) 0 = x` — via Path.source? The segPiece def = segmentPath (clampedMap γ ...).2 ... — so `Path.source (segPiece γ N k hsegk) : (segPiece ...) 0 = clampedMap γ (subdiv N k)` ✓.
+
+So F(s,0) = ⟨‖(1−s)•(x:E) + s•(x:E)‖⁻¹ • ((1−s)•x + s•x), _⟩ = ⟨‖x‖⁻¹•x, _⟩ = ⟨1⁻¹•x, _⟩ = ⟨x, _⟩ = x — as Sphere n points: `Subtype.ext` with the E-value equality: `(‖x‖⁻¹) • x = x` — hxnorm : ‖x‖ = 1 → 1⁻¹ • x = x ✓ by simp [hxnorm].
+
+map_one_left s: F(s,1) = y similarly with ‖y‖ = 1.
+
+prop' t x hx: `x ∈ ({0,1} : Set I)` — x = 0 or x = 1; toFun (t, 0) = p₀ 0 = x₀ ✓ (map_zero_left), toFun (t, 1) = p₁ 1 = y ✓. prop' wants `toFun (t, x) = p₀ x ∨ toFun (t, x) = p₁ x`. For x = 0: toFun (t,0) = x₀ = p₀ 0 ✓ (left). For x = 1: toFun (t,1) = y = p₁ 1 ✓ (right). 
+
+`rcases hx with hx | hx; rw [hx]; left; exact map_zero_left ...` hmm — map_zero_left is a field; inside prop' I can `simpa [map_zero_left]`? The fields are accessible as `map_zero_left`. Since I'm defining with `where`, within the structure body I can reference earlier fields? In Lean 4 structure `where` blocks, later fields can't reference earlier fields unless using `let rec` style or the `where` elaboration allows... Actually in Lean 4, when defining a structure instance with `where`, subsequent fields CAN reference previous ones? No — they cannot by name; the standard trick: use `refine { toFun := ..., map_zero_left := ?_, ... }` with named hypotheses from `have` statements outside. Let me define the helper lemmas (hne, estimates, endpoint computations) as `have`s BEFORE the `refine ⟨?_⟩`/structure construction, then in the fields use those.
+
+Let me structure:
+
+```lean
+theorem restrictionPieceHomotopicSegPiece ... : Path.Homotopic ... := by
+  let x : Sphere n := clampedMap γ (subdiv N k)
+  let y : Sphere n := clampedMap γ (subdiv N (k + 1))
+  let a : I → E := fun t => ((restrictionPiece γ N k) t : E)
+  let b : I → E := fun t => ((segPiece γ N k hsegk) t : E)
+  have hxnorm : ‖(x : E)‖ = 1 := ...
+  have hynorm : ‖(y : E)‖ = 1 := ...
+  have hε : ‖(y : E) - (x : E)‖ ≤ (1 / 4 : ℝ) := ... (from hfine)
+  have ha : ∀ t : I, ‖(a t) - (x : E)‖ ≤ (1 / 4 : ℝ) := ...
+  have hb : ∀ t : I, ‖(b t) - (x : E)‖ ≤ (2 / 3 : ℝ) := ...
+  have hinterp (s t : I) : ‖(1 - (s : ℝ)) • (a t) + (s : ℝ) • (b t) - (x : E)‖ ≤ (2 / 3 : ℝ) := ...
+  have hne (p : I × I) : (1 - (p.1 : ℝ)) • (a p.2) + (p.1 : ℝ) • (b p.2) ≠ 0 := ...
+  have ha0 : a 0 = (x : E) := by simpa [a, Path.source] ... 
+  have hb0 : b 0 = (x : E) := by simpa [b, Path.source]
+  have ha1 : a 1 = (y : E) := by simpa [a, Path.target]
+  have hb1 : b 1 = (y : E) := by simpa [b, Path.target]
+  refine ⟨?F⟩
+```
+
+Hmm wait — the structure literal with `where` can't use these `have`s directly unless the fields are given after `·` and elaborated in the same context. Using `⟨?F⟩` then constructing F via a `refine` in the goal is cleaner:
+
+```lean
+  refine ⟨show Path.Homotopy (restrictionPiece γ N k) (segPiece γ N k hsegk) from ?_⟩
+```
+Actually `Path.Homotopic` = `Nonempty (Homotopy p q)`. So `⟨?_⟩` with goal `Path.Homotopy (restrictionPiece γ N k) (segPiece γ N k hsegk)`, then:
+```lean
+  refine { toFun := fun p : I × I => ⟨_, ?_⟩, continuous_toFun := ?_, map_zero_left := ?_, map_one_left := ?_, prop' := ?_ }
+```
+Hmm — Homotopy = ContinuousMap.HomotopyRel p₀ p₁ {0,1} — structure fields: let me check ContinuousMap.HomotopyRel fields. From Homotopy eval usage: `F (t, 0) = x₀` etc. Let me check the structure: in Mathlib/Topology/ContinuousMap/Homotopy.lean: `structure HomotopyRel (f₀ f₁ : C(X, Y)) (S : Set X) extends Homotopy f₀ f₁ where prop' : ∀ t ∈ S, toFun (t, x)...`. And `Homotopy` extends C(X × I, Y) with map_zero_left/map_one_left. So building `{ toFun := ..., continuous_toFun := ..., map_zero_left := ..., map_one_left := ..., prop' := ... }` — the anonymous constructor. In hcomp above they did exactly `where toFun x := ...; continuous_toFun := ...; map_zero_left x := ...; map_one_left x := ...; prop' x t ht := ...` ✓. So the anonymous constructor syntax with `toFun`/`continuous_toFun`/`map_zero_left`/`map_one_left`/`prop'` works.
+
+In the anonymous constructor, can the later fields use `have`s declared before `refine`? Yes — all the `have`s are in context; inside each field proof I can reference them. 
+
+For map_zero_left: `intro s; ...` goal `toFun (s, 0) = x₀` where x₀ : X = (clampedMap γ (subdiv N k) : Sphere n)? Homotopy p₀ p₁ with p₀ p₁ : Path x₀ x₁ — so map_zero_left : ∀ x : I, toFun (x, 0) = x₀. x₀ = the source of the paths = clampedMap γ (subdiv N k) = x. So goal: `⟨norm⁻¹•((1−s)•a 0 + s•b 0), _⟩ = (x : Sphere n)` — hmm wait, need to be careful: toFun is the F function. map_zero_left x : toFun (x, 0) = x₀. With toFun p = ⟨...⟩. So `F (s, 0) = (x : Sphere n)` hmm — actually x₀ in HomotopyRel map_zero_left: `toFun (x, 0) = x₀` where x₀ : X the endpoint — here x₀ = clampedMap γ (subdiv N k) as a Sphere n point — which is x by definition. 
+
+`F (s, 0) = x` — `change ⟨(‖(1 - (s : ℝ)) • (a 0) + (s : ℝ) • (b 0)‖⁻¹) • ((1 - (s : ℝ)) • (a 0) + (s : ℝ) • (b 0)), ?_⟩ = (x : Sphere n)`; `apply Subtype.ext`; goal: E-value equality. With ha0, hb0: `(1−s)•(x:E) + s•(x:E) = (x:E)` hmm wait a 0 = x:E and b 0 = x:E — so the vector = (1−s)•x + s•x = x (hxeq), and ‖x‖⁻¹ • x = x by hxnorm. So:
+
+```
+map_zero_left := by
+  intro s
+  apply Subtype.ext
+  change (‖(1 - (s : ℝ)) • (a 0) + (s : ℝ) • (b 0)‖⁻¹) • ((1 - (s : ℝ)) • (a 0) + (s : ℝ) • (b 0)) = (x : E)
+  rw [ha0, hb0]
+  have hxeq : (1 - (s : ℝ)) • (x : E) + (s : ℝ) • (x : E) = (x : E) := by ...
+  rw [hxeq, hxnorm]
+  norm_num -- ‖x‖⁻¹ • x = 1⁻¹•x = x
+```
+
+Careful: `rw [hxeq, hxnorm]` — the goal has `‖...‖⁻¹ • (...)`; hxeq rewrites the inner sum to x:E, and hxnorm rewrites ‖x‖ to 1; then `1⁻¹ • x = x` by norm_num/simp ✓.
+
+prop': `intro t x hx; rcases hx with hx | hx` — hx : x ∈ ({0,1} : Set I) — is that `x = 0 ∨ x = 1`? `Set.mem_insert_iff`... `x ∈ ({0,1} : Set I)` = `x = 0 ∨ x = 1` (as elements of I). After `rw [hx]` (hx : x = 0 or x = 1): goal `F (t, 0) = p₀ 0 ∨ F (t, 0) = p₁ 0` — hmm the prop' from HomotopyRel: `prop' : ∀ t, ∀ x ∈ S, toFun (t, x) = f₀ x ∨ toFun (t, x) = f₁ x`. So for x = 0: left: `F (t,0) = p₀ 0` = `F (t, 0) = x₀`? p₀ 0 = x₀ by Path.source — hmm p₀ = restrictionPiece γ N k, p₀ 0 = x by Path.source. And F (t, 0) = x by map_zero_left ✓. So:
+```
+prop' := by
+  intro t x hx
+  rcases hx with hx | hx
+  · rw [hx]; left
+    simpa [Path.source] using (map_zero_left t)   -- hmm map_zero_left field is `∀ x, toFun (x, 0) = x₀` — with x₀ = source
+```
+Hmm — wait, within the anonymous constructor `{ toFun := ..., map_zero_left := ..., prop' := ... }`, can prop' reference `map_zero_left`? In Lean 4 anonymous structure constructor: the fields are elaborated one at a time, and I don't think earlier fields are accessible by name inside later field proofs. Actually — I believe they are NOT. Hmm, but the hcomp example above: `prop' x t ht := by rcases ht ...` — they didn't reference earlier fields. Let me just prove prop' directly using the ha0/hb0 facts (same computation as map_zero_left). Fine — some duplication but straightforward.
+
+Actually — wait. In the anonymous constructor `{ toFun := ..., map_zero_left := ..., ... }`, I can also just repeat the computations. OK.
+
+Now C6:
+
+```lean
+theorem restrictionChainHomotopicSegChain {N m k₀ : ℕ}
+    (hN : k₀ + m ≤ N)
+    (hfine : ∀ t t' : I, dist t t' ≤ (1 / N : ℝ) → dist (γ t) (γ t') ≤ (1 / 4 : ℝ))
+    (hseg : ∀ k : ℕ, ((clampedMap γ (subdiv N k) : Sphere n) : E) ≠ -((clampedMap γ (subdiv N (k + 1)) : Sphere n) : E)) :
+    Path.Homotopic (restrictionChain γ N m k₀) (segChain γ N hseg m k₀) := by
+  induction m generalizing k₀ with
+  | zero =>
+      change Path.Homotopic (restrictionChain γ N 0 k₀) (segChain γ N hseg 0 k₀)
+      -- both unfold to refl-casts; they're definitionally the same Path? restrictionChain 0 k₀ = (Path.refl (clampedMap γ (subdiv N k₀))).cast rfl (congrArg ... rfl)
+      -- segChain 0 k₀ = same — both are .cast rfl h — equal? The cast proofs: congrArg (fun t => clampedMap γ (subdiv N t)) rfl — identical syntax in both defs ✓ so rfl.
+      exact Path.Homotopic.refl _
+  | succ m ih =>
+      -- ih : ∀ k₀, k₀ + m ≤ N → Homotopic (restrictionChain γ N m k₀) (segChain γ N hseg m k₀)
+      -- hmm, the ih is generalized over k₀? With `induction m generalizing k₀`, the induction hypothesis: ∀ k₀, (k₀ + m ≤ N) → ... — wait the ih includes all hypotheses except m-specific? The non-generalized hypotheses (hN, hfine, hseg) stay fixed. ih : ∀ k₀, k₀ + m ≤ N → Path.Homotopic (restrictionChain γ N m k₀) (segChain γ N hseg m k₀) ✓.
+      -- goal: Homotopic (restrictionChain γ N (m+1) k₀) (segChain γ N hseg (m+1) k₀)
+      have hk₀ : k₀ + 1 ≤ N := by omega  -- from hN : k₀ + (m+1) ≤ N
+      have htail : (k₀ + 1) + m ≤ N := by omega
+      have H₀ := restrictionPieceHomotopicSegPiece γ N k₀ hk₀ hfine (hseg k₀)
+      have H₁ := ih (k₀ + 1) htail
+      -- H₀ : Homotopic (restrictionPiece γ N k₀) (segPiece γ N k₀ (hseg k₀))
+      -- H₁ : Homotopic (restrictionChain γ N m (k₀+1)) (segChain γ N hseg m (k₀+1))
+      -- Need: Homotopic (restrictionChain γ N (m+1) k₀) (segChain γ N hseg (m+1) k₀)
+      -- unfold via eq_2:
+      rw [restrictionChain.eq_2 γ N k₀ m, segChain.eq_2 γ N hseg k₀ m]
+      -- goal: Homotopic ((restrictionPiece γ N k₀).trans ((restrictionChain γ N m (k₀+1)).cast c₁ c₂)) ((segPiece γ N k₀ (hseg k₀)).trans ((segChain γ N hseg m (k₀+1)).cast c₁' c₂'))
+      exact H₀.hcomp (H₁.pathCast c₁ c₂)
+```
+
+Wait — `Path.Homotopic.hcomp : (p₀.trans q₀).Homotopic (p₁.trans q₁)` from `p₀.Homotopic p₁` and `q₀.Homotopic q₁` ✓. And `pathCast (hpq : p.Homotopic q) (hsource : x₂ = x₀) (htarget : x₃ = x₁) : (p.cast hsource htarget).Homotopic (q.cast hsource htarget)` ✓. So H₁.pathCast c₁ c₂ : Homotopic ((restrictionChain γ N m (k₀+1)).cast c₁ c₂) ((segChain γ N hseg m (k₀+1)).cast c₁ c₂) — the casts in the two chains use the same proof syntax ✓ (both defs use `congrArg (fun t => clampedMap γ (subdiv N t)) rfl` and `... omega` — identical), so pathCast with the SAME hsource/htarget works ✓.
+
+The equation lemmas: `restrictionChain.eq_2 γ N k₀ m` — from the existing file: `rw [restrictionChain.eq_2 f N k m]` where f, N, k, m — so for our case `restrictionChain.eq_2 γ N k₀ m : restrictionChain γ N (m+1) k₀ = (restrictionPiece γ N k₀).trans ((restrictionChain γ N m (k₀+1)).cast ... ...)`. Hmm wait — in the def, the recursive call pattern is `(m + 1, k) => (restrictionPiece f N k).trans ((restrictionChain f N m (k + 1)).cast ...)`. The equation lemma for the second equation: arguments after the fixed ones are (f, N) then (k, m)? In the existing code: `rw [restrictionChain.eq_2 f N k m]` for the goal with `restrictionChain f N (m + 1) k` — so eq_2's parameter order is (f, N, k, m)?? That seems odd (k before m) but it's what compiles. Let me match: `restrictionChain.eq_2 γ N k₀ m` ✓ and `segChain.eq_2 γ N hseg k₀ m`.
+
+C7:
+
+```lean
+theorem reparamChainHomotopy {N : ℕ} (hN : N ≠ 0) :
+    Path.Homotopic γ ((restrictionChain γ N N 0).cast hsrc htgt)
+```
+
+Hmm — γ : C(I, Sphere n) — a continuous map, not a path. I need `toPath γ : Path (γ 0) (γ 1)`. Let me define:
+
+```lean
+def toPath (f : C(I, X)) : Path (f 0) (f 1) := ⟨f, rfl, rfl⟩
+```
+
+hmm — in the general section `{X} [TopologicalSpace X]`. For γ : C(I, Sphere n), `toPath γ : Path (γ 0) (γ 1)`.
+
+hsrc : (γ 0) = clampedMap γ (subdiv N 0):
+```
+have hsrc : γ 0 = clampedMap γ (subdiv N 0) := by
+  have h₀ : clampedMap γ (subdiv N 0) = γ 0 := by
+    rw [clampedMap_of_mem_Icc γ ?mem]
+    -- subdiv N 0 = 0; ⟨0, mem⟩ = (0 : I) by Subtype.ext rfl
+  exact h₀.symm
+```
+`clampedMap_of_mem_Icc (f) (ht : t ∈ Set.Icc (0:ℝ) 1) : clampedMap f t = f ⟨t, ht⟩`. With t = subdiv N 0 = 0: `clampedMap γ (subdiv N 0) = γ ⟨subdiv N 0, mem⟩`; `⟨(0:ℝ), mem⟩ = (0 : I)` by Subtype.ext rfl; `γ (0 : I) = γ 0` rfl ✓.
+
+mem : subdiv N 0 ∈ Icc 0 1: `subdiv N 0 = 0` by simp [subdiv] — `(0:ℕ)/N = 0` ✓.
+
+htgt : γ 1 = clampedMap γ (subdiv N (N + 0)):
+```
+have htgt : γ 1 = clampedMap γ (subdiv N N) := by
+  have h₁ : clampedMap γ (subdiv N N) = γ 1 := by
+    rw [clampedMap_of_mem_Icc γ ?mem]
+    have : subdiv N N = 1 := by rw [subdiv]; exact div_self (by exact_mod_cast hN : (N : ℝ) ≠ 0)
+    rw [this]; rfl
+  exact h₁.symm
+```
+mem: subdiv N N = 1 ∈ [0,1] ✓ (norm_num).
+
+The zigzag: `(idChain N N 0).cast hz₀ hz₁ : Path (0 : I) (1 : I)` where hz₀ : (0 : I) = clampedMap (ContinuousMap.id I) (subdiv N 0) and hz₁ : (1 : I) = clampedMap id (subdiv N (N+0)).
+
+```
+have hz₀ : (0 : I) = clampedMap (ContinuousMap.id I) (subdiv N 0) := by
+  ext
+  change (0 : ℝ) = min 1 (max 0 (subdiv N 0))
+  rw [subdiv]; norm_num
+have hz₁ : (1 : I) = clampedMap (ContinuousMap.id I) (subdiv N N) := by
+  ext
+  change (1 : ℝ) = min 1 (max 0 (subdiv N N))
+  rw [subdiv]
+  have hN' : (N : ℝ) ≠ 0 := by exact_mod_cast hN
+  field_simp [hN']
+```
+
+hmm — `min 1 (max 0 (N/N)) = min 1 (max 0 1) = min 1 1 = 1` ✓. For hz₀: `min 1 (max 0 0) = min 1 0 = 0` ✓ norm_num should close after rw [subdiv]; `norm_num` — (0:ℕ)/N norm_num → 0 ✓; and hz₁: `(N:ℕ)/N` — norm_num can't (N variable) — use `rw [div_self hN']`? wait `(N : ℝ) / (N : ℝ)`: `field_simp [hN']` or `rw [div_self hN']`. Let me write:
+```
+  change (1 : ℝ) = min 1 (max 0 ((N : ℝ) / (N : ℝ)))
+```
+Hmm — subdiv N N = ((N:ℕ):ℝ)/N — the coercion: `subdiv N N = ((N : ℕ) : ℝ) / N` where the second N coerces to ℝ automatically ✓. So `change (1:ℝ) = min 1 (max 0 (((N : ℕ) : ℝ) / N))`; `rw [div_self (by exact_mod_cast hN : ((N : ℕ) : ℝ) ≠ 0)]`; `norm_num` hmm min 1 (max 0 1) = min 1 1 = 1 ✓ norm_num.
+
+Then:
+```
+let zigzag : Path (0 : I) (1 : I) := (idChain N N 0).cast hz₀ hz₁
+let f : I → I := fun t => zigzag t
+have hf : Continuous f := zigzag.continuous  -- Path.continuous? `fun_prop`
+have hf₀ : f 0 = 0 := by ... -- Path.source zigzag? `(zigzag 0 : I) = (0 : I)` — simp [Path.source]? Path.source zigzag : zigzag 0 = (0 : I) ✓ so hf₀ := by change zigzag 0 = 0; exact Path.source zigzag — hmm `(0 : I)` — f 0 = zigzag 0 — `(0 : I)` as target. ✓ `simpa [f] using Path.source zigzag`? f 0 = zigzag 0 (rfl) ✓.
+have hf₁ : f 1 = 1 := by simpa [f] using Path.target zigzag
+have H : Path.Homotopy (toPath γ) ((toPath γ).reparam f hf hf₀ hf₁) := Path.Homotopy.reparam (toPath γ) f hf hf₀ hf₁
+have h_eq : (toPath γ).reparam f hf hf₀ hf₁ = (restrictionChain γ N N 0).cast hsrc htgt := by
+  apply Path.ext
+  ext t
+  -- LHS: (toPath γ).reparam f hf hf₀ hf₁ t = γ (f t) — need Path.reparam def
+  -- RHS: ((restrictionChain γ N N 0).cast hsrc htgt) t = (restrictionChain γ N N 0) t (cast_coe)
+  --     = clampedMap γ ((idChain N N 0) t : ℝ) (C4)
+  --     = γ ⟨((idChain N N 0) t : ℝ), mem⟩ = γ ((idChain N N 0) t)
+  -- and f t = zigzag t = ((idChain N N 0).cast hz₀ hz₁) t = (idChain N N 0) t ✓ (cast_coe)
+  -- so LHS = γ (zigzag t) = γ ((idChain N N 0) t) = RHS ✓
+```
+
+Path.reparam def — let me check: from grep earlier at Topology/Path.lean? `reparam` for Path — search "def reparam" in Path.lean... I saw only Homotopy.reparam in Homotopy/Path.lean. Path.reparam might be defined in the same file (Topology/Homotopy/Path.lean). Let me check `Path.reparam` — it should be `def reparam (γ : Path x y) (f : I → I) (hf : Continuous f) (hf₀ : f 0 = 0) (hf₁ : f 1 = 1) : Path x y where toFun := γ ∘ f ...`. Then `(p.reparam f hf hf₀ hf₁) t = p (f t)` — simp might know via `Path.reparam_coe`? Let me check. I'll grep.
+
+Then `exact ⟨H.cast rfl h_eq⟩` — Homotopy.cast F h₀ h₁ : Homotopy q₀ q₁ with h₀ : p₀ = q₀ = rfl? p₀ = toPath γ — q₀ = toPath γ ✓ h₀ = rfl; h₁ = h_eq ✓. So `⟨H.cast rfl h_eq⟩ : Path.Homotopic (toPath γ) ((restrictionChain γ N N 0).cast hsrc htgt)`.
+
+Then C8 (assembly):
+
+```lean
+theorem polygonalApproxHomotopic {N : ℕ} (hN : N ≠ 0)
+    (hfine : ∀ t t' : I, dist t t' ≤ (1 / N : ℝ) → dist (γ t) (γ t') ≤ (1 / 4 : ℝ))
+    (hseg : ∀ k : ℕ, ...) :
+    Path.Homotopic (toPath γ) ((segChain γ N hseg N 0).cast hsrc htgt) :=
+  (reparamChainHomotopy γ N hN hsrc htgt).trans (restrictionChainHomotopicSegChain γ N hN₀? hfine hseg)
+```
+
+hmm — restrictionChainHomotopicSegChain has hypothesis hN : k₀ + m ≤ N — with k₀ = 0, m = N: `0 + N ≤ N` ✓ trivial. And returns Homotopic (restrictionChain γ N N 0) (segChain γ N hseg N 0) — then pathCast hsrc htgt to get the casted version ✓.
+
+D:
+
+```lean
+theorem segChain_range_subset_union_spans (N : ℕ) (hseg : ∀ k, ...) (m k₀ : ℕ) :
+    ∀ t : I, ∃ k < m,
+      ((segChain γ N hseg m k₀) t : E) ∈ (Submodule.span ℝ ({((clampedMap γ (subdiv N (k₀ + k)) : E)), ((clampedMap γ (subdiv N (k₀ + k + 1)) : E))} : Set E))
+```
+
+Hmm — careful with `k₀ + k + 1` vs `(k₀ + k) + 1` — write `k₀ + k + 1` as `k₀ + (k + 1)`? The chain uses subdiv N (k+1) relative — the segment pieces of segChain γ N hseg m k₀ use indices k₀, k₀+1, ..., k₀+m−1, k₀+m — the k-th piece spans {a(k₀+k), a(k₀+k+1)}. So the span for piece index k (local): span {clampedMap γ (subdiv N (k₀+k)), clampedMap γ (subdiv N (k₀+k+1))} — writing (k₀ + k + 1) hmm, `k₀ + k + 1` parses as (k₀ + k) + 1 ✓ and `subdiv N (k₀ + (k + 1))` vs `subdiv N (k₀ + k + 1)` — defeq ✓ (associativity).
+
+Piece-level:
+
+```lean
+theorem segPiece_mem_span (N k : ℕ) (hsegk : ...) (t : I) :
+    ((segPiece γ N k hsegk) t : E) ∈ Submodule.span ℝ ({((clampedMap γ (subdiv N k) : E)), ((clampedMap γ (subdiv N (k + 1)) : E))} : Set E) := by
+  change ((segmentPath ((clampedMap γ (subdiv N k)).2) ((clampedMap γ (subdiv N (k+1))).2) hsegk) t : E) ∈ _
+  -- segmentPath value = (‖x + t•(y−x)‖⁻¹) • (x + t•(y−x))
+  rw [segmentPath] -- hmm the toContinuousMap is defined with `let f`... `simp [segmentPath]`?
+```
+
+The segmentPath structure: `toContinuousMap := by let f := ...; exact ⟨f, hfcont⟩` — evaluation: `(segmentPath hx hy hxy) t = ⟨(‖x + t•(y−x)‖⁻¹) • (x + t•(y−x)), _⟩` — is this rfl? The def uses a `let f` inside toContinuousMap — unfolding gives the eta. `change` might work. Since segmentPath was defined in THIS file, `change ((‖x + (t:ℝ)•(y−x)‖⁻¹) • (x + (t:ℝ)•(y−x)) ∈ span ...)` — hmm after `change ((segmentPath x.2 y.2 hsegk) t : E) ∈ _` → the value. Might need `unfold segmentPath` — it has a `where` with toContinuousMap by-bloc; `change` should unfold enough. Alternatively prove a small lemma:
+
+```lean
+theorem segmentPath_mem_span {x y : E} (hx : x ∈ Metric.sphere (0:E) 1) (hy : y ∈ Metric.sphere (0:E) 1) (hxy : x ≠ -y) (t : I) :
+    ((segmentPath hx hy hxy) t : E) ∈ Submodule.span ℝ ({x, y} : Set E) := by
+  change (‖x + (t : ℝ) • (y - x)‖⁻¹) • (x + (t : ℝ) • (y - x)) ∈ Submodule.span ℝ ({x, y} : Set E)
+  apply Submodule.smul_mem
+  apply Submodule.add_mem
+  · exact Submodule.subset_span (by simp)
+  · apply Submodule.smul_mem
+    rw [← sub_eq_add_neg]? hmm — y − x ∈ span {x,y}: y ∈ span ✓, x ∈ span ✓, so y − x ∈ span by sub_mem.
+    exact Submodule.sub_mem (Submodule.subset_span (by simp)) (Submodule.subset_span (by simp))
+```
+
+Hmm `Submodule.subset_span : x ∈ s → x ∈ span R s` — for x: `show x ∈ ({x, y} : Set E)` by simp ✓. So:
+
+```lean
+  · exact Submodule.subset_span (by simp)
+  · exact Submodule.smul_mem (t : ℝ) (Submodule.sub_mem (Submodule.subset_span (by simp)) (Submodule.subset_span (by simp)))
+```
+
+Then segChain induction:
+
+```lean
+theorem segChain_mem_union_spans (N : ℕ) (hseg : ∀ k, ...) (m k₀ : ℕ) :
+    ∀ t : I, ∃ k : ℕ, k < m ∧ ((segChain γ N hseg m k₀) t : E) ∈
+      Submodule.span ℝ ({((clampedMap γ (subdiv N (k₀ + k)) : E)), ((clampedMap γ (subdiv N (k₀ + k + 1)) : E))} : Set E) := by
+  induction m generalizing k₀ with
+  | zero => intro t; exfalso? — hmm m = 0: `∃ k < 0, ...` — impossible... 
+```
+
+Careful — for m = 0 the segChain is the refl-cast at the point — no k < 0 exists — the statement is false for m = 0! Fix: state with `m+1`? Or state as: `∀ t, (segChain γ N hseg (m+1) k₀) t ∈ ⋃ k < m+1, span...`. Cleaner: induction on m for the (m+1) form:
+
+```lean
+theorem segChain_range_subset_union_spans (N : ℕ) (hseg : ∀ k, ...) (m k₀ : ℕ) :
+    ∀ t : I, ∃ k : ℕ, k < m + 1 ∧ ((segChain γ N hseg (m + 1) k₀) t : E) ∈ span {...(k₀+k), (k₀+k+1)...} := by
+  induction m generalizing k₀ with
+  | zero =>
+      intro t
+      refine ⟨0, by omega, ?_⟩
+      -- segChain γ N hseg 1 k₀ = segPiece γ N k₀ (hseg k₀).trans ((segChain γ N hseg 0 (k₀+1)).cast _ _)
+      rw [segChain.eq_2 γ N hseg k₀ 0]
+      -- (p.trans q) t = if t ≤ 1/2 then p.extend (2t) else q.extend (2t−1)
+      rw [trans_apply_extend]
+      by_cases ht : (t : ℝ) ≤ 1 / 2
+      · rw [if_pos ht]
+        -- p.extend (2t) with 2t ∈ [0,1]: = p (2t) via Path.extend_extends'
+        have h2t : (2 * (t : ℝ)) ∈ Set.Icc (0 : ℝ) 1 := ⟨mul_nonneg zero_le_two t.2.1, by nlinarith [ht, t.2.2]⟩
+        rw [Path.extend_extends' (segPiece γ N k₀ (hseg k₀)) ⟨2 * (t : ℝ), h2t⟩]
+        exact segPiece_mem_span γ N k₀ (hseg k₀) ⟨2 * (t : ℝ), h2t⟩
+      · rw [if_neg ht]
+        -- q.extend (2t−1) where q = (segChain γ N hseg 0 (k₀+1)).cast _ _ — a zero-chain: refl cast
+        -- (segChain γ N hseg 0 (k₀+1)) is (Path.refl (clampedMap γ (subdiv N (k₀+1)))).cast rfl c
+        -- value at anything = clampedMap γ (subdiv N (k₀+1))
+        have hq : ((segChain γ N hseg 0 (k₀ + 1)).cast (by
+            apply congrArg (fun t : ℕ => clampedMap γ (subdiv N t)); rfl) (by
+            apply congrArg (fun t : ℕ => clampedMap γ (subdiv N t)); rfl)) t' = clampedMap γ (subdiv N (k₀ + 1)) := ... hmm
+```
+
+Hmm — this is getting complicated. Alternative cleaner approach for D: instead of inducting over the chain structure, use the pointwise decomposition I already have: for the zero-length piece, the value is `clampedMap γ (subdiv N (k₀+1))` which lies in EVERY span that contains it — e.g. span of {a(k₀), a(k₀+1)} ∋ a(k₀+1) ✓. So for the else-branch: the value is clampedMap γ (subdiv N (k₀+1)) ∈ span {a(k₀), a(k₀+1)} ✓ (subset_span). 
+
+For the extend of the cast: `((segChain γ N hseg 0 (k₀+1)).cast c₁ c₂).extend (2t−1)` — `Path.extend_cast` simp: `(γ.cast hx hy).extend = γ.extend` — so `= (segChain γ N hseg 0 (k₀+1)).extend (2t−1)` — the zero chain is `(Path.refl (clampedMap γ (subdiv N (k₀+1)))).cast rfl c₂` — extend of refl-cast = extend of refl = constant... `Path.refl` extends: `(Path.refl x).extend = fun _ => x` — there's a lemma `Path.refl_extend`? Probably: `@[simp] theorem refl_extend (x : X) : (Path.refl x).extend = fun _ => x`? Let me check. If not, `ext t; rfl` after unfold.
+
+Actually — even simpler: unfold segChain.eq_2, then the goal `((segPiece ...).trans ((segChain ... 0 (k₀+1)).cast c₁ c₂)) t ∈ ...` and just compute pointwise with `trans_apply_extend`; the else branch: show `(segChain γ N hseg 0 (k₀+1)) ⟨2t−1, mem⟩ ∈ span` — the zero chain evaluates to `clampedMap γ (subdiv N (k₀+1))` — hmm — `segChain γ N hseg 0 (k₀+1)` = `(Path.refl (clampedMap γ (subdiv N (k₀+1)))).cast rfl (congrArg ... rfl)` — evaluate: `((Path.refl a).cast rfl h) t'` = `(Path.refl a) t'` (cast_coe) = a (refl const) — so `= clampedMap γ (subdiv N (k₀+1))` ✓ via simp [Path.cast_coe]... 
+
+The `subdiv N (k₀ + 1)` vs `subdiv N (k₀ + 0 + 1)`: the span set in the statement for k = 0 is `{clampedMap γ (subdiv N (k₀ + 0)), clampedMap γ (subdiv N (k₀ + 0 + 1))}` = `{clampedMap γ (subdiv N k₀), clampedMap γ (subdiv N (k₀ + 1))}` — `k₀ + 0 + 1` — hmm is `subdiv N (k₀ + 0 + 1)` defeq `subdiv N (k₀ + 1)`? `k₀ + 0 + 1` reduces to `k₀ + 1`? `k₀ + 0 + 1` = (k₀ + 0) + 1 — reduces to k₀ + 1 ✓ definitional (0 + ... hmm: k₀ + 0 = k₀ ✓ Nat.add_zero). So `subdiv N (k₀ + 0 + 1) = subdiv N (k₀ + 1)` rfl ✓.
+
+OK — but wait, there's an even cleaner way to organize D: rather than induction with the (m+1) form, define the union over the Finset and prove by induction that each point of the chain lies in the union of spans of ITS OWN pieces. Let me write:
+
+```lean
+theorem segChain_mem_union_spans (N : ℕ) (hseg : ∀ k : ℕ, ...) :
+    ∀ m k₀, ∀ t : I, ∃ k : ℕ, k < m + 1 ∧
+      ((segChain γ N hseg (m + 1) k₀) t : E) ∈ (Submodule.span ℝ ({((clampedMap γ (subdiv N (k₀ + k)) : E)), ((clampedMap γ (subdiv N (k₀ + k + 1)) : E))} : Set E))
+```
+
+Hmm — `∀ m k₀` before induction — do `induction m generalizing k₀` needs the statement to have k₀ bound... Let me just do:
+
+```lean
+theorem segChain_mem_union_spans (N : ℕ) (hseg : ∀ k : ℕ, ...) (m k₀ : ℕ) :
+    ∀ t : I, ∃ k : ℕ, k < m + 1 ∧ ((segChain γ N hseg (m + 1) k₀) t : E) ∈ span ... := by
+  induction m generalizing k₀ with
+  | zero => ...
+  | succ m ih => ...
+```
+
+In the succ case: `segChain γ N hseg (m+2) k₀` — unfold eq_2: `(segPiece γ N k₀ (hseg k₀)).trans ((segChain γ N hseg (m+1) (k₀+1)).cast c₁ c₂)`. By trans_apply_extend: if t ≤ 1/2: segPiece extend (2t) = segPiece (2t) → use segPiece_mem_span with k = 0 ✓. Else: (segChain (m+1) (k₀+1)).cast c₁ c₂ extend (2t−1) = (segChain (m+1) (k₀+1)) (2t−1) → ih gives k' < m+1 with membership in span {a(k₀+1+k'), a(k₀+1+k'+1)} — need k = k'+1 < m+2 ✓ and spans match: `k₀ + (k' + 1) = k₀ + 1 + k'` ✓ defeq, `k₀ + (k'+1) + 1 = k₀ + 1 + k' + 1` ✓ defeq. ✓
+
+So D's membership lemma is quite mechanical.
+
+Then the missed point:
+
+```lean
+theorem exists_missed_point (N : ℕ) (hseg : ∀ k, ...) (hm : 2 ≤ n) :
+    ∃ v : Sphere n, ∀ t : I, (segChain γ N hseg N 0) t ≠ v := by
+  -- N ≥ 1 needed: we use segChain N 0 with N pieces. If N = 0: the chain is a single point path — the statement ∀ t, segChain γ N hseg 0 0 t ≠ v — 0 pieces: the refl cast path at a — need v ≠ a: pick v = some unit ≠ a — always exists when n ≥ 2? A unit vector ≠ a exists ✓ (e.g. any unit vector in a 2-dim... for n ≥ 2 the sphere has ≥ 2 points; but actually for n ≥ 2, dim ≥ 3 — hmm n≥2 means E = ℝⁿ⁺¹, n+1 ≥ 3).
+```
+
+Hmm — to avoid the N = 0 case complication, note in F we have hN : N ≠ 0, so 1 ≤ N and we can use m = N ≥ 1 for the union lemma. Let me state:
+
+```lean
+theorem exists_missed_point_of_pos (N : ℕ) (hN : 1 ≤ N) (hseg : ∀ k, ...) (hm : 2 ≤ n) :
+    ∃ v : Sphere n, ∀ t : I, ((segChain γ N hseg N 0) t : E) ≠ (v : E)
+```
+
+— hmm wait, actually the avoidance should be of Sphere points: `(segChain γ N hseg N 0) t ≠ v`. Use the E-vector form: `((segChain γ N hseg N 0) t : E) ≠ (v : E)` — equivalent via Subtype ext. Let me state with the E-vector form since the span argument is in E:
+
+```lean
+theorem exists_missed_point (N : ℕ) (hN : 1 ≤ N) (hseg : ∀ k, ...) (hm : 2 ≤ n) :
+    ∃ v : Sphere n, ∀ t : I, ((segChain γ N hseg N 0) t : E) ≠ (v : E) := by
+  let s : Finset (Submodule ℝ E) := (Finset.range N).image (fun k : ℕ =>
+    Submodule.span ℝ ({((clampedMap γ (subdiv N k) : E)), ((clampedMap γ (subdiv N (k + 1)) : E))} : Set E))
+  have hprop : ∀ W ∈ s, W ≠ ⊤ := by
+    intro W hW
+    rcases Finset.mem_image.mp hW with ⟨k, hk, rfl⟩
+    exact span_pair_ne_top (by omega : 3 ≤ n + 1) ((clampedMap γ (subdiv N k) : E)) ((clampedMap γ (subdiv N (k + 1)) : E))
+```
+
+Wait — span_pair_ne_top's hm : 3 ≤ m with m the Fin size — the existing theorem: `span_pair_ne_top {m : ℕ} (hm : 3 ≤ m) (a b : EuclideanSpace ℝ (Fin m)) : Submodule.span ℝ ({a, b} : Set (EuclideanSpace ℝ (Fin m))) ≠ ⊤`. So here m = n+1, hm : 3 ≤ n+1 from `hm : 2 ≤ n` via omega ✓.
+
+```lean
+  rcases exists_not_mem_finset_submodule_union s hprop with ⟨w, hw⟩
+  have hw0 : w ≠ 0 := by
+    intro hz
+    -- 0 ∈ W₀ where W₀ ∈ s (1 ≤ N)
+    have hW₀ : (Submodule.span ℝ ({((clampedMap γ (subdiv N 0) : E)), ((clampedMap γ (subdiv N 1) : E))} : Set E)) ∈ s := by
+      refine Finset.mem_image.mpr ⟨0, by simp [s, hN], rfl⟩
+    exact hw _ hW₀ (by simpa [hz] using Submodule.zero_mem _)
+  let v : Sphere n := ⟨‖w‖⁻¹ • w, by
+      rw [mem_sphere_iff_norm, sub_zero, norm_smul, Real.norm_eq_abs]
+      rw [abs_of_nonneg (le_of_lt (inv_pos.mpr (norm_pos_iff.mpr hw0)))]
+      exact inv_mul_cancel₀ (ne_of_gt (norm_pos_iff.mpr hw0))⟩
+  refine ⟨v, ?_⟩
+  intro t ht
+  -- ht : ((segChain γ N hseg N 0) t : E) = (v : E)
+  -- by segChain_mem_union_spans (N−1?): the theorem was for (m+1) pieces — use m = N − 1? hmm
+```
+
+Ah — here's the mismatch: segChain_mem_union_spans is stated for `(m+1)` pieces with `k < m+1`. For N pieces I need m+1 = N, i.e. m = N−1 (with hN : 1 ≤ N). So `segChain_mem_union_spans γ N hseg (N - 1) 0` gives: ∀ t, ∃ k < N, (segChain γ N hseg (N − 1 + 1) 0) t ∈ span... — `N − 1 + 1 = N` — needs hN ✓ (Nat.succ_pred_eq_of_pos / omega). Let me instead re-parameterize the membership lemma: state it as `∀ t, ∃ k < m+1 ...` — call with m = N−1 — `N − 1 + 1 = N` by omega from hN ✓. Rewriting `segChain γ N hseg (N − 1 + 1) 0` to `segChain γ N hseg N 0` via the congrArg N−1+1=N.
+
+Alternatively make the membership lemma flexible: `segChain_mem_union_spans (m : ℕ) : ∀ t, ∃ k < m, ...` for m ≥ 1... I'll keep the (m+1) form and use m = N−1 in the missed-point theorem.
+
+Also the span index: for the missed point: k < N, span {a(k), a(k+1)} ✓ matches the s definition ✓.
+
+```lean
+  rcases segChain_mem_union_spans γ N hseg (N - 1) 0 t with ⟨k, hkN, hk⟩
+  have hk' : ((segChain γ N hseg N 0) t : E) ∈ (Submodule.span ℝ ({((clampedMap γ (subdiv N k) : E)), ((clampedMap γ (subdiv N (k + 1)) : E))} : Set E)) := by
+    simpa [Nat.succ_pred_eq_of_pos (Nat.succ_le_iff.mp hN)] using hk
+```
+
+Hmm — `segChain γ N hseg (N - 1 + 1) 0` vs `segChain γ N hseg N 0`: `N − 1 + 1 = N` — `omega` gives it. `simpa [show N - 1 + 1 = N by omega] using hk` — hmm but hk's type has `(segChain γ N hseg (N - 1 + 1) 0)` and `subdiv N (0 + k)` — the span in the membership lemma with k₀ = 0: `{clampedMap γ (subdiv N (0 + k)), clampedMap γ (subdiv N (0 + k + 1))}` = `{clampedMap γ (subdiv N k), clampedMap γ (subdiv N (k+1))}` — `0 + k = k` ✓ rfl; `0 + k + 1` = `(0+k)+1` = `k+1` ✓ rfl.
+
+So:
+```lean
+  have hWk : (Submodule.span ℝ ({((clampedMap γ (subdiv N k) : E)), ((clampedMap γ (subdiv N (k + 1)) : E))} : Set E)) ∈ s := by
+    refine Finset.mem_image.mpr ⟨k, by simp [s, hkN], rfl⟩
+  have hvW : (v : E) ∈ (Submodule.span ℝ ({((clampedMap γ (subdiv N k) : E)), ((clampedMap γ (subdiv N (k + 1)) : E))} : Set E)) := by
+    simpa [v, ht] using hk'
+  have hwW : w ∈ (Submodule.span ℝ ({((clampedMap γ (subdiv N k) : E)), ((clampedMap γ (subdiv N (k + 1)) : E))} : Set E)) := by
+    have : w = ‖w‖ • (‖w‖⁻¹ • w) := by
+      rw [smul_smul]  -- (‖w‖ * ‖w‖⁻¹) • w = 1 • w = w
+      rw [mul_inv_cancel₀ (ne_of_gt (norm_pos_iff.mpr hw0))]
+      rw [one_smul]
+    rw [this]
+    exact Submodule.smul_mem _ hvW
+  exact hw _ hWk hwW
+```
+
+E (loop null-homotopy off a point):
+
+```lean
+def sphereComplement (v : Sphere n) := {x : Sphere n // x ≠ v}
+
+def sphereComplementHomeo (v : Sphere n) : sphereComplement v ≃ₜ (ℝ ∙ (v : E))ᗮ := ...
+
+instance sphereComplementContractible (v : Sphere n) : ContractibleSpace (sphereComplement v) :=
+  (sphereComplementHomeo v).contractibleSpace
+
+theorem loopNullhomotopic_of_range_avoids {x : Sphere n} (γ : Path x x) (v : Sphere n)
+    (h : ∀ t : I, γ t ≠ v) : Path.Homotopic γ (Path.refl x) := by ...
+```
+
+Wait — `sphereComplementHomeo v).contractibleSpace` — `Homeomorph.contractibleSpace [ContractibleSpace Y] (e : X ≃ₜ Y) : ContractibleSpace X` ✓ — takes instance argument `[ContractibleSpace Y]` — Y = (ℝ∙v)ᗮ ✓ inferInstance.
+
+The loop lift:
+```lean
+theorem loopNullhomotopic_of_range_avoids {x : Sphere n} (γ : Path x x) (v : Sphere n)
+    (h : ∀ t : I, γ t ≠ v) : Path.Homotopic γ (Path.refl x) := by
+  let U := sphereComplement v
+  haveI : SimplyConnectedSpace U := SimplyConnectedSpace.ofContractible U
+  have hx : x ≠ v := by
+    simpa [Path.source] using h 0
+  let γU : Path (⟨x, hx⟩ : U) (⟨x, hx⟩ : U) :=
+    ⟨⟨fun t => ⟨γ t, h t⟩, by fun_prop⟩, by ext; exact Path.source γ, by ext; exact Path.target γ⟩
+  have hγ' : Path.Homotopic γU (Path.refl (⟨x, hx⟩ : U)) :=
+    SimplyConnectedSpace.paths_homotopic γU (Path.refl (⟨x, hx⟩ : U))
+  let f : C(U, Sphere n) := ⟨Subtype.val, continuous_subtype_val⟩
+  have hmap : Path.Homotopic (γU.map f.continuous) ((Path.refl (⟨x, hx⟩ : U)).map f.continuous) :=
+    Path.Homotopic.map hγ' f
+  have hmapγ : Path.Homotopic γ (Path.refl x) := by
+    convert hmap using 1 <;> apply Path.ext <;> ext t <;> rfl
+  exact hmapγ
+```
+
+Hmm — `convert hmap using 1` — the goals: `γ = γU.map f.continuous` hmm — actually `hmap : Homotopic (γU.map ...) (...)` and the target `Homotopic γ (Path.refl x)`. `convert hmap using 1`? convert changes the goal to equalities `γ = γU.map f.continuous` and `Path.refl x = (Path.refl (⟨x,hx⟩:U)).map f.continuous`. These are Path equalities — `Path.ext` + funext + rfl:
+
+`γU.map f.continuous` — `(γU.map cf : I → Sphere n) = cf ∘ γU` (map_coe simp); `cf ∘ γU = γ` — pointwise `cf (γU t) = Subtype.val ⟨γ t, h t⟩ = γ t` rfl ✓.
+`(Path.refl (⟨x,hx⟩:U)).map cf` = `Path.refl x`: pointwise `cf (Path.refl ... t)` = `cf ⟨x,hx⟩` = x = `(Path.refl x) t` — hmm — `(Path.refl a) t = a` — via `ContinuousMap.const` eval rfl ✓. So:
+```
+  · apply Path.ext; ext t; rfl
+  · apply Path.ext; ext t; rfl
+```
+`rfl` might need a bit of help — `simpa [Path.map_coe]`? Let me write `convert hmap using 1` then handle each with `ext t <;> rfl` — the Path.ext + funext... `apply Path.ext; ext t; rfl`. I'll iterate with the compiler.
+
+Also `⟨⟨fun t => ⟨γ t, h t⟩, by fun_prop⟩, ...⟩` — the `by fun_prop` for continuity of `fun t => ⟨γ t, h t⟩` into the subtype — `Continuous.subtype_mk` — fun_prop should handle subtype_mk? `fun_prop` handles `Continuous.subtype_mk`? There's `@[fun_prop]` on it? Hmm — the standard: `continuous_subtype_mk` requires `∀ x, f x ∈ s` — a Prop-valued condition. fun_prop handles membership-style continuity via `Continuous.subtype_mk` if marked. Let me just write `by fun_prop` and see; fallback: `exact Continuous.subtype_mk γ.continuous _`.
+
+Wait — one subtlety in γU: `γ : Path x x` — `⟨⟨fun t => ⟨γ t, h t⟩, by fun_prop⟩, ...⟩ : Path (⟨x,hx⟩:U) (⟨x,hx⟩:U)` — the source' field: `(⟨γ 0, h 0⟩ : U) = ⟨x, hx⟩` — `by ext; exact Path.source γ` — ext gives `γ 0 = x` ✓. target' with Path.target ✓.
+
+The `h t : γ t ≠ v` — as membership in `{x | x ≠ v}` — the subtype `sphereComplement v := {x : Sphere n // x ≠ v}` ✓ same predicate defeq.
+
+Then in the range-avoidance for the segChain loop:
+
+```lean
+theorem polygonalLoopNullhomotopic {x : Sphere n} (γ : Path x x) {N : ℕ} (hN : 1 ≤ N)
+    (hseg : ∀ k, ...) (hm : 2 ≤ n)
+    (havoid : ∀ t : I, ((segChain γ.toContinuousMap N hseg N 0) t : E) ≠ ...) hmm
+```
+
+Hmm — let me think about how F composes:
+
+```lean
+theorem sphereSimplyConnected {n : ℕ} (hn : 2 ≤ n) : SimplyConnectedSpace (Sphere n) := by
+  rw [simply_connected_iff_loops_nullhomotopic]
+  refine ⟨spherePathConnectedSpace_of_pos (by omega), ?_⟩
+  intro x γ
+  -- γ : Path x x
+  let γc : C(I, Sphere n) := γ.toContinuousMap
+  rcases exists_fine_subdivision γc with ⟨N, hN, hfine⟩
+  have hNpos : 1 ≤ N := Nat.succ_le_iff.mpr hN  -- hmm: hN : N ≠ 0 → 1 ≤ N ✓ (omega)
+  have hseg : ∀ k : ℕ, ((clampedMap γc (subdiv N k) : Sphere n) : E) ≠ -((clampedMap γc (subdiv N (k + 1)) : Sphere n) : E) := by
+    intro k
+    by_cases hkN : k < N
+    · -- hfine at k/N, (k+1)/N
+      have hm1 : subdiv N k ∈ Set.Icc (0 : ℝ) 1 := ⟨div_nonneg ..., div_le_one ...⟩  -- needs k ≤ N ✓ from hkN
+      have hm2 : subdiv N (k + 1) ∈ Set.Icc (0 : ℝ) 1 := ... -- k+1 ≤ N ✓
+      have hd : dist (⟨subdiv N k, hm1⟩ : I) (⟨subdiv N (k + 1), hm2⟩ : I) ≤ (1 / N : ℝ) := by
+        -- dist = |(k+1)/N − k/N| = 1/N
+        ...
+      have hf := hfine ⟨subdiv N k, hm1⟩ ⟨subdiv N (k+1), hm2⟩ hd
+      -- hf : dist (γc ...) (γc ...) ≤ 1/4 → convert to norm inequality
+      have hnorm : ‖(γc ⟨subdiv N (k+1), hm2⟩ : E) − (γc ⟨subdiv N k, hm1⟩ : E)‖ ≤ 1/4 := by
+        simpa [dist_eq_norm? subtype dist?] using hf
+      intro hant
+      -- hant : γc(k/N) = −γc((k+1)/N) → ‖γc(k+1/N) − γc(k/N)‖ = 2
+      have h2 : ‖(γc ⟨subdiv N (k+1), hm2⟩ : E) − (γc ⟨subdiv N k, hm1⟩ : E)‖ = 2 := by
+        rw [hant]  -- hmm hant direction: a = −b → b − a = b − (−b) = 2b → norm = 2
+        ...norm_smul... ‖b − (−b)‖ = ‖2•b‖ = 2‖b‖ = 2
+      nlinarith [hnorm, h2]
+    · -- k ≥ N: both clamps are γc 1
+      intro hant
+      have hkN' : N ≤ k := le_of_not_gt hkN
+      -- clampedMap γc (subdiv N k) = γc 1: subdiv N k = k/N ≥ 1 clamp → 1
+      have ha : (clampedMap γc (subdiv N k) : Sphere n) = γc 1 := by
+        change (⟨min 1 (max 0 (subdiv N k)), _⟩ : ...) hmm
+```
+
+Hmm — `clampedMap γc (subdiv N k)` with k/N ≥ 1: `min 1 (max 0 (k/N)) = 1` since k/N ≥ 1. So `clampedMap γc (subdiv N k) = γc ⟨1, mem⟩` — and `⟨1, mem⟩ = (1 : I)` by Subtype.ext rfl. So `= γc 1` ✓.
+
+So in the k ≥ N case: both = γc 1, and `γc 1 ≠ −γc 1` by `sphere_eq_neg_self_impossible` — let me check that theorem's statement: `sphere_eq_neg_self_impossible` — from AntipodalQuotient.lean. Let me check.
+
+Then:
+```lean
+  have hpoly : Path.Homotopic γ (((segChain γc N hseg N 0).cast hsrc htgt).cast (Path.source γ).symm (Path.target γ).symm) := ...
+```
+
+Hmm — this is getting complicated with the casts. Let me simplify: the polygonalApproxHomotopic gives `Homotopic (toPath γc) ((segChain γc N hseg N 0).cast hsrc htgt)`. And `toPath γc = γ` — `toPath γ.toContinuousMap = γ` via Path.ext: `(toPath γc : I → Sphere n) = γ` — `toPath γc` toContinuousMap = γc = γ.toContinuousMap; coe_toContinuousMap: `⇑γ.toContinuousMap = γ` ✓. So `Path.Homotopic γ ((segChain γc N hseg N 0).cast hsrc htgt)` — via cast of the homotopy with h₀ = that equality.
+
+Then D: `exists_missed_point γc N hNpos hseg hn : ∃ v, ∀ t, ((segChain γc N hseg N 0) t : E) ≠ (v : E)`.
+
+Then E: `loopNullhomotopic_of_range_avoids ((segChain γc N hseg N 0).cast hsrc htgt) v hav` — needs `∀ t, (((segChain γc N hseg N 0).cast hsrc htgt) t) ≠ v` — from the E-vector avoidance: `(segChain γc N hseg N 0) t ≠ v` — since `((segChain...cast...) t : E) ≠ (v:E)` — cast_coe gives value equality → `((segChain...cast...) t) ≠ v` via `Subtype.ne_iff`? Hmm: `(segChain...cast...) t ≠ v ↔ ((segChain...cast...) t : E) ≠ (v:E)` — `Subtype.ext_iff` contrapositive: `⟨a,ha⟩ ≠ ⟨b,hb⟩ ↔ a ≠ b` — there's a simp lemma `Subtype.mk_eq_mk` and `ne_eq`... `simpa [Path.cast_coe] using hav t`? hav t : ((segChain γc N hseg N 0) t : E) ≠ (v : E). Goal: ((segChain γc N hseg N 0).cast hsrc htgt) t ≠ v. `intro h; apply hav t; exact congrArg (fun z : Sphere n => (z : E)) h` — h : (cast chain) t = v — wait direction: goal is ≠; `intro h_eq; ...` — `(cast chain) t = v` → `((cast chain) t : E) = (v:E)` → cast_coe rw → `((segChain γc N hseg N 0) t : E) = (v:E)` contradicting hav t ✓.
+
+Then trans: `γ ~ chain.cast ~ refl x`:
+```lean
+  rcases exists_missed_point γc N hNpos hseg hn with ⟨v, hav⟩
+  have hchain : Path.Homotopic γ ((segChain γc N hseg N 0).cast hsrc htgt) := ... (from hpoly + toPath equality)
+  have hnull : Path.Homotopic ((segChain γc N hseg N 0).cast hsrc htgt) (Path.refl x) :=
+    loopNullhomotopic_of_range_avoids _ v (by intro t; intro h; exact hav t (congrArg Subtype.val h))
+  exact hchain.trans hnull
+```
+
+Wait — `loopNullhomotopic_of_range_avoids`'s γ argument must be a `Path x x` where x = γ 0... the cast chain has endpoints γ 0 and γ 1 — as `Path (γc 0) (γc 1)` = `Path x x` (γc 0 = x via Path.source γ ✓ — hmm: γc 0 = γ 0 and γ : Path x x so γ 0 = x — `γc 0` as an expression is defeq `γ 0`, and Path.source proves γ 0 = x. The type `Path (γc 0) (γc 1)` vs `Path x x` — NOT defeq — γc 0 is not defeq x!). Hmm. So the cast chain's type is `Path (γ.toContinuousMap 0) (γ.toContinuousMap 1)` — I need to cast AGAIN to `Path x x` with hx : x = γ 0 and hy : x = γ 1:
+
+```lean
+  let chainLoop : Path x x := ((segChain γc N hseg N 0).cast hsrc htgt).cast (Path.source γ).symm (Path.target γ).symm
+```
+
+Hmm — but hsrc : γc 0 = clampedMap γc (subdiv N 0) — the cast direction: `Path.cast (γ : Path x y) {x' y'} (hx : x' = x) (hy : y' = y) : Path x' y'`. So `(segChain γc N hseg N 0).cast hsrc htgt : Path (γc 0) (γc 1)` — with hsrc : γc 0 = clampedMap γc (subdiv N 0) ✓. Then `.cast (Path.source γ).symm (Path.target γ).symm : Path x x` — hx : x = γc 0 ✓ ((Path.source γ).symm : x = γ 0, and γc 0 = γ.toContinuousMap 0 — hmm γc 0 is `(γ.toContinuousMap) 0` — and `Path.source γ : γ 0 = x` — `γ 0` means `(γ.toContinuousMap) 0`?? — the CoeFun for Path: `coe γ := ⇑γ.toContinuousMap` — so `γ 0 = γc 0` ✓ defeq. So `(Path.source γ).symm : x = γc 0` ✓.
+
+Then the D-avoidance for chainLoop: `∀ t, chainLoop t ≠ v` — chainLoop values = segChain values ✓ (double cast_coe).
+
+And the hpoly assembly with the double cast: `Path.Homotopic.pathCast` twice or in one go: from `hpoly : Homotopic (toPath γc) ((segChain γc N hseg N 0).cast hsrc htgt)` — `pathCast hpoly (Path.source γ).symm (Path.target γ).symm : Homotopic ((toPath γc).cast (Path.source γ).symm (Path.target γ).symm) chainLoop` — and `(toPath γc).cast (Path.source γ).symm (Path.target γ).symm = γ`:
+- `toPath γc = γ` as Path (γc 0) (γc 1)? Wait — γ : Path x x but its endpoints as expressions are x, x — the Path's TYPE is `Path x x`. `toPath γc : Path (γc 0) (γc 1)`. These are different types! `Path.ext` only works within the same type `Path x₀ x₁`. So `toPath γc = γ` doesn't typecheck directly. I need the cast first: `(toPath γc).cast (Path.source γ).symm (Path.target γ).symm : Path x x` — then `= γ` by Path.ext ✓:
+  `((toPath γc).cast h₁ h₂ : I → Sphere n) = (toPath γc : I → Sphere n)` (cast_coe) = γc (coe) = γ ✓.
+
+So:
+```lean
+  have hγeq : (toPath γc).cast (Path.source γ).symm (Path.target γ).symm = γ := by
+    apply Path.ext
+    simp [toPath, Path.cast_coe, Path.coe_toContinuousMap]
+```
+Hmm — `coe_toContinuousMap : ⇑γ.toContinuousMap = γ` — simp should make `(toPath γc : I → Sphere n) = γ` — toPath def: `⟨γc, rfl, rfl⟩` — its coercion = γc = γ.toContinuousMap; `⇑γ.toContinuousMap = γ` ✓ simp.
+
+So the full chain:
+```lean
+  have hpoly' : Path.Homotopic γ chainLoop := by
+    rcases hpoly with ⟨H⟩
+    exact ⟨H.pathCast (Path.source γ).symm (Path.target γ).symm |>.cast hγeq rfl⟩
+```
+hmm — `Path.Homotopy.pathCast (F : Homotopy p q) (hx : x' = x) (hy : y' = y) : Homotopy (p.cast hx hy) (q.cast hx hy)`. Then `.cast hγeq rfl : Homotopy γ chainLoop` — Homotopy.cast (F : Homotopy p₀ p₁) (h₀ : p₀ = q₀) (h₁ : p₁ = q₁) : Homotopy q₀ q₁ — p₀ = (toPath γc).cast ... , q₀ = γ (hγeq), p₁ = chainLoop, q₁ = chainLoop (rfl) ✓.
+
+Then null:
+```lean
+  have hnull : Path.Homotopic chainLoop (Path.refl x) := by
+    exact loopNullhomotopic_of_range_avoids chainLoop v (fun t => by
+      intro h_eq
+      -- h_eq : chainLoop t = v
+      exact hav t (congrArg Subtype.val h_eq))
+```
+Hmm wait — `loopNullhomotopic_of_range_avoids (γ : Path x x) (v) (h : ∀ t, γ t ≠ v)`. chainLoop : Path x x ✓. h : ∀ t, chainLoop t ≠ v — from hav: `((segChain γc N hseg N 0) t : E) ≠ (v : E)` — and `chainLoop t = (segChain γc N hseg N 0) t` — so `congrArg Subtype.val h_eq : ((chainLoop t) : E) = (v : E)` — need `((segChain γc N hseg N 0) t : E) = (v:E)` — `chainLoop t = (segChain γc N hseg N 0) t` — simp [chainLoop, Path.cast_coe] ✓. So:
+```
+      exact hav t (by simpa [chainLoop, Path.cast_coe] using (congrArg Subtype.val h_eq))
+```
+Hmm — simpa needs the goal `((segChain γc N hseg N 0) t : E) = (v : E)` from `((chainLoop t) : E) = (v : E)` — `chainLoop t` unfolds with cast_coe to the segChain value ✓. But careful — `hav t : ((segChain γc N hseg N 0) t : E) ≠ (v : E)` — the direction: hav t is a ≠, so use it to contradict.
+
+Then:
+```lean
+  exact hpoly'.trans hnull
+```
+
+And F's target: `Path.Homotopic γ (Path.refl x)` ✓ — this is what the second component of `simply_connected_iff_loops_nullhomotopic` wants: `∀ (x : Y) (γ : Path x x), Path.Homotopic γ (Path.refl x)` ✓.
+
+One more detail — the `exists_fine_subdivision` hypothesis form: `∃ N, N ≠ 0 ∧ ∀ t t', dist t t' ≤ 1/N → dist (γ t) (γ t') ≤ 1/4` — with Y = Sphere n (MetricSpace ✓). Note the `dist` on I for `dist t t'`: dist on subtype ✓.
+
+Now — for `hseg` construction in F, the fine bound for consecutive points:
+```
+      have hfineN : dist (γc ⟨subdiv N (k + 1), hm2⟩) (γc ⟨subdiv N k, hm1⟩) ≤ (1 / 4 : ℝ) :=
+        hfine ⟨subdiv N k, hm1⟩ ⟨subdiv N (k + 1), hm2⟩ hd
+```
+where hd : dist (⟨subdiv N k, hm1⟩ : I) (⟨subdiv N (k+1), hm2⟩ : I) ≤ 1/N:
+`dist (⟨subdiv N k, hm1⟩ : I) (⟨subdiv N (k+1), hm2⟩ : I) = dist (subdiv N k) (subdiv N (k+1))` (subtype dist) = |subdiv N (k+1) − subdiv N k| (dist_eq_norm on ℝ, Real.norm_eq_abs) = |((k+1)−k)/N| = |1/N| = 1/N ✓.
+
+The subtype dist simp: let me check if `dist` on subtype unfolds with `rfl`/simp. In mathlib, `instance Subtype.metricSpace`? The dist on a subtype is defined as the restriction — `dist x y = dist (x : X) (y : X)` — is this a `@[simp]` lemma? Hmm. Actually since the MetricSpace instance on the subtype s is defined by `Metric.induced ...`? If dist is defined via `Subtype.restrict`, then `dist x y = dist x.1 y.1` might be rfl or need `Subtype.dist_eq`... Let me test in scratch. There's a possibility I should prove a helper `sphereDist_eq_norm`:
+
+```lean
+theorem sphereDist_eq_norm (a b : Sphere n) : dist a b = ‖(a : E) − (b : E)‖ := by
+  rfl? or rw [dist_eq_norm] ...
+```
+
+Hmm. Let me check mathlib for the subtype dist. Actually — for `Metric.sphere (0:E) 1` the metric is the induced (subtype) metric: `Metric.sphere` is a Set E with Subtype metric — the instance is `Subtype.metricSpace` where `dist x y = dist (x : E) (y : E)` and then `dist_eq_norm`. In mathlib there IS a simp lemma: `Subtype.dist_eq`? Let me just test.
+
+Also careful: in `exists_fine_subdivision` the dist on the domain I: `dist t t'` where t t' : I — subtype of ℝ — `dist ⟨a,ha⟩ ⟨b,hb⟩ = dist a b` = |a−b|.
+
+Let me now also confirm `Path.reparam` exists for Path (not just Homotopy) — grep.
+dsh: reasoning:
+- `Path.reparam` at Topology/Path.lean:610 — let me check its definition to know how `(p.reparam f ...) t` evaluates.
+- `Subtype.dist_eq` exists as a simp lemma.
+- `sphere_eq_neg_self_impossible {n} (x : Sphere n) : x ≠ -x` presumably.
+
+Let me check Path.reparam def and sphere_eq_neg_self_impossible statement.
+dsh: reasoning:
+Everything is confirmed. `sphere_eq_neg_self_impossible (x) (hx : x = -x) : False` — takes the equality as hypothesis.
+
+Note: `Path.coe_reparam : ⇑(γ.reparam f hf hf₀ hf₁) = γ ∘ f` — simp ✓.
+
+Now let me write the new content for SphereSimplyConnected.lean. I'll append the remaining sections. Given the size, I'll write it in chunks and compile iteratively.
+
+First, a plan for the file structure (appending after line 749, inside the same `section Subdivision`? No — the Subdivision section ended at line 747-749 (`end Subdivision; end namespace`). I need to RE-OPEN namespace. Let me restructure: keep existing content, then add new sections:
+
+```lean
+/-! ## C5: per-piece linear homotopy -/
+
+section PieceHomotopy
+
+namespace Poincare.D12.TriangulationTopology
+...
+```
+
+Wait, the file currently ends with `end Subdivision` then `end Poincare.D12.TriangulationTopology`. I'll append:
+
+```lean
+/-! ## C5: the per-piece linear homotopy -/
+
+namespace Poincare.D12.TriangulationTopology
+
+section PieceHomotopy
+...
+end PieceHomotopy
+...
+end Poincare.D12.TriangulationTopology
+```
+
+Let me carefully write the whole block. Some details to fix:
+
+1. `exists_fine_subdivision` is in `Subdivision` section with `{X} [TopologicalSpace X]` — it's usable: `exists_fine_subdivision (γ : C(I, Sphere n))` — needs `[MetricSpace (Sphere n)]` — auto ✓.
+
+2. In C5, let me define everything carefully with `E := EuclideanSpace ℝ (Fin (n + 1))` — but wait, the existing file's SphereSegment section already has variable `{E}` for generic use. For the new sections I'll use the specific `EuclideanSpace ℝ (Fin (n+1))`.
+
+Let me write the C5 section now. Key helper lemmas to define within section PieceHomotopy:
+
+```lean
+section PieceHomotopy
+
+variable {n : ℕ}
+variable {E : Type*} — hmm no, use specific E.
+
+abbrev Evec (n : ℕ) := EuclideanSpace ℝ (Fin (n + 1))
+
+variable (γ : C(I, Sphere n)) (N : ℕ)
+
+/-- The fine-subdivision hypothesis in ambient-norm form. -/
+-- Not needed as a def; keep hypotheses as-is.
+
+/-- **C5a.** distance of the `k`-th restriction piece from its left endpoint (for `k+1 ≤ N`). -/
+theorem restrictionPiece_sub_left_le_quarter (k : ℕ) (hN : k + 1 ≤ N)
+    (hfine : ∀ t t' : I, dist t t' ≤ (1 / N : ℝ) → dist (γ t) (γ t') ≤ (1 / 4 : ℝ)) (t : I) :
+    ‖((restrictionPiece γ N k) t : Sphere n) - ((clampedMap γ (subdiv N k) : Sphere n) : Evec n)‖ ≤ (1 / 4 : ℝ) := by
+  ...
+```
+
+Hmm — `((restrictionPiece γ N k) t : Sphere n)` — coercion of a Sphere n point to Evec n: `(((restrictionPiece γ N k) t : Sphere n) : Evec n)` ✓.
+
+For the dist conversion: `dist (γ t₁) (γ t₂)` where t₁ = ⟨(k+t)/N, hm⟩, t₂ = ⟨subdiv N k, hk⟩. 
+
+`dist (γ t₁) (γ t₂) = ‖(γ t₁ : E) − (γ t₂ : E)‖`:
+- For the sphere subtype: `Subtype.dist_eq`? Hmm wait — `dist` on `Sphere n = Metric.sphere (0:E) 1` — is the metric the subtype metric? Yes: `Metric.sphere x r` has the subtype metric instance (`Set.metricSpace`? no...). In mathlib, `Metric.sphere (0:E) 1` — a `Set E` — the metric space instance is `Subtype.metricSpace`? hmm — actually `Metric.sphere` — there might be a dedicated instance where dist is the induced metric. Let me test in scratch:
+
+```lean
+example (a b : Sphere 2) : dist a b = ‖(a : EuclideanSpace ℝ (Fin 3)) − (b : EuclideanSpace ℝ (Fin 3))‖ := by
+  rw [dist_eq_norm]
+```
+
+Hmm — `dist_eq_norm` is for the subtype directly: `dist a b = ‖a − b‖` where a b : Sphere 2 and `-` and `‖·‖` on the subtype — the subtraction on the subtype: `SubNegMonoid` on subtype? There IS `SubtractionMonoid` etc. instances for the sphere subtype? Metric.sphere subtype has `NormedAddCommGroup`?? no... Hmm. For `Metric.sphere`, mathlib has a `normedAddCommGroup`-like instance? I don't think the sphere subtype has an additive group. The metric instance: `Metric.sphere` gets `Set.metricSpace`? — hmm, but the metric could be defined directly as `dist x y = dist x.1 y.1` (the induced metric). There's `Subtype.metricSpace` via `instMetricSpace` for subtypes? Hmm, actually the relevant instance is on `Set`: for `s : Set X` with X a MetricSpace — `s` gets the subtype topology and metric via the generic subtype instances.
+
+The cleanest way: `change dist (γ t₁ : E) (γ t₂ : E) ≤ 1/4` — since dist on the subtype is definitionally the induced dist? If the subtype metric is `Metric.induced Subtype.val ...`? Not sure it's defeq.
+
+Let me just test in scratch: `example (a b : Sphere 2) : dist a b = dist (a : E) (b : E) := by simp [Subtype.dist_eq]` hmm — Subtype.dist_eq was referenced in PiNat/Ultra — it exists: `Subtype.dist_eq : dist x y = dist (x : X) (y : X)`? Let me check its exact statement via scratch #check.
+
+3. For the I-interval distance: `dist (⟨subdiv N k, hm1⟩ : I) (⟨subdiv N (k+1), hm2⟩ : I) = |subdiv N (k+1) − subdiv N k|` — via Subtype.dist_eq + dist_eq_norm? On ℝ, `dist a b = |a − b|` — `Real.dist_eq : dist a b = |a − b|` ✓ (exists as `Real.dist_eq`).
+
+Let me check Subtype.dist_eq via scratch now, together with a couple of other checks (Continuous.subtype_mk, continuous_subtype_val etc.).
+
+Actually, let me be efficient: write the scratch test with #checks for:
+- `Subtype.dist_eq`
+- `Real.dist_eq`
+- `Continuous.subtype_mk`
+- `Path.extend_extends'`
+- `trans_apply_extend` (already in file)
+- `Submodule.subset_span`
+- `span_pair_ne_top` signature (from the file: `{m : ℕ} (hm : 3 ≤ m) (a b : EuclideanSpace ℝ (Fin m))`).
+Now let me verify a few remaining API details in scratch: `Path.reparam`, subtype dist lemmas, and `sphere_eq_neg_self_impossible`.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

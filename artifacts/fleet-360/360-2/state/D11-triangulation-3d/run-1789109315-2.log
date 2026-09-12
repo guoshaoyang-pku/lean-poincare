@@ -1,0 +1,211 @@
+dsh: reasoning:
+Let me look at the existing D11 files and the D10 infrastructure, plus the longrun dir and lakefile.
+dsh: reasoning:
+There's substantial existing work. Let me read the current D11 files to see what's there and whether they compile. The checkpoint says "compile in progress". The DeltaComplex.lean is 55973 bytes (large!), Models.lean 14797. Let me check if they compile first, then inspect.
+
+Let me start compilation in the background while I read.
+dsh: reasoning:
+The file is quite extensive. Some things look potentially problematic: `diskOnes`, `linkOnesNeighbors`, `diskBoundaryPairs`, `diskBoundaryVertices` — sections that may be leftovers. Also `edgeLinkArcPairs`. There's a `LinearOrder (Finset α)` instance which is dangerous (global instance on Finset - may conflict). Let's see the compile result.
+
+Meanwhile, let me read the file. Let me read in chunks.
+dsh: reasoning:
+Now let me check the compile result of DeltaComplex.lean. Also let me look at Audit.lean and the D10 Audit for reference format.
+
+Let me check background job.
+dsh: reasoning:
+There are errors at 824, 1170, 1193. Let me see the full log (I only saw the tail). Let me re-run redirecting to a file to see all errors, or check the existing logs dir. Actually, let me just get errors by grep. Let me first look at lines around 820-830, 1160-1215.
+dsh: reasoning:
+There are clear syntax errors: extra closing parens in a few places. Let me get all the errors from the file. Let me compile to a log file.
+
+Errors:
+- line 824: `E` is not a field of structure `Finset` — this is because `Finset.biUnion` takes `f : α → Finset β`; here `E` binds to elements of edgeClasses which are `Finset (Corner N)`, so `{E}` is fine. Hmm "E is not a field of structure Finset" - that suggests `biUnion` was parsed as `Finset.biUnion` with different argument order? Actually `s.biUnion f` where s : Finset (Finset (Corner N)) and f : Finset (Corner N) → Finset (Finset (Corner N)). The error suggests that `fun E => ...` is being parsed with a structure-eta issue: which `biUnion`? There's `Finset.biUnion` requiring `[DecidableEq β]`, and the dot notation might resolve to `Set.biUnion`? Hmm. Actually the error is probably because with dot notation `s.biUnion f` and the expected type not known, Lean resolved to a *different* biUnion whose second argument takes an element of a structure. Wait — "824:16 `E` is not a field of structure `Finset`" — that's a projection-notation error: something like `E.something`? Line 824 is `(fun E => ({E} : Finset (Finset (Corner N))))`. Column 16 is `{E}`... Hmm, `({E} : Finset (Finset (Corner N)))`. The error is that after writing `.biUnion` with dot notation, the elaborator inserts a lambda and maybe uses "structure projection" notation. Hmm.
+
+Actually I bet the issue is that `filter` line 823 is fine and the error is different: `s.biUnion (fun E => ...)`, where `E` has type `Finset (Corner N)`. In `{E}` as a `Finset (Finset (Corner N))` — `{E}` is Singleton.singleton. Should be OK. Maybe the issue is `biUnion` from `Set`? Hmm.
+
+Wait, line 823-824:
+```
+  (T.edgeClasses.filter (fun E => ({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E)).biUnion
+    (fun E => ({E} : Finset (Finset (Corner N))))
+```
+Hmm, `biUnion` has signature `Finset.biUnion : Finset α → (α → Finset β) → Finset β`. The name might be `Finset.biUnion` with the `s.biUnion t` notation. Since the argument of the filter is `Finset (Corner N)`, and the result... The error says "`E` is not a field of structure `Finset`" at 824:16. Hmm, this might be because `({E} : Finset ...)` is parsed with `E` as... no.
+
+Hmm, maybe the actual line numbers in the error are offset and the error is about line 824 in the *source* which is exactly that. Actually, maybe `Finset.biUnion` is not the right name and it resolved to `Finset.biUnion` in a namespace where the dot notation gives `Finset.biUnion` = `s.biUnion t` where t is a *term*, and elaborating `(fun E => ...)` as `Finset`? The message "E is not a field of structure Finset" is what you get when `biUnion` projection notation fails: Lean treats `s.biUnion` as a *field access* on `s : Finset ...`? No, `s` is `Finset (Finset (Corner N))` which is a structure, so `s.biUnion` matches `Finset.biUnion` with `s` explicit. Fine.
+
+Hmm wait, actually the message might be from the singleton `{E}`: `Finset.singleton E`, and `E`'s type might not be inferable... The error "not a field of structure" typically arises in `{ x with ... }` notation or `E.field`. Let me just test this snippet in isolation later.
+
+Let me first look at the whole picture: it might be faster to rewrite these broken definitions. The file has ~1241 lines with heavy proofs like `mergePair_connected` etc. The important question: is the whole approach right, and do we need all of it?
+
+Plan: The file has compile errors in syntax plus maybe wrong definitions. The `edgeClassOf` with `biUnion` was likely intended:
+```
+def edgeClassOf (T) (t) (a b) : Finset (Finset (Corner N)) :=
+  (T.edgeClasses.filter (fun E => ({⟨t,a⟩,⟨t,b⟩} : Finset (Corner N)) ⊆ E)).biUnion (fun E => {E})
+```
+Hmm, but original code uses `∈ E`. Since E is a Finset of Corners, `{⟨t,a⟩,⟨t,b⟩} ∈ E` would be a type error (a Finset is not a member of a Finset of corners). So the intent must be `⊆ E`! That's the error: the elaborator tries `Membership.mem` and novel notation... no, the error message is weird, but indeed the fix is `⊆`.
+
+Wait: `.filter (fun E => ... ∈ E)` where the expected type of the lambda body is Prop. `∈` with LHS a Finset and RHS E. If `E`'s type is not yet known (metavariable), `∈` becomes `Membership.mem` and elaborates... Then later `E` gets type `Finset (Corner N)` and the whole thing fails with some message.
+
+Hmm, "`E` is not a field of structure `Finset`" — Ah I bet Lean parsed `... ∈ E)` fine but then `(fun E => ({E} : ...))` — `{E}` with `Finset` expected. Hmm, `{E}` for `Finset (Finset (Corner N))` is `Singleton.singleton E`. There's an instance `Singleton α (Finset α)`. OK.
+
+Actually maybe the issue: `biUnion` unqualified resolves to `Finset.biUnion` but there's also `Set.biUnion`. When using dot notation on `Finset.filter ...` result, Lean may have picked `Set.biUnion`? Hmm.
+
+Let me just test it in isolation quickly. Anyway, the fix is likely `⊆ E`.
+
+Similarly, the parse errors on lines 1170 and 1193: extra `)`. Line 1168-1170:
+```
+    ((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b)))
+```
+The `filter` opening has `((List.finRange 4).filter (` = 2 opens; then `(fun b => ...)` = 2 opens... `(fun b => ... ∧ a < b)` closes lambda paren; then `)` closes filter. Then extra `)` closes `((List.finRange 4)...`. Ah I see: `((List.finRange 4).filter (fun a => ...))` — the outer paren closes filter, the inner opens List.finRange... Actually `((List.finRange 4).filter (fun ...))` : first `(` then `(List.finRange 4)` closes - so first `(` is still open; `.filter (` opens; `fun a => a ≠ f.i)` closes; `)` closes the first `(`. So the line has balanced parens: `((List.finRange 4).filter (fun a => a ≠ f.i))` = balanced. Then the extra `)` at end of 1170 is indeed extra. Similarly line 1191-1193.
+
+OK. These are minor syntax fixes. But the deeper question: do the semantics work and do the `decide` proofs in Models.lean terminate? The file is huge with many `Finset` computations, `maxRecDepth 10000`, `maxHeartbeats 2000000`. This could be slow — 2 minutes just to get to line 1170 with errors. Let me check timing.
+
+Given a 4-hour budget and the state (files mostly written, minor syntax errors), the plan:
+1. Fix syntax errors, get DeltaComplex.lean compiling.
+2. Get Models.lean compiling (this may be slow due to `decide`).
+3. Write Audit.lean (check what it has).
+4. Write results md/json.
+5. Checkpoints every 30 min.
+
+Let me check Audit.lean and the python files to see what verification was done.
+
+Also I should consider whether the design is sound: the `LinearOrder (Finset α)` instance is a global instance which is dangerous but if it compiles, fine. Hmm, but it could break other files (e.g., importing this then other libs). Actually, `LocalInstance` might be needed. Since this is standalone in D11, and Audit imports it, probably fine. But wait: a global `instance instLinearOrderFinset [LinearOrder α] : LinearOrder (Finset α)` would create a diamond with any existing instance (mathlib doesn't have LinearOrder on Finset, so it's fine) but it's still risky for `decide` performance since sorting all finsets uses it. It's fine as long as it compiles.
+
+Let me look at remaining parts of DeltaComplex.lean in detail — especially the proof sections (lines 240-760) which are long. Let me read the key definitions 120-810.
+dsh: reasoning:
+Now let me look at the rest of DeltaComplex.lean (lines 300-1241) to review the mathematical machinery. Actually, the key question is whether the approach is correct and whether the `decide` proofs will go through. Given the errors, I should carefully review key definitions.
+
+Let me read 300-810 in chunks (the long proofs are less critical; they're proven already since the file only reported errors at 824, 1170, 1193 — those are the only errors! Wait, the errors printed: 824:16, 1170:69, 1193:84 and the tail warnings. But the tail output was truncated - "Long output is truncated to its tail". The full output is saved to a file... Let me check if there's a saved log path. The output shows errors at 824, 1170, 1193 and warnings. But there could be earlier errors too. Let me recompile capturing to a file to get the complete error list.
+
+Actually, since errors at 824 etc. mean elaboration continues and later theorems using those defs fail too. Let me compile and capture all output to a log file. But 2 minutes each is fine.
+
+Actually, in the compile output above, the visible tail starts mid-listing. Let me do a run saving to logs/.
+
+Let me be efficient: fix the three obvious syntax/semantic issues first, then compile once.
+
+Fix 1: line 822-824 `edgeClassOf`. Intent: the edge class containing the edge {⟨t,a⟩,⟨t,b⟩}. Since edgeClasses is a Finset of Finsets of corners obtained from edgeSeed (which contains 2-element subsets of corners), we should write:
+```
+def edgeClassOf (T : FacePairing3 N) (t : Fin N) (a b : Fin 4) : Finset (Finset (Corner N)) :=
+  (T.edgeClasses.filter (fun E => ({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ⊆ E)).biUnion
+    (fun E => ({E} : Finset (Finset (Corner N))))
+```
+That's a weird way to write "the unique E". Since edgeClasses are disjoint blocks (blocks_disjoint), this biUnion of singletons gives either ∅ or {E}. Fine—but `⊆` is the right relation.
+
+Hmm, but usage later: `({⟨t,a⟩,⟨t,b⟩} : Finset (Corner N)) ∈ E` at line 1157 and 1196 — those are also errors? Line 1157: `({⟨f.t, a⟩, ⟨f.t, b⟩} : Finset (Corner N)) ∈ E` with E : Finset (Finset (Corner N)) — that IS correct: E is a Finset of Finsets of corners. So membership is fine there.
+
+In edgeClassOf, filter's lambda: `fun E => ({⟨t,a⟩,⟨t,b⟩} : Finset (Corner N)) ∈ E` — here E : Finset (Corner N) is an element of edgeClasses, so `... ∈ E` is a type error; must be `⊆ E`. But actually the result should just be the E that contains it: since E ranges over edge classes (blocks), and the edge {corner,corner} lies in exactly one. So filter should test `({⟨t,a⟩,⟨t,b⟩} : Finset (Corner N)) ⊆ E`. Right.
+
+Fix 2 & 3: remove extra `)`.
+
+Let me apply the edits and compile.
+
+But wait — before that, let me consider the overall risk. The `decide` proofs in Models.lean will recompute `vertexClasses`, `edgeClasses`, etc. with heavy Finset operations and `List.sort`. The `componentsOf` uses foldl over pair lists. For N=5 (s3Simplex), pairs lists may be moderate. Let me see the sizes: cornerPairs: for each face and each pair of corners... let me read lines 754-810.
+
+Let me read the region 700-810 and 850-1155 to fully understand.
+dsh: reasoning:
+Let me read the rest (1000-1160) to see `VertexLinkIsSphere`, `VertexLinkIsDisk`, `EdgeLinkIsCycle`, etc.
+dsh: reasoning:
+The math design is elaborate but plausible. Concerns:
+
+1. `edgeClassOf` uses `filter ... biUnion` to extract the unique class. If the edge class isn't in `T.edgeClasses` (shouldn't happen), returns ∅.
+2. The `BoundaryIsClosedSurface` requirements: every boundary face has 3 distinct edge classes — but wait, if a boundary face's edge class also appears in a glued face... The check at line 1194-1196 requires every edge of every boundary face to lie in exactly 2 boundary faces. That's correct for a closed surface boundary. But is it true for the ball3 (one tetrahedron)? boundaryFaces = 4 faces; each edge of a boundary face lies in exactly 2 of the 4 faces. Yes.
+3. `boundaryChi`: uses `boundaryVertexClassesList` with `eraseDups.length`. Note eraseDups needs DecidableEq and a BEq — on Finset (Corner N) it uses structural decidable equality. OK. But eraseDups is O(n²), fine.
+
+Concern: `boundaryVertexClassesList` uses `T.vertexClassOf f.t a` where `a ≠ f.i`. `vertexClassOf` filters vertexClasses for the class containing corner. Fine.
+
+The definition `boundaryChi` as `V - E + F` where V and E counted as distinct classes appearing on the boundary and F = number of boundary faces. For the ball: V=4, E=6, F=4 → 2. Good. For solid torus: compute. OK.
+
+Now, the plan: fix the syntax errors, compile, then iterate. The risk is `decide` on these heavy predicates is slow or fails. The previous session apparently verified in Python that the examples satisfy the checks (per checkpoint). So the data are probably right; it's about making Lean's `decide` compute them. `decide` on `VertexLinkIsSphere` involves `∀ c ∈ list, ...` with decidable instances over Finsets; should work but might be slow with maxRecDepth raised.
+
+Potential issue: `componentsOf` uses `mergePair` which uses `Finset.biUnion` over `P`. With `instLinearOrderFinset` global instance... this instance affects `Finset.sort`? Actually `s.sort (· ≤ ·)` requires `[LinearOrder α]`, so for `Finset (Corner N)` we need LinearOrder on `Finset (Corner N)`, which now comes from the instance declared in the namespace. Wait, `finsetToList (s : Finset α) [LinearOrder α]`; for `componentsOf` we don't sort. But `List.toFinset` doesn't need order. Where does LinearOrder on Finset get used? `diskOnes` uses filter (no order). `finsetToList (diskOnes T C)` uses `[LinearOrder (Finset (FaceCorner N))]`, requiring `LinearOrder (FaceCorner N)` — instance exists. And its `≤` on lists of FaceCorner.
+
+Hmm, there's a subtlety: `instLinearOrderFinset` is defined inside namespace FacePairing3 but it's a global instance (not scoped/private). That means `LinearOrder (Finset α)` for any `[LinearOrder α]`. This could clash with mathlib's `Finset.instLinearOrder`? Does mathlib have a LinearOrder on Finset? I don't think so (it has `SemilatticeInf`, `DistribLattice`, but not LinearOrder). It might have `Preorder`? Hmm. Since the original file got past that point (no error at line 241), it's fine.
+
+But careful: once we declare `instLinearOrderFinset`, later `Finset.sort` may pick this order for sorting Finsets. OK.
+
+Another concern: the `Max`/`Min` instances on `Finset α` (`instMaxFinset`, `instMinFinset`) are global too. Combined with `LinearOrder.lift ... (by ...)`, the lift needs `Max`, `Min` and proofs. These instances are for all `Finset α` with `[LinearOrder α]`, and could cause diamonds, e.g. `Max (Finset α)` already exists in mathlib (`Finset.instMax`? maybe via Sup?). If mathlib defines `Max (Finset α)` (e.g., `instMaxOfSup`), then a new global instance would create an ambiguity/diamond — Lean would prefer the newer one? Actually duplicate instances cause "diamond" only when both are applicable and not definitionally equal; Lean picks the most recent in the instance list. It compiles, so fine.
+
+Now, the biggest risk to the schedule: `decide` proofs time. The file compiles in 2 min up to errors. Models.lean's `decide` on `IsCombinatorialManifold` for e.g. s3Simplex (5 tets) may be very slow because `vertexLinkConnected` and `VertexLinkIsSphere` involve nested quantifiers with `vertexLinkEdgeClassOf` recomputed many times: linkEdgeIncidence is O(corners × ...) each calling vertexLinkEdgeClassOf which filters the whole class set — that's exponential-ish. Let's estimate. For each vertex class C of s3Simplex: corners in C = 5 (one per tetrahedron? in ∂Δ⁴ each vertex class has 5 corners). vertexLinkCorners = 5 corners. For each link edge class (there are 10 link edges? link of vertex in ∂Δ⁴ = boundary of a 4-simplex vertex figure: icosahedron has 20 faces... hmm, the link of a vertex in ∂Δ⁴ is the boundary of a tetrahedron = 4 triangles, 6 edges, 4 vertices, χ=2). Actually the link of vertex v in the boundary of Δ⁴ is the boundary of the tetrahedron spanned by the other 4 vertices: 4 vertices, 6 edges, 4 triangles.
+
+linkFaceIsTriangle: for each corner c in C (5 corners): compute linkFaceEdgeClasses (3 elements, each `vertexLinkEdgeClassOf` = filter over 6 classes then biUnion id) and linkFaceVertexClasses similarly. `vertexLinkVertexClasses`: componentsOf over vertexLinkVertices (5 corners × 3 edges = 15 vertices) and vertexLinkVertexPairs (~ per gluing: for each face glued, 3 corners × 2 ks = 6 pairs; 10 glued faces → 60 pairs). Each pair is a `CornerEdge`. componentsOf folds 60 mergePairs, each mergePair does biUnion over the partition (≤15 blocks). That's fine.
+
+linkEdgeIncidence: for each of 6 edge classes: (vertexLinkCorners filter ...).length with inner `.any` calling `vertexLinkEdgeClassOf` 3 times per corner × 5 corners = 15 computations of filter over 6 classes each. Fine.
+
+edgeLink: `EdgeLinkIsCycle` for each edge class: edgeLinkFaceClasses = componentsOf over faceOccs and pairs; edgeLinkDegree over arcs; ok.
+
+The heavy part might be `Consistent`/`OrientationReversing` — trivial. `Connected` — componentsOf over `List.finRange N =>> ... match` — fine.
+
+But note that `decide` will *recompute* all of these for each theorem separately (no sharing between theorems unless the definitions are `abbrev`/reducible and the kernel shares). Each theorem re-elaborates. With 6 examples × ~10 theorems, this could be slow but each is probably seconds to a minute.
+
+Also important: `decide` uses `Decidable` instances generated by instance search; for Prop with nested quantifiers over Finsets, `decide` produces `of_decide_eq_true` proofs. `decide` may struggle with `∀ x ∈ s, P x` needing `Decidable` for bounded forall — there are instances. OK, it compiled before at some point? Checkpoint says compile pending. Hmm.
+
+The prudent approach given 4 hours: fix errors, compile, measure. Let me do that now.
+
+Actually wait. Before I start fixing, let me reconsider the overall approach for robustness. There's a risk that the elaborate `VertexLinkIsSphere` decidability is very slow (minutes per `decide`). An alternative would be to compute the link checks via `native_decide`-free but with `by decide` and reduced definitions. But the task explicitly forbids `native_decide`. `decide` is allowed. Alternatively use `by vm_cast_no_check`? No—that's a kernel bypass (it's `native_decide`'s kernel-unchecked sibling; also likely flagged as unsafe). Better to stick with `decide` or `by omega`/`norm_num`.
+
+Also fine: prove the checks by explicit `rfl`-style computation or `decide +kernel` via `by decide`.
+
+So: plan A: fix the three errors and see what happens.
+
+Let me also check h1check.py and search scripts to understand what Python verified. And let me check if there is a local_gate.py which is the compile gate.
+
+Let me fix errors now.
+
+Fix 1: edgeClassOf `∈` → `⊆`.
+Fix 2: line 1170 remove extra `)`.
+Fix 3: line 1193 remove extra `)`.
+
+Then compile DeltaComplex.lean alone again to a log.
+dsh: reasoning:
+While that runs, let me review the Python verification scripts to understand the intended checks, and look at the results template from D10 to know the format of the deliverable. Let me also look at local_gate.py.
+dsh: reasoning:
+Good, now I understand the expected deliverables format. Note the D10 card is detailed. The D11 task also needs an external recheck, forbidden token scan, etc. Let me look at the rest of the D10 md structure to mirror it. But first, let's check the compile result of DeltaComplex.
+
+Also note the gate is `local_gate.py` which walks every .lean file, `timeout=1800` per file. That's a crucial constraint: every authored Lean file must compile within 1800s.
+
+Let me check the job.
+dsh: reasoning:
+Right — `T.edgeClasses : Finset (Finset (Finset (Corner N)))`, each E : Finset (Finset (Corner N)) is itself a set of edges (2-element corner sets). So the edge class of the edge {⟨t,a⟩,⟨t,b⟩} is the E containing that edge set as an element: `({⟨t,a⟩,⟨t,b⟩} : Finset (Corner N)) ∈ E`. That was the original code! So the original `∈` was right and my "fix" was wrong. The original error message "E is not a field of structure Finset" was probably about something else... Wait, the original error at 824:16 `E` is not a field of structure `Finset`.
+
+Hmm, with `∈`, the filter is `fun E => ({⟨t,a⟩,⟨t,b⟩} : Finset (Corner N)) ∈ E` where E : Finset (Finset (Corner N)) — correct. Then biUnion `(fun E => ({E} : Finset (Finset (Corner N))))`: E : Finset (Finset (Corner N)), and `{E} : Finset (Finset (Finset (Corner N)))` is a type mismatch — the declared return type `Finset (Finset (Corner N))` is wrong! The result should be a single edge class E, so return type should be `Finset (Finset (Corner N))`... wait:
+
+- `edgeClassOf ... : Finset (Finset (Corner N))` — that's the type of a set of edges, i.e. an element E. But if we compute it via filter+biUnion we get a `Finset (Finset (Finset (Corner N)))` containing the unique E.
+
+Look at usage: `IsBoundaryEdgeClass` (line 1155-1157) uses `({⟨f.t,a⟩,⟨f.t,b⟩} : Finset (Corner N)) ∈ E` where E : Finset (Finset (Corner N)) — so it uses the *element* directly there (E is a class). But `edgeClassOf` at line 1196: `T.edgeClassOf f.t a b` compared with `({⟨g.t,c⟩,⟨g.t,d⟩} : Finset (Corner N)) ∈ T.edgeClassOf f.t a b` — here membership means the result of edgeClassOf must be `Finset (Finset (Corner N))` (a set of edges) so that the edge is an element. Hmm! So the type as declared (Finset (Finset (Corner N))) is the right type — the "edge class" E viewed as a set of edges. But then in `edgeClassOf`, `T.edgeClasses : Finset (Finset (Finset (Corner N)))` is a set of classes; filtering gives a Finset of classes; biUnion over each class E (which is a Finset (Finset (Corner N))) with `fun E => {E}`... wait no, if the intended result is the union of the filtered classes, we should just use `biUnion id`. That is:
+
+```
+def edgeClassOf (T) (t) (a b) : Finset (Finset (Corner N)) :=
+  (T.edgeClasses.filter (fun E => ({⟨t,a⟩,⟨t,b⟩} : Finset (Corner N)) ∈ E)).biUnion id
+```
+
+That gives a Finset (Finset (Corner N)) (the union of the (unique) class(es) containing the edge). Yes! That's consistent with `faceClassOf` and `vertexClassOf` which use `biUnion id`. So the fix: restore `∈` and use `biUnion id`.
+
+The original error "E is not a field of structure Finset" was because `biUnion (fun E => ({E} : Finset (Finset (Corner N))))` had the wrong type: elaborating `{E}` where E : Finset (Finset (Corner N)) expected Finset (Finset (Corner N))... hmm, whatever. Use `biUnion id`.
+
+Now the timeout at line 711. That's in the proof section for `same_block_of_pair` or nearby. 2M heartbeats exceeded. Let me look at that proof and see if it can be sped up. Line 711 is within `same_block_of_pair` (713?). Let me read lines 690-760.
+
+Also I should consider: perhaps the gigantic union-find correctness proof (lines 300-750, ~450 lines) is unnecessary for the deliverable. The task needs: face-pairing consistency checks, Euler characteristic, vertex-link sphere checks — all by computation (`decide`), plus axiom audit. The union-find correctness theorem `componentsOf_spec` might be a "nice to have" but it's not strictly required. However, the checkpoint says it's already mostly done and only this proof times out. Spending time fixing a 2M heartbeat timeout might be expensive. Options: increase maxHeartbeats for that proof (e.g., 8M), or restructure the proof. Let's first look at it.
+
+Let me read 380-760 to see the proofs. That's a lot; let me read the region around 690-750 first.
+dsh: reasoning:
+The timeout at line 711 in the log corresponds to the *declaration starting* at 713 (`same_block_of_pair`) — wait, error said 711:0, and line 711 is the docstring start. Hmm, the error position for a timeout is usually the declaration's start (the `theorem` keyword or its command start). Docstring at 711 is part of the command, so it's `same_block_of_pair` timing out.
+
+Wait, but the file previously (before my edits) built up to line 1170, passing line 713! In the earlier compile the error list started at 824 (truncated tail, so maybe earlier errors were cut off... the tail started at "824:16" but that was the beginning of the visible tail; the full output was truncated to tail. Hmm, the earlier run's visible output started mid-error-list. Actually the first run output showed "824:16 `E` is not a field..." as the first visible line, but that was the tail of the full output, so there might have been a timeout error at 711 in the first run too. Yes! Likely the run had the same timeout; we just didn't see the head.
+
+So `same_block_of_pair` times out at 2M heartbeats. This proof has `grow_foldl` applied twice with a `{x}` singleton argument, and `mem_image`/`rfl` proofs. The `grow_foldl` theorem is a heavy ∀-statement over lists. Let me look at grow_foldl's statement and proof (378-...) and see why whnf times out. Probably the `rw [mem_image]; exact ⟨x, hx, rfl⟩` triggers whnf of `componentsOf`? Or `grow_foldl P0 l1 {x}` — the term `{x}` needs `Singleton` instance; `P0` is a `let`; fine.
+
+Maybe the timeout is from `simp only [componentsOf, List.foldl_append]` at line 746, or from `change` at 747. `List.foldl_append` might loop? Hmm.
+
+Actually the timeout could be caused by the elaborator's `whnf` on `componentsOf seed (l1 ++ (x,y) :: l2)` where `componentsOf` unfolds to `List.foldl ... (seed.image ...)` — with `l1 ++ ...` it requires `List.foldl_append` rewriting. `simp only [componentsOf, List.foldl_append]` on a big goal may be fine.
+
+The heartbeats limit is a global option in the file: `set_option maxHeartbeats 2000000`. I can raise it for this file, e.g. 8000000, at the cost of compile time. But the gate timeout is 1800s per file; currently the file takes ~2min. Raising to 8M might add a minute or two. That's acceptable.
+
+But first, let me try to understand which tactic times out. Let me create a minimal test file with just the union-find part (lines 1-760) and try with higher heartbeats, using `set_option profiler true` to find slow tactics. Actually `set_option trace.profiler true` gives per-tactic times.
+
+Let me instead first fix the two things (edgeClassOf, and try maxHeartbeats 8M) and compile in the background. Meanwhile I'll examine the situation more.
+
+Actually, a cleaner approach for `same_block_of_pair`: the proof structure seems fine; the issue may be that `grow_foldl` is stated with `∀ C ∈ P, ...` and applying it requires unifying with `l1.foldl ... P0`. Hmm.
+
+Let me look at grow_foldl statement (line 379).
+Now let me fix the syntax/type errors I identified and recompile.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

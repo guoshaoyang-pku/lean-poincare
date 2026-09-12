@@ -1,0 +1,150 @@
+dsh: reasoning:
+Let me start by exploring the worktree to understand the current state, including any existing checkpoint files and the D10 modules I need to audit.
+dsh: reasoning:
+Let me explore the structure more deeply: longrun/results, release/Audit, the D10 modules, and the tools.
+dsh: reasoning:
+This is a big task. Let me understand the worktree structure better:
+
+1. The worktree is pre-scaffolded with the D1-D10 codebase.
+2. I need to audit D10 modules: HeatKernelEuclidean, MaximumPrincipleRN, BochnerEuclidean, JacobiConstantCurvature, TriangulationLowDim, GaussianToolbox.
+3. I need to create files under `release/Audit/D11/` and write results to `longrun/results/D11-audit-d10.md` + `.json`.
+
+Let me look at the existing D10 result cards (they exist: D10-heat-kernel-euclidean.md etc. — these are the D10 module result cards, probably claims of what was built). My job is to audit them adversarially.
+
+Let me check the release package structure and find the D10 modules.
+dsh: reasoning:
+Now I understand. The task: adversarial audit of ALL D10 unconditional claims. The D10 modules are in `release/Poincare/D10/`. I need to:
+
+1. For each D10 module: recompile every file, run token scan, re-run `#print axioms` on every exported theorem.
+2. Hidden-hypothesis hunt.
+3. Vacuity checks.
+4. Write card: `longrun/results/D11-audit-d10.md` + `.json`, with per-module PASS/FAIL verdict table with file:line evidence; any FAIL must include a counterexample file that compiles.
+
+Let me set up a goal since this is a long-running objective. Also let me create a todo list.
+
+First, let me explore the D10 modules and the release structure, and check the build toolchain.
+dsh: reasoning:
+The toolchain is available. Let me now check the release package's lakefile and whether .lake/build exists (prebuilt). Then start a fresh build of the D10 modules.
+
+Let me first look at the lakefile.toml and see how the package is set up, and check for existing .lake directory.
+dsh: reasoning:
+The D10 modules include self-audit files (AxiomAudit.lean etc.) that print axioms. My job is to adversarially audit — verify these claims myself, and look for fraudulence: hidden hypotheses, weaker statements than names suggest, vacuous definitions.
+
+Let me plan the work:
+
+1. Build the whole package fresh (or at least the D10 modules). The existing `.lake/build` was built at Sep 9 23:20, but D10 files are newer (Sep 10 09:xx). Actually wait — D10 files dated Sep 10 09:13-09:29 in the worktree, but .lake/build/lib/lean seems to be from Sep 9 23:20. Let me check whether the D10 modules have been built. Actually, the D10 files were copied into this worktree at Sep 10 20:19 (dir mtime), so I need to build them.
+
+Let me check .lake/build for Poincare/D10 directory.
+
+2. Then token scan.
+3. Then #print axioms on every exported theorem — the module AxiomAudit files do this, but I should do my own independent scan (the audit files are part of the audited codebase — they could be fraudulent too, e.g. the "approved axioms" list might hide things, or `#print axioms` on a name that doesn't resolve might just print an error... actually #print axioms on unresolvable name gives error. The run_cmd checks collectAxioms of names via `` ` `` syntax which would fail to elaborate if names don't exist. But maybe they only audit a subset. I need to enumerate ALL exported theorems myself).
+
+4. Hidden-hypothesis hunt: read every module's source fully.
+
+5. Vacuity checks: instantiate definitions.
+
+6. Counterexample files for FAILs.
+
+Let me start with the build. First, check the environment: does `lake` work with the local elan? The README of D6 says:
+
+```
+export ELAN_HOME=/data3/guoshaoyang/workdir/lean_poincare/elan
+export PATH="$ELAN_HOME/bin:$PATH"
+```
+
+But we're in /data/home/guoshaoyang/workdir/lean_poincare/elan/bin — the path is already in PATH. Let me check elan home env var. Let me check if ELAN_HOME is set and if lake works in release/.
+
+Let me also check the logs directory to understand what previous runs did, and check tools/.
+
+Key time budget: 4 hours. Builds in Lean can be slow. Let me get moving.
+
+First: try `lake build` in release/. But careful: defaultTargets include Poincare, Probe, Ledger, Audit, ReleaseCheck, ReleaseAudit, D6AuditReport. A full build might take a long time. Maybe there's an existing build cache (.lake/build from D6). The D10 sources are new since that cache, so lake will rebuild dependencies of D10 modules (D7, D8, D9 modules exist in cache). Let me check what's in the build cache for D10.
+
+Actually, let me first check whether `.lake/build/lib/lean/Poincare/D10` exists.
+dsh: reasoning:
+Interesting — "no active toolchain" but `lake` and `lean` are on PATH from the elan bin dir. Let me check if the D10 build artifacts exist already (they were built by the D10 tasks presumably — the .lake/build/lib/lean/Poincare/D10 directory exists with subdirectories). Let me check details.
+dsh: reasoning:
+The D10 modules were built at Sep 10 22:04-22:05 — that was the scaffolding process (the worktree was set up and built). But my job is to recompile and audit. The build cache exists. There's a risk that the scaffold build is trustworthy, but I should do a fresh verification.
+
+Important adversarial considerations:
+1. The olean files in cache may be stale (built from different sources). I should force rebuild of the D10 modules with a fresh build to make sure sources match artifacts. Since mtimes of sources are Sep 10 09:xx and artifacts Sep 10 22:04, the cache is newer than sources, so `lake build` would consider them up-to-date. To force recompilation, I could touch the files or delete the D10 oleans.
+
+2. My audit files must go under `release/Audit/D11/`. The lakefile has `[[lean_lib]] name = "Audit" globs = ["Audit.+"]` — so release/Audit/D11/*.lean would be part of the Audit library. Good.
+
+3. I need to write my own independent axiom audit file(s) that enumerate ALL exported theorems (not just what the module's own AxiomAudit files enumerate).
+
+Plan:
+- Step 1: Fresh rebuild of all D10 modules (delete D10 .olean/.ilean/.ir/.trace files, then `lake build Poincare` or build specific targets). Capture logs.
+- Step 2: Token scan all D10 files (and files they import? The task says "for each D10 module ... recompile every file, run the token scan". The token scan is on the module's files. But a fraudulent module could import a helper with `axiom`. Hmm, the imports are from D7/D8/D9 which were audited in prior days; my scope is D10 modules. But I should at least scan the transitive import closure for sorry/axiom within the Poincare tree? The task says "for each D10 module: recompile every file, run the token scan (`sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted`/`admit`)". I'll scan D10 files directly and check imports of D10 modules for these tokens too (cheap with grep). Also `#print axioms` on exported theorems will reveal any dependency on sorryAx or user axioms from imports — that's the real check.
+
+- Step 3: Independent axiom audit: my own file release/Audit/D11/AxiomsAll.lean (or per module) that does `#print axioms` on every theorem/def I enumerate, plus a run_cmd check using collectAxioms. To enumerate "every exported theorem", I can use `#check`-style enumeration. Best approach: after compiling the D10 modules, use `lean` with the module loaded to print all declarations? There's `#print` for a namespace? Actually there is `#print` for declarations only. To enumerate all declarations in an environment, I could use `run_cmd` with `Lean.Environment.constants` to list constants in a namespace prefix, filter by kind (TheoremInfo / DefinitionInfo with value... ), then call collectAxioms on each. That's robust and independent of the module's own list.
+
+Let me write a script that:
+- For each D10 namespace prefix (Poincare.D10.HeatKernelEuclidean etc.), lists all constants via environment.constants, filters those that are not protected/private and of kinds theorem/def/inductive/structure/opaque, prints their axioms via collectAxioms, and errors if any axiom outside {propext, Classical.choice, Quot.sound} appears (note: `Classical.choice` depends on `propext`... collectAxioms returns the axioms of the value; standard theorem cones are subsets of {propext, Classical.choice, Quot.sound}).
+
+Caveat: some D10 modules import mathlib stuff that uses `funext` (Mathlib uses funext for many things). Actually in mathlib, many theorems depend on funext, propext, Classical.choice, Quot.sound. The D10 cards claim "exactly [propext, Classical.choice, Quot.sound]" — need to verify. `funext` itself is proved from Quot.sound in Lean core, so collectAxioms of funext returns [propext, Quot.sound]... Let me not worry; the check will tell me.
+
+4. Hidden-hypothesis hunt: read every D10 source file carefully. This is the meat of the adversarial audit. Let me read all 27 files. I'll do it module by module, and for each "unconditional" theorem check for:
+   - residual Prop arguments (theorem statements with ∀ {h : ...} or explicit hypotheses)
+   - structure fields containing the conclusion (e.g., `structure HeatKernel where solves : ...` then theorem uses it)
+   - definitions that encode the claim (e.g., `def IsHeatSolution := ...` then a theorem stating a definitional equality)
+   - statements weaker than the name suggests (e.g. heat equation at a single t/x)
+
+5. Vacuity: instantiate definitions concretely (e.g., compute gaussianKernel 1 1 (vector) etc. — mostly `#eval` for computable defs; but noncomputable defs with Real.exp can't be #eval'd numerically, though we can check definitional reduction to the expected form via `#reduce`/example equality proofs... e.g. `example : gaussianKernel 1 1 (fun _ => 0) = (4 * π * 1) ^ (-(1:ℝ)/2) * Real.exp 0 := by native_decide?` no. We can prove `gaussianKernel 0 ...` hmm t=0 gives 0^0 issues... Actually `(4*π*0)^(-0/2)= 0^0` in Real.rpow: Real.rpow of 0 with exponent 0 = 1? In mathlib, `Real.rpow 0 0 = 1`? Real.rpow is defined as exp (y * log x) for x>0 and 0^y patterns... For x=0, y=0: rpow 0 0 = 1 I believe (there's a theorem rpow_zero). Fine — vacuity checks are mostly "is the definition non-trivial" checks: e.g., show the definition isn't definitionally a constant by proving a specific value or showing distinct outputs. E.g. `example : gaussianKernel 2 1 (EuclideanSpace.single ...) ≠ gaussianKernel 2 1 0`? Real.exp with different arguments — can prove via exp_injective / strict_mono.
+
+Also check "definitions that encode the claim": e.g., if `heat_equation` were defined as `def heat_equation (n t x) : Prop := deriv ... = ...` plus `theorem heat_equation_holds : heat_equation ...` that's fine mathematically but the "unconditional claim" phrasing matters. The task explicitly warns: "definitions that encode the claim". E.g., a `def HeatEquationHolds := True` and theorem `heat_equation : HeatEquationHolds` would be vacuous. Need to check each module's definitions.
+
+6. Counterexamples: for each FAIL, produce a compiling counterexample file under release/Audit/D11/ that demonstrates the fraud/vacuity (e.g., shows the theorem is trivially true, or instantiates the "unconditional" statement with a parameter making it false, or `#check`s the actual statement showing a hidden hypothesis).
+
+Let me now read all the D10 sources. That's the core. Let me be efficient: read them all with the read tool (maybe cat multiple via bash? The instructions say use read tool, not shell cat, to inspect text files. 27 files, some up to 14KB. Let me read them one by one in batches — read tool returns line numbers which is useful for evidence citations).
+
+First, let me kick off the fresh rebuild in the background while I read sources. Steps:
+- Remove D10 oleans from .lake/build (force rebuild).
+- Run `lake build Poincare` in release/. This might rebuild only D10 modules (dependencies cached). Note: defaultTargets includes more; I'll target just `Poincare`.
+
+Actually wait — `lake build Poincare` builds the `Poincare` library which includes all Poincare.Lean files. If I delete only D10 artifacts, it rebuilds just those (and anything depending on them — nothing else imports D10 presumably, except maybe the D10 Audit files inside Poincare? No — audit files are under release/Audit/). Let me check what imports Poincare.D10.*: grep for "Poincare.D10" in release/.
+
+Also the Audit library: release/Audit currently has CounterexampleAudit.lean, CurvatureODEAudit.lean, EvolutionAudit.lean, GeometryAudit.lean, PromotedEvolutionAudit.lean, and D11/ (empty). I'll add D11 files.
+
+One important check: the D10 module files in release/Poincare/D10 might import from Poincare.D7/D8/D9 modules which could contain sorry/axiom themselves (they were prior-day work, audited before). My `#print axioms` enumeration of all D10 declarations will catch any axiom dependency transitively — that's the strongest check. If some D10 theorem depends on a D7 axiom, collectAxioms will show it (unless it's a constant-only dependency... collectAxioms collects axioms of the value including transitively used constants' axioms? It collects the axiom set of the declaration's value recursively through constants? Let me recall: `Lean.collectAxioms` collects axioms from the declaration's value, walking through all constants used, collecting their axioms too (it uses a stateful environment extension... Actually `collectAxioms` computes the set of axioms the declaration depends on, traversing the type and value, including constants referenced and their axioms recursively via the cache). Yes, collectAxioms is transitive through constants: it visits any constant in type/value, adds its axioms (from `collectAxioms` of that constant). That's the standard behavior.
+
+Hmm, one subtlety: `#print axioms` prints axioms of a declaration — this is transitive in the same way.
+
+Also need to check: does the module import anything with `unsafe`? unsafe defs can't be used in theorem statements/proofs unless marked... unsafe can't appear in .olean of safe declarations used in proofs. If a D10 theorem used an unsafe def, it wouldn't compile. But `unsafe axiom`? There is `unsafe axiom` possible? Not really standard. `axiom` declarations are safe axioms — collectAxioms catches them. Also `opaque` declarations are treated as axioms by collectAxioms! An `opaque` with a value... `opaque foo : T := v` — collectAxioms includes opaque constants? I believe opaque constants are included in the axiom set (they're like axioms with a hidden value). Let me check in my audit: I'll list constants and for opaque ones check. Mathlib uses `opaque` in a few places. My filter: for each declaration, get axioms via collectAxioms; any axiom not in {propext, Classical.choice, Quot.sound} → fail. If an opaque constant in mathlib is used... collectAxioms would include the opaque name itself, which is not in my allowed set → would flag. Mathlib has some `opaque` decls; if D10 depends on one, that's worth flagging anyway (it's a hidden-hypothesis-ish issue — opaque hides the definition). Good.
+
+Also `@[implemented_by]` / `partial` — partial defs can't be used in proofs.
+
+Also check for `axiom` in imported D7/D8/D9 modules transitively (grep all Poincare sources for the tokens — cheap).
+
+Let me now:
+1. Start background build (fresh D10 rebuild).
+2. Meanwhile read all D10 sources.
+
+Build command: 
+```
+cd release && rm -rf .lake/build/lib/lean/Poincare/D10 && lake env lean --version && lake build Poincare 2>&1 | tee ../logs/d11-build-p10.log
+```
+
+Note: `lake build Poincare` builds the default target list? No — `lake build Poincare` builds target "Poincare" which is the lean_lib name. That builds all of Poincare.lean modules (including D10). With D10 artifacts removed, it rebuilds just D10 (deps up to date). Should be moderately fast.
+
+Actually, wait: I want per-file compilation evidence. `lake build -v` shows per-file commands. Let me use `lake build Poincare -v` and capture output.
+
+Let me also confirm that removing only D10 dirs is safe and that nothing else depends on D10 (grep). And check that the D10 audit files (AxiomAudit.lean etc.) are inside Poincare lib (they are, under Poincare/D10/*/), so they rebuild too.
+
+Timing: 4 hours total. Build of D10 modules: each file maybe 30s-3min for heavy analysis ones. ~27 files. Could be 20-40 minutes. OK.
+
+Let me start the background build now, and read files while it runs.
+dsh: reasoning:
+Nothing outside Poincare/D10 imports Poincare.D10 — good, the rebuild of D10 is self-contained. Note TriangulationLowDim/Moise imports `Poincare.Longrun.Topology.CompactThreeManifold` (from an earlier stage) — I should check that import for tokens too since it's a dependency of a D10 module.
+
+Let me start the fresh rebuild in the background now.
+dsh: reasoning:
+While the build runs, let me read all D10 source files. Starting with HeatKernelEuclidean. Let me read Basic.lean, GaussianIntegral.lean, Mass.lean, HeatEquation.lean, Semigroup.lean, AxiomAudit.lean.
+dsh: reasoning:
+This file looks clean. Note it's a `module` (not `namespace`) — so declarations are exported under `Poincare.D10.HeatKernelEuclidean`.
+
+Let me continue reading the other files. GaussianIntegral.lean next.
+dsh: reasoning:
+The build finished quickly with exit code 0. Let me check the log output. Interesting — very fast. Possibly the removal of D10 oleans triggered rebuild; let me verify the log shows recompilation of D10 files.
+While that builds, let me read the D10 sources. Starting with HeatKernelEuclidean:
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

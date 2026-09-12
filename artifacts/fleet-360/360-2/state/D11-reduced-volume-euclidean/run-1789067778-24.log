@@ -1,0 +1,143 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree, the checkpoint, and the existing D1-D10 codebase.
+dsh: reasoning:
+Let me look at the checkpoint.json, the existing D11 results, and the release directory structure (excluding lake-packages).
+dsh: reasoning:
+Interesting — checkpoint.json doesn't exist in longrun/, but there is a checkpoint.json at the worktree root (I saw it in the first ls: `-rw-------  1 guoshaoyang guoshaoyang 16997 Sep 11 03:11 checkpoint.json`). Let me read that one. Also read the D11 results files and the existing D11/ReducedVolume Lean files.
+dsh: reasoning:
+The task is already complete per checkpoint. My job in this invocation: "Continue from existing files and checkpoint.json in this worktree; do not restart completed work." So the work is done; I should re-verify fresh (the instructions say to save a compile-checked checkpoint at least every 30 minutes and keep checkpoint.json/results current) and then write the final line.
+
+Let me do a fresh verification pass:
+1. Compile all 7 files with `lake env lean` from worktree root.
+2. Run `lake build`.
+3. Run the axiom audit.
+4. Run forbidden token scan.
+5. Verify sha256 hashes match.
+6. Update checkpoint.json with a new re-verification entry and results files, then final answer with TASK_DONE.
+
+Let me first check the toolchain works and see the D11 files quickly. Let me start the compile gates in the background since they may take a while (each file compiles from scratch).
+
+First, check the environment: lean version, lakefile. Then run compiles.
+dsh: reasoning:
+All 7 hashes match the card. Now run the fresh verification gates in the background:
+1. Compile all 7 files with `lake env lean` from worktree root.
+2. `lake build` from worktree root.
+3. Forbidden token scan.
+
+The axiom audit is one of the compiles (Audit.lean produces the #print axioms output). Let me start the compile gate as a background job.
+dsh: reasoning:
+Both gates are running in the background. While they run, let me do a content spot-check by reading the key statements in the four content modules (I shouldn't trust the checkpoint blindly — the instructions emphasize reporting genuine blockers rather than claiming completion; a spot-check of the actual theorem statements is worthwhile). Let me read the files.
+dsh: reasoning:
+The lake build finished with exit code 0. Let me check its output and continue spot-checking the other files.
+dsh: reasoning:
+Lake build exit 0. Let me quickly check the lake_build.log tail to confirm "Build completed successfully", and continue checking key theorem statements in StraightRays (LMinimizer_eq_straightRay), Volume, and Statements.
+dsh: reasoning:
+Lake build succeeded with exit 0 ("Build completed successfully (9155 jobs)"). StraightRays declarations look right. Let me check the key statements of LMinimizer_eq_straightRay and the Volume + Statements files.
+dsh: reasoning:
+The content looks correct and matches the checkpoint. Now let me check the compile gate job (bash-1). It may still be running. Let me also verify the axiom audit output when the compile of Audit.lean completes.
+dsh: reasoning:
+The compile gate is still running (7 sequential fresh compiles take a while). While it runs, let me do the forbidden-token scan and check the Statements.lean interface definitions in detail.
+dsh: reasoning:
+The compile gate finished. Let me read its output. Note the forbidden-token scan says "lean_files_scanned": 0 — that's odd; the scanner may have a different argument convention (perhaps it takes a root directory, or paths relative to something). The previous sessions reported "0 hard, 0 soft (7 files)". Let me check: "lean_files_scanned": 0 but hard_match_count 0 and soft 0. Hmm — the scanner may not have found the files because it expects paths relative to the release root or a directory. Let me check the scan_forbidden.py usage to make sure I run it correctly.
+dsh: reasoning:
+I see — the scanner treats each root as a directory to walk. I passed 7 file paths, so `os.walk` on a file yields nothing → "lean_files_scanned": 0. The previous sessions passed the directory. Let me re-run passing the directory `release/Poincare/D11/ReducedVolume` as a single root, which scans all 7 files. Also I should scan for forbidden tokens in ALL 7 files (the scanner with directory root covers them).
+dsh: reasoning:
+All 7 files compile with exit 0, 0 warnings/errors. Forbidden token scan: 0 hard, 0 soft over 7 files. Lake build exit 0.
+
+Now the axiom audit. The Audit.lean compile log should contain the #print axioms output. Let me extract the cones from compile_Audit.log and verify all 74 declarations have only {propext, Classical.choice, Quot.sound}, {}, or {propext}.
+dsh: reasoning:
+Only 2 cone lines? That's odd. The previous audits found 74 cones. Maybe the #print axioms output in this Lean version has a different format, or the Audit.lean file itself prints things differently. Let me look at the Audit.lean compile log and the Audit.lean file itself.
+dsh: reasoning:
+The `#print axioms` output in this Lean version uses the format `'...' depends on axioms: [...]` rather than "cone [...]". The log has 128 lines; multi-line cones span several lines. Let me parse the full log properly: extract all declaration names and the axiom lists, then compute per-declaration cones.
+
+Let me write a small Python script to parse: lines starting with `'Name' depends on axioms: [a, b, c]` (possibly multiline until the closing `]`).
+dsh: reasoning:
+74 declarations parsed. The two "nonstandard" entries are parse artifacts: the "does not depend on any axioms" case for those two declarations. Let me look at the actual raw lines for those two declarations to confirm they are the "does not depend on any axioms" format. The regex `\[[^\]]*\]` failed because those entries say "does not depend on any axioms" — wait, my regex includes that alternative `depends on axioms:\s*(does not depend on any axioms)`. Hmm, but the actual text might be "does not depend on any axioms" WITHOUT "depends on axioms:" prefix — e.g. `'...' does not depend on any axioms`. Let me check the raw text.
+dsh: reasoning:
+Confirmed: those two are "does not depend on any axioms" → empty cone. So the final audit is:
+- 71 x [propext, Classical.choice, Quot.sound]
+- 1 x [propext] (generalMonotonicityMissingDependencies_ne_nil)
+- 2 x [] (generalMonotonicityMissingDependencies, generalMonotonicityMissingDependencies_length)
+- 0 nonstandard
+
+That matches the checkpoint's expectations exactly (74/74, 0 nonstandard).
+
+Let me fix the JSON parse to handle the "does not depend" format properly and regenerate the audit JSON.
+dsh: reasoning:
+The axiom audit passes: 74/74 declarations, 71 x [propext, Classical.choice, Quot.sound], 2 x [], 1 x [propext], 0 nonstandard.
+
+Now let me also verify:
+1. `grep -rn "sorry\|axiom\|unsafe"` directly in the files (the scan already did this comment-aware: 0 hard).
+2. Also verify no `by_contra`? No — that's fine, classical reasoning is allowed (Classical.choice in cones).
+3. The All.lean umbrella imports all modules; check that the whole D11 folder is included in the package build (lake build exit 0 already covers it).
+
+Let me also double-check the Probe compile and the "no warning/error lines" claim. The gate output said "no warning/error lines" after grepping for "warning\|error" case-insensitively — count was 0 for all files.
+
+Now update checkpoint.json with a fresh session17 re-verification entry, append a re-verification section to the result card (or update the JSON results file), and write the final line. Also save a timestamped checkpoint.
+
+Actually, the instructions say "Save a compile-checked checkpoint at least every 30 minutes and keep checkpoint.json/results current for high-frequency relay." I've done the full gate suite fresh. Let me now update:
+
+1. `/data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D11-reduced-volume-euclidean/checkpoint.json` (root) — add fresh_reverification_session17 entry with the new timestamps and evidence paths.
+2. Append a section 22 to `longrun/results/D11-reduced-volume-euclidean.md`.
+3. Update `longrun/results/D11-reduced-volume-euclidean.json` with a new reverifications entry.
+
+Let me get the current time (UTC). The system date seems to be Sep 11. Let me check `date -u`.
+
+Also, I should double check that there's truly no longrun/checkpoint.json — the task said "Continue from existing files and checkpoint.json in this worktree". The root checkpoint.json exists and is the relevant one (previous sessions used it). I'll keep updating the root checkpoint.json, and also mirror a copy at longrun/checkpoint.json? Careful: the task's relay probably watches a specific path. The checkpoint.json at root is what previous sessions wrote (final_line: TASK_DONE, card_path: ...). Actually the task statement says "longrun/results/D11-reduced-volume-euclidean.md can complete this task" and "keep checkpoint.json/results current". The root checkpoint.json is present and updated by prior sessions; there is no longrun/checkpoint.json. To be safe, I'll update the root checkpoint.json AND write a copy to longrun/checkpoint.json (harmless, and might be what a relay expects... but modifying longrun/checkpoint.json would create a new file — that's allowed since it's not under release/). Actually the instruction says "Add files only under release/Poincare/D11/ReducedVolume/" — that's about Lean files. Infrastructure files like checkpoint.json/results are explicitly required to be kept current, and prior sessions wrote to longrun/. Writing longrun/checkpoint.json is fine.
+
+Let me get the UTC time and update everything.
+dsh: reasoning:
+All hashes match the card (All 0e8ef1d5, Audit 51c19cfa, Basic 388b62ae, Probe 81ebdefe, Statements c823d0e7, StraightRays 16a1fa77, Volume a6d2bf62). 
+
+Now update the root checkpoint.json with a session17 entry. I'll use Python to load the JSON, add a fresh_reverification_session17 entry, update "reverification_session"/"last_verified_at", and write it back. Also write a mirror at longrun/checkpoint.json.
+dsh: reasoning:
+Now append a re-verification section to the result card .md (before the "Last line" so the card keeps its structure) and update the .json results file with a new reverifications entry.
+
+The current card ends with:
+```
+**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`
+```
+
+I'll insert a new section 22 before that last line.
+dsh: reasoning:
+Everything is in place. Let me do a final sanity sweep:
+
+1. Confirm no `sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted`/`admit` in authored files (raw grep as a backstop, though the comment-aware scan already passed).
+2. Confirm checkpoint.json valid JSON.
+3. Confirm the D11 folder contains only the 7 authored files.
+4. Confirm no files added outside release/Poincare/D11/ReducedVolume (except longrun/ infra which is required).
+
+Then final answer with TASK_DONE.
+dsh: reasoning:
+The raw grep hits are only inside doc-comments (the comment-aware scanner confirmed 0 hard matches in code). Everything is verified:
+
+- 7/7 per-file compile exit 0, 0 warnings/errors (fresh, session17)
+- lake build exit 0, "Build completed successfully (9155 jobs)"
+- axiom audit 74/74: 71 × [propext, Classical.choice, Quot.sound], 2 × [], 1 × [propext], 0 nonstandard
+- forbidden tokens 0 hard / 0 soft (comment-aware scan of 7 files)
+- sha256 7/7 match the card
+- content spot-check confirms the required theorems (ℓ = |x|²/4τ, straight rays, Ṽ = 1, named Props + interface)
+- checkpoint.json + longrun/checkpoint.json updated with session17 evidence
+- result card .md + .json updated, last line = TASK_DONE with card path
+
+The task is genuinely complete and re-verified. Final answer: TASK_DONE.
+All verification gates pass. The task was already complete in this worktree; I continued from the checkpoint, re-ran the full compile-checked gate suite fresh, and updated the checkpoint/results for relay.
+
+## Fresh re-verification (session17, `longrun/d11rve-session17/`)
+
+| Gate | Result |
+| --- | --- |
+| Per-file compile: `lake env lean release/Poincare/D11/ReducedVolume/<F>.lean` × 7 (worktree root) | **7/7 exit 0**, 0 warning/error lines |
+| Whole release package `lake build` | **exit 0** — "Build completed successfully (9155 jobs)" |
+| `#print axioms` audit (`Audit.lean`) | **74/74 declarations**: `[propext, Classical.choice, Quot.sound]` × 71, `[]` × 2 (`generalMonotonicityMissingDependencies`, `_length`), `[propext]` × 1 (`_ne_nil`); **0 nonstandard** |
+| Forbidden-token scan (comment/string-aware, 7 files) | **0 hard, 0 soft** (`sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted`/`admit` absent from code) |
+| sha256 of the 7 authored files | 7/7 match the card (`Basic 388b62ae`, `StraightRays 16a1fa77`, `Volume a6d2bf62`, `Statements c823d0e7`, `All 0e8ef1d5`, `Probe 81ebdefe`, `Audit 51c19cfa`) |
+
+**Content spot-check confirmed the task items are genuinely proved** (not state-only):
+- Item 1: `flatLIntegrand = √τ·(0+|γ'|²)` (R=0 flat slot), `flatLlength_eq_LlengthAlong`, `heatKernelReducedDistance_eq : ℓ = |x|²/(4τ)` from the D10 heat-kernel asymptotics.
+- Item 2: `LMinimizer_eq_straightRay` (every L-minimiser from the origin = straight ray on `[0,τ]` via completing-the-square + FTC), `minimizer_iff_eq_straightRay`, `reducedVolumeIntegrand_eq_gaussianKernel` (incl. the literal `τ^{-n/2} exp(-ℓ)` form), `reducedVolume_eq_one : Ṽ(τ) = 1` for all `τ > 0`.
+- Item 3: `ManifoldReducedVolumeInterface` (fields `flow`/`dimension`/`reducedDistance`/`reducedVolume` with per-field reference theorems), `ReducedVolumeMonotonicityTheorem` (named `def … : Prop`), proved unconditionally for the Euclidean instantiation (`euclidean_manifoldReducedVolumeMonotonicity`, `euclideanReducedVolumeCertificate`, `euclidean_jacobianComparison`, `EuclideanReducedVolumeAnchor`).
+
+**Checkpoint/results updated:** `checkpoint.json` + `longrun/checkpoint.json` (new `fresh_reverification_session17_2026_09_11` entry), result card `longrun/results/D11-reduced-volume-euclidean.md` (new section 22) and `.json` (new reverification entry, `last_verified_at` bumped). No authored source file changed; only infra/evidence files were touched.
+
+TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`

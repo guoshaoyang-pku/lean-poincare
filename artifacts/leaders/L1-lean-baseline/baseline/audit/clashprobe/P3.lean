@@ -1,0 +1,3 @@
+import Poincare.D12.ConnectionCurvature.ChartLeviCivitaSmooth
+import Poincare.D12.ConnectionCurvature.ChartModel1D
+#check Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.mk.congr_simp

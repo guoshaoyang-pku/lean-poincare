@@ -1,0 +1,1 @@
+Primary controller consumes existing L3 child while provider admission is paused. No recursive task added. Partial kernel proof does not complete full conjugate heat task. Existing D13 compiled imports are read only; new objects are emitted here.

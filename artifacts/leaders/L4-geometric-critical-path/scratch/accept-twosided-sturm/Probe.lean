@@ -1,0 +1,21 @@
+import Poincare.L4.GeodesicComparison.TwoSidedSturm
+
+/- Probe: elaborated types and axiom cones for the 8 declarations. -/
+
+#check @Poincare.L4.GeodesicComparison.jacobiSolutionOn_mono_Icc
+#check @Poincare.L4.GeodesicComparison.sturmModel_pos_of_le
+#check @Poincare.L4.GeodesicComparison.eq_curvature_of_first_jacobi_zero_of_curvature_le
+#check @Poincare.L4.GeodesicComparison.eq_curvature_of_first_jacobi_zero_before_pi_sqrt
+#check @Poincare.L4.GeodesicComparison.first_jacobi_zero_le_of_curvature_deficit
+#check @Poincare.L4.GeodesicComparison.const_curvature_deficit_no_first_zero
+#check @Poincare.L4.GeodesicComparison.sturmModel_first_zero_witness
+#check @Poincare.L4.GeodesicComparison.sin_no_first_zero_before_pi_div_sqrt_two
+
+#print axioms Poincare.L4.GeodesicComparison.jacobiSolutionOn_mono_Icc
+#print axioms Poincare.L4.GeodesicComparison.sturmModel_pos_of_le
+#print axioms Poincare.L4.GeodesicComparison.eq_curvature_of_first_jacobi_zero_of_curvature_le
+#print axioms Poincare.L4.GeodesicComparison.eq_curvature_of_first_jacobi_zero_before_pi_sqrt
+#print axioms Poincare.L4.GeodesicComparison.first_jacobi_zero_le_of_curvature_deficit
+#print axioms Poincare.L4.GeodesicComparison.const_curvature_deficit_no_first_zero
+#print axioms Poincare.L4.GeodesicComparison.sturmModel_first_zero_witness
+#print axioms Poincare.L4.GeodesicComparison.sin_no_first_zero_before_pi_div_sqrt_two

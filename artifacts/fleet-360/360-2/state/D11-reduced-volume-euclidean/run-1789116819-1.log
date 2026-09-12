@@ -1,0 +1,167 @@
+dsh: reasoning:
+Let me start by exploring the worktree to understand the current state, including checkpoint.json and existing files.
+dsh: reasoning:
+The checkpoint says the task is already COMPLETE with TASK_DONE. The task is to continue from existing files and checkpoint.json. The phase is COMPLETE. But I should verify the current state myself — the instructions say "Only your own longrun/results/D11-reduced-volume-euclidean.md can complete this task." Let me do a fresh verification round (session18): compile all 7 files, run axiom audit, forbidden token scan, lake build, verify result cards exist, and then write/refresh the results card and checkpoint.
+
+Let me look at the current state:
+1. Check the result card exists.
+2. Run the compile gate fresh.
+3. Run axiom audit.
+4. Forbidden tokens.
+5. Update checkpoint.json with a new fresh_reverification entry.
+6. Write the results card with the last line TASK_DONE.
+
+Let me first check the results files and the directory structure.
+dsh: reasoning:
+The task appears complete from prior sessions. My job in this invocation: continue from existing files/checkpoint, do a fresh verification round (the invocation is limited to 4 hours), and keep checkpoint.json/results current. The instructions say only my own `longrun/results/D11-reduced-volume-euclidean.md` can complete this task, and the last line should be TASK_DONE or TASK_BLOCKED with the card path.
+
+So the sensible plan:
+1. Fresh compile gate: `lake env lean` each of the 7 files from worktree root (exit 0).
+2. Fresh axiom audit via Audit.lean (or the tools used before — let me check how the previous audits were run).
+3. Forbidden token scan with input/d5-tools/scan_forbidden.py.
+4. lake build (cached should be fast).
+5. Verify hashes match the card.
+6. Write a new verification section to the results card (keeping the last line TASK_DONE — card: ...), update the JSON and checkpoint.json with session18.
+
+Let me check the tools and how previous sessions ran audits. Let me look at longrun/d11rve-session17 to replicate.
+dsh: reasoning:
+Everything is in place. Now run a fresh verification session (session18):
+
+1. Compile each of the 7 files with `lake env lean` from worktree root, capture exit codes.
+2. Run the axiom audit (compile Audit.lean and parse the cones).
+3. Forbidden token scan.
+4. lake build.
+5. sha256 check against card.
+6. Update checkpoint.json + longrun/checkpoint.json, update result card .md and .json with session18 entry.
+
+Let me set up a todo list and start. First, the compile gate. I'll create longrun/d11rve-session18/ directory and run compiles. These are independent — run them in one bash call sequentially (each file is small; compiling Basic requires the D10 dependency to be prebuilt in .lake — the previous sessions did `lake env lean` per file, so imports resolve via the built oleans). Let me check that release/.lake has the build.
+
+Actually a full `lake build` might take a while (9155 jobs cached but they said it was fast). Let me run per-file compiles in background and meanwhile do the token scan and hash checks.
+
+Let me first check that lake env lean works quickly on Basic.lean.
+dsh: reasoning:
+While the compile gate runs, let me do the forbidden-token scan and sha256 check in parallel.
+dsh: reasoning:
+Compile gate finished. Let me collect the results.
+dsh: reasoning:
+Compile gate: 7/7 exit 0. Token scan: 0 hard, 0 soft. Hashes: match the card's recorded prefixes (All 0e8ef1d5, Audit 51c19cfa, Basic 388b62ae, Probe 81ebdefe, Statements c823d0e7, StraightRays 16a1fa77, Volume a6d2bf62).
+
+Now the axiom audit: Audit.lean compiled as part of the gate; I need to parse the `#print axioms` output from compile_Audit.log and summarize cones. Let me also check for warnings/errors in the compile logs.
+dsh: reasoning:
+0 warnings, 0 error lines in all compile logs. My python one-liner had a syntax error; let me fix it.
+dsh: reasoning:
+72 blocks with cone lines. Previously the audit reported 74 declarations: 71 standard, 2 no-dep, 1 propext-only. The 2 no-dep declarations presumably print as `'X' depends on axioms: []` — but my regex `\[([^\]]*)\]` should match empty brackets too. Hmm, 72 blocks vs 74. Let me check how the previous audit counted 74: perhaps 2 declarations print "depends on axioms: []" — but maybe the pattern appears differently, or perhaps there are two `#print axioms` where the declaration isn't found? Let me check the cone lines.
+dsh: reasoning:
+The Audit.lean has 75 `#print axioms` lines. 72 print "depends on axioms: [...]" and there are 2 "does not depend on any axioms" + 1 "depends on axioms: [propext]". Wait — 72 + 2 + 1 = 75. But my regex found 72 blocks with "depends on axioms: [ ... ]" — the propext one included. So total = 74 declarations audited (72 + 2 no-dep). That matches previous audits: 71 standard + 1 propext-only + 2 no-dep = 74.
+
+Let me recount: cones counted: 71 x [Classical.choice, Quot.sound, propext], 1 x [propext] → 72 blocks. Plus 2 "does not depend on any axioms" → 74 total declarations. ✓ Matches history.
+
+Let me update the audit JSON to include the no-dep count and re-save. Then run lake build.
+dsh: reasoning:
+While lake build runs, let me do a content spot-check of the key theorems and prepare the updated results card. Let me re-read the key declarations to confirm they're still intact:
+
+- Basic.lean: flatLIntegrand, flatLlength, heatKernelReducedDistance, heatKernelReducedDistance_eq (|x|²/4t), heatKernel_asymptotics
+- StraightRays.lean: straightRay_isLMinimizer, LMinimizer_eq_straightRay, minimizer_iff_eq_straightRay
+- Volume.lean: reducedVolumeIntegrand_eq_gaussianKernel, reducedVolume_eq_one, reducedVolume_constant
+- Statements.lean: ReducedVolumeMonotonicityTheorem, ManifoldReducedVolumeInterface + per-field theorems, euclideanReducedVolumeCertificate, euclidean_jacobianComparison, EuclideanReducedVolumeAnchor
+
+Let me grep the key theorem statements.
+dsh: reasoning:
+Lake build exit 0, "Build completed successfully (9155 jobs)". The two `info:` lines in the log are pre-existing D7 probe info messages (known from previous sessions: "only error-grep hits are info: lines" — these are `info:` not errors; they were present before and mentioned in session12 notes).
+
+Wait — those two info lines say "Unknown identifier SobolevSpace" and "Unknown identifier UniformC2Estimate" in release/Poincare/D7/Limit/Probe.lean. Previous session12 noted: "all error-grep hits are pre-existing D7 info: audit-name lines, 0 real build errors". These are diagnostic `info:` messages from a Probe file that tests whether identifiers exist (intentional probes). lake build still exits 0 and says "Build completed successfully". Good — consistent with prior sessions.
+
+All key statements verified:
+- flatLIntegrand = sqrt τ * (0 + ‖γ' τ‖²) ✓ (R=0 flat case)
+- flatLlength = ∫ √τ(0+|γ'|²) ✓
+- heatKernelReducedDistance = -log((4πτ)^{n/2} * gaussianKernel) ✓ (from D10 heat kernel)
+- heatKernelReducedDistance_eq: = ‖x‖²/(4τ) ✓
+- straightRay_isLMinimizer ✓
+- LMinimizer_eq_straightRay, minimizer_iff_eq_straightRay ✓
+- reducedVolumeIntegrand_eq_gaussianKernel ✓
+- reducedVolume_eq_one ✓
+- reducedVolume_constant ✓
+- ManifoldReducedVolumeInterface structure with flow, dimension, reducedDistance, reducedVolume ✓
+- ReducedVolumeMonotonicityTheorem def : Prop ✓ (state-only, honest)
+
+Let me verify the interface instantiation theorems (euclideanManifoldReducedVolumeInterface per-field reference theorems) and check the "consumed by D7" references. Also verify the D7 side declarations referenced (Poincare.D7.Reduced.ReducedVolumeMonotonicity etc.). Let me grep Statements.lean for the instantiation theorems and their statements.
+dsh: reasoning:
+Everything is verified and matches the card claims:
+- ManifoldReducedVolumeInterface structure with fields flow/dimension/reducedDistance/reducedVolume, plus per-field reference theorems (euclideanManifoldReducedVolumeInterface_flow/dimension/reducedDistance/reducedVolume)
+- ReducedVolumeMonotonicityTheorem (named def : Prop) with state-only general statement and honest missing-dependencies ledger
+- euclidean_manifoldReducedVolumeMonotonicity proved unconditionally
+- euclideanReducedVolumeCertificate instantiating the D7 ReducedVolumeCertificate
+- euclidean_jacobianComparison, EuclideanReducedVolumeAnchor
+
+Let me quickly verify the D7-side declarations these reference (Poincare.D7.Reduced.MetricFlowInterface, ReducedVolumeCertificate, ReducedVolumeMonotonicity, LMinimizerExistence) exist and that the D7-reduced-length-volume interface is cross-checked. Then finalize.
+
+Also check the euclidean_jacobianComparison statement and the Anchor definition briefly. Then update the card and checkpoint.
+dsh: reasoning:
+Everything checks out:
+- All D7 cross-reference declarations exist (ReducedVolumeCertificate, LMinimizerExistence, ReducedVolumeMonotonicity, MetricFlowInterface in Poincare.D7.Reduced).
+- EuclideanReducedVolumeAnchor is a named Prop with 4 conjuncts and proved unconditionally.
+
+All gates passed for session 18:
+1. ✅ Compile gate: 7/7 exit 0, 0 warnings, 0 error lines
+2. ✅ Axiom audit: 74/74 declarations; 71 x [Classical.choice, Quot.sound, propext], 1 x [propext], 2 x no-dependency; 0 nonstandard
+3. ✅ Forbidden tokens: 0 hard, 0 soft
+4. ✅ lake build exit 0, "Build completed successfully (9155 jobs)"
+5. ✅ sha256: all 7 match card prefixes (All 0e8ef1d5, Audit 51c19cfa, Basic 388b62ae, Probe 81ebdefe, Statements c823d0e7, StraightRays 16a1fa77, Volume a6d2bf62)
+6. ✅ Content spot-check: all key declarations present and proved
+
+Now update:
+1. The result card .md — append a session18 verification section, keep last line "TASK_DONE — card: longrun/results/D11-reduced-volume-euclidean.md"
+2. The result card .json — add session18 verification entry
+3. checkpoint.json (root) + longrun/checkpoint.json — add fresh_reverification_session18 entry, keep phase COMPLETE
+
+Let me look at the current .md card structure to append properly.
+dsh: reasoning:
+I see the .md card structure. Section 22 is session17. I'll append a section 23 for this session (session18) and keep the last line. Let me read the tail of the .md to get the exact format, then edit.
+dsh: reasoning:
+Now I'll append a new section 23 for this session and keep the final "Last line". Let me edit the file.
+dsh: reasoning:
+Now update the JSON card. Let me check its structure at the end to add a session18 verification entry.
+dsh: reasoning:
+All updated. Let me do a final validation:
+1. Verify the .md card's last line is exactly the TASK_DONE line.
+2. Verify JSONs parse.
+3. Double-check the gate_exit_codes.txt and that no files were accidentally modified (git status or hash recheck).
+4. Confirm the compile logs contain no warnings (already done).
+
+Let me run a final sanity check.
+dsh: reasoning:
+Everything is green. Mark todos complete and give the final report.
+
+Summary of this session (session18):
+1. ✅ Fresh compile gate: 7/7 exit 0, 0 warnings, 0 error lines
+2. ✅ Axiom audit: 74/74 declarations; 71 x [propext, Classical.choice, Quot.sound], 1 x [propext], 2 x no-dependency; 0 nonstandard
+3. ✅ Forbidden tokens: 0 hard, 0 soft
+4. ✅ lake build: exit 0, "Build completed successfully (9155 jobs)"
+5. ✅ sha256: 7/7 match card
+6. ✅ Content spot-check: all key theorems present and proved; D7 cross-references exist
+7. ✅ Cards and checkpoints updated with session18
+
+Final line: TASK_DONE — card: longrun/results/D11-reduced-volume-euclidean.md
+Session 18 verification complete — all gates green, task confirmed complete with no changes needed.
+
+## Fresh verification results (session 18, artifacts in `longrun/d11rve-session18/`)
+
+| Gate | Result |
+|---|---|
+| Per-file compile (`lake env lean`, 7 files) | **7/7 exit 0**, 0 warnings, 0 error lines |
+| `lake build` (whole release) | **exit 0**, "Build completed successfully (9155 jobs)" |
+| Axiom audit (`Audit.lean`, 74 declarations) | **0 nonstandard**: 71 × `[propext, Classical.choice, Quot.sound]`, 1 × `[propext]`, 2 × no-dependency |
+| Forbidden tokens (`scan_forbidden.py`) | **0 hard, 0 soft** over 7 files |
+| Source integrity (sha256) | 7/7 match card hashes |
+| Content spot-check | All key theorems present and proved (below) |
+
+**The mathematics (re-confirmed verbatim in the sources):**
+- `flatLIntegrand = √τ·(0 + |γ'|²)` and `flatLlength = ∫ √τ(0+|γ'|²) dτ` — the flat L-length with R=0 (`Basic.lean`), with `flatLlength_eq_LlengthAlong` agreeing with the D7 interface.
+- `heatKernelReducedDistance = -log((4πτ)^{n/2}·gaussianKernel)` built on the **D10 heat kernel**, and `heatKernelReducedDistance_eq : ℓ = |x|²/(4τ)` for τ>0 — the reduced distance from the heat-kernel asymptotics.
+- `straightRay_isLMinimizer`, `LMinimizer_eq_straightRay`, `minimizer_iff_eq_straightRay` — L-geodesics from the origin are exactly the straight rays, via completing-the-square deficit (`StraightRays.lean`).
+- `reducedVolumeIntegrand_eq_gaussianKernel`, `reducedVolume_eq_one`, `reducedVolume_constant` — the integrand τ^{-n/2}e^{-ℓ} coincides with the Gaussian and the reduced volume is constant 1, full computation with the D10 Gaussian toolbox (`Volume.lean`).
+- Named Props `ReducedVolumeMonotonicityTheorem` (def : Prop, state-only in general, honestly ledgered via `generalMonotonicityMissingDependencies`) and `ManifoldReducedVolumeInterface` with fields `flow`/`dimension`/`reducedDistance`/`reducedVolume` plus per-field Euclidean reference theorems; proved unconditionally for the Euclidean instantiation (`euclidean_manifoldReducedVolumeMonotonicity`, `euclideanReducedVolumeCertificate`, `euclidean_jacobianComparison`, `EuclideanReducedVolumeAnchor`) — consuming exactly the D7 declarations `Poincare.D7.Reduced.{MetricFlowInterface, ReducedVolumeCertificate, ReducedVolumeMonotonicity, LMinimizerExistence}`, whose existence was re-confirmed (`Statements.lean`).
+
+**Files updated this session:** `longrun/results/D11-reduced-volume-euclidean.md` (section 23 appended), `longrun/results/D11-reduced-volume-euclidean.json`, `checkpoint.json`, `longrun/checkpoint.json`. No authored Lean file changed.
+
+TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`

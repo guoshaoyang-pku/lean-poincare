@@ -1,0 +1,212 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree. I need to check the existing files, checkpoint.json, and the results directory.
+dsh: reasoning:
+The checkpoint says the task is already COMPLETE with all 7 files compiled, lake build exit 0, axiom audit clean, and the result card written. But I should verify this independently since the task instruction says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work."
+
+Let me verify:
+1. The files exist under release/Poincare/D11/ReducedVolume/
+2. The result card exists at longrun/results/D11-reduced-volume-euclidean.md
+3. Fresh compile check (the worktree may have changed since the checkpoint)
+4. Axiom audit
+5. Forbidden tokens
+
+The checkpoint phase says "COMPLETE". My job is to re-verify the current state (since the invocation is fresh) and confirm everything still holds, then report. Since the checkpoint claims completion with repeated reverifications, I should do one fresh verification pass and then conclude TASK_DONE with the card path.
+
+Let me check the files and the result card first.
+dsh: reasoning:
+The files exist, the token scan only matches comments mentioning the forbidden tokens (which is fine — the scan tool should be used properly to distinguish comments). Let me do a fresh verification pass:
+
+1. Compile all 7 files with `lake env lean` from worktree root
+2. Run lake build
+3. Run the axiom audit
+4. Check hashes vs card
+5. Run the forbidden-token scanner from input/d5-tools
+
+Let me look at the result card first to understand what's claimed, and check the tools available.
+dsh: reasoning:
+All 7 files compile with exit 0 in a fresh session. Now let me:
+1. Run the axiom audit (Audit.lean with `#print axioms` output)
+2. Run lake build
+3. Run the forbidden-token scanner
+4. Verify source hashes match the card
+
+Let me check the axiom audit first. The Audit.lean file contains `#print axioms` commands. When compiled with `lake env lean`, the output goes to stdout — let me capture it and parse.
+dsh: reasoning:
+The audit exit is 0 and found 74 `#print axioms` outputs. The grep for cones found 74 quotes but my regex didn't match. Let me look at the actual audit output format to parse it properly.
+dsh: reasoning:
+The audit output is there. Let me parse the cones systematically — check that all cones are within the allowed set {propext, Classical.choice, Quot.sound}. The format is `'name' depends on axioms: [a, b, c]` possibly multi-line. Let me write a quick parser.
+dsh: reasoning:
+Interesting — my parser found 72 blocks but the card claims 74. The discrepancy might be because two `#print axioms` outputs are multi-line where the closing bracket is on a separate line, or because two declarations have no axioms at all (the card said: 71 x [propext, Classical.choice, Quot.sound], 2 x [], 1 x [propext] = 74). My regex requires `\[(.*?)\]` — if a declaration has zero axioms, the output is `depends on axioms: []`, which my regex should match with empty body... Let me check for the "depends on axioms:" lines that my regex missed. Actually with 72 found and card saying 74 total (71+2+1), I'm missing 2 declarations — likely the 2 with empty cones. Wait, my regex should match `[]`. Hmm, but the non-greedy `.*?` with re.S... `'(.*?)' depends on axioms: \[(.*?)\]` — the `(.*?)` for the name is non-greedy, that's fine. For empty brackets `[]`, `(.*?)` matches empty string — should work.
+
+Let me look more carefully at what declarations exist vs which were parsed. The lake build log shows 14 "error" matches — but the grep is case-insensitive and matches "error" possibly in words like "no build errors" or filenames. Let me check what those 14 lines are.
+
+Also the lake build printed an info line from D7 — that's normal (audit info messages). Let me check the error lines.
+dsh: reasoning:
+Interesting. The raw audit output from `lake env lean Audit.lean` has 72 lines with 'depends on axioms'. But the Audit.lean file contains 74 `#print axioms` commands. That means 2 of the `#print axioms` commands produced no output line — likely declarations whose names aren't in scope when Audit.lean is compiled standalone, OR two declarations that have empty axiom cones print as "depends on axioms: []" — but empty cones count is 0.
+
+Wait — the card says cones: 71 x [propext, Classical.choice, Quot.sound], 2 x [], 1 x [propext]. That's 74 total. But my fresh audit only found 72. Let me check the Audit.lean file and count its `#print axioms` lines: the file is 96 lines with `#print axioms` at lines 15-94 (that's 74 commands by my earlier count — let me recount).
+
+Actually earlier I saw `#print axioms` lines from 15 to 94. Let me count them precisely and diff against the audit output names. The 2 missing could be declarations whose printing produced a different format, e.g. "depends on axioms: []" should still contain "depends on axioms". Hmm.
+
+Let me check: maybe two declarations in Audit.lean are not in scope (e.g., printed via fully qualified names that don't exist → error?). But exit was 0. Or the audit output was truncated? Let me count `#print axioms` in Audit.lean and compare names with the parsed output.
+dsh: reasoning:
+My regex for finding names in the log is broken because the names in the log include the full namespace `'Poincare.D11.ReducedVolume.euclideanFlow'` while the Audit.lean file prints short names `#print axioms euclideanFlow` but the output shows fully qualified names. So I need to strip the `Poincare.D11.ReducedVolume.` prefix. The first check (72 found vs 74 print commands) is explained by: 2 declarations that have empty cone `[]` maybe printed differently... wait no, empty cones would still show "depends on axioms: []".
+
+Actually the log has 72 lines containing "depends on axioms". 74 print commands. So 2 commands produced no "depends on axioms" line. Which 2? Perhaps they print something else, e.g. `ReducedVolumeMonotonicityTheorem` (a Prop — its axioms would still print) or... Maybe two of them failed silently? No — errors would be reported.
+
+Let me match properly: strip prefix and check which short names have matching lines.
+dsh: reasoning:
+Two declarations are missing from the output: `generalMonotonicityMissingDependencies` and `generalMonotonicityMissingDependencies_length`. These are probably constants that are not in scope or... Actually `generalMonotonicityMissingDependencies_ne_nil` IS found. So `generalMonotonicityMissingDependencies` itself and `_length` are missing. Why? Perhaps they're structures with fields — `#print axioms` on a structure type prints differently? No...
+
+Wait, maybe these are projections/fields and `#print axioms` printed them with a different message like "does not depend on any axioms" — no, that still says "depends on axioms: []".
+
+Hmm, or maybe the print command output for those two is an *error* message? Let me look at the raw log around those. Actually — maybe the log was truncated? Let me grep the raw log for "generalMonotonicity".
+dsh: reasoning:
+The two "missing" declarations are pure definitions with empty axiom cones ("does not depend on any axioms"). So the fresh audit gives:
+- 74 declarations audited (74 print commands, all printed)
+- 71 x [propext, Classical.choice, Quot.sound]
+- 2 x [] (does not depend on any axioms)
+- 1 x [propext]
+- 0 nonstandard
+
+This matches the card exactly: "74/74 principal declarations: cone {propext, Classical.choice, Quot.sound} (71), {} (2), {propext} (1); 0 nonstandard".
+
+Now let me:
+1. Verify source hashes match the card
+2. Check the .md/.json result files are current
+3. Verify the card's claims about content (spot-check a few key theorems)
+4. Update checkpoint.json with this session's re-verification
+5. Ensure the card ends with TASK_DONE line
+
+Let me also verify that files are only added under release/Poincare/D11/ReducedVolume/ (git status if it's a git repo, or just verify no other new files). Let me check hashes vs card.
+dsh: reasoning:
+Everything checks out. Now let me spot-check the key content claims in the source files to be sure the card isn't over-claiming, and then do a final verification of key theorem statements. Let me read the key files briefly to confirm the mathematics is actually there (reduced distance |x|²/4τ, reduced volume = 1, L-geodesics = straight rays, named monotonicity Prop, interface fields).
+dsh: reasoning:
+The content is all there and substantive. Let me look at a couple of the most critical theorem statements to confirm their exact content — particularly `heatKernelReducedDistance_eq` (ℓ = |x|²/4τ), `reducedVolume_eq_one`, `LMinimizer_eq_straightRay`, `ReducedVolumeMonotonicityTheorem`, and the interface. Then I'll update checkpoint.json and finalize.
+dsh: reasoning:
+The mathematical content is exactly as claimed in the card:
+
+1. ✅ `flatLIntegrand` = `√τ * (0 + |γ'|²)` — the L-length integrand with R=0
+2. ✅ `flatLlength` = `∫ τ₁..τ₂` of that
+3. ✅ `heatKernelReducedDistance` = `-log((4πτ)^(n/2) K)` — reduced distance from heat kernel asymptotics
+4. ✅ `heatKernelReducedDistance_eq`: ℓ = |x|²/(4τ)
+5. ✅ `LMinimizer_eq_straightRay`: any L-minimizer curve equals the straight ray on [0,τ]
+6. ✅ `ReducedVolumeMonotonicityTheorem` is a named `def ... : Prop` (not an axiom)
+7. ✅ `ManifoldReducedVolumeInterface` structure with flow/dimension/reducedDistance/reducedVolume fields, and per-field reference theorems
+8. ✅ `euclideanManifoldReducedVolumeInterface` instantiation
+9. ✅ `euclidean_manifoldReducedVolumeMonotonicity` proved for Euclidean
+10. ✅ `reducedVolume_eq_one`, `reducedVolume_constant`
+11. ✅ `reducedVolumeIntegrand_eq_gaussianKernel`
+
+All verification gates from this fresh session:
+- 7/7 files compile exit 0, 0 warnings
+- lake build exit 0 (9155 jobs)
+- axiom audit: 74/74, 71×[propext, Classical.choice, Quot.sound], 2×[], 1×[propext], 0 nonstandard
+- forbidden tokens: 0 hard, 0 soft
+- hashes: 7/7 match card
+
+The task is genuinely complete. The card exists with the TASK_DONE last line. Now I should update checkpoint.json with this session's fresh verification, and make sure the results card is current. Let me check the card's "last line" requirement: the last line must be "TASK_DONE or TASK_BLOCKED with the card path". The card's last line is "**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`". Hmm, the requirement says "Last line: TASK_DONE or TASK_BLOCKED with the card path." The previous sessions accepted this format. Let me check the actual last line of the md file.
+
+Actually from the earlier output: the tail showed:
+```
+**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`
+```
+That's the last line. It contains TASK_DONE and the card path. Good.
+
+Now update checkpoint.json with the new session's verification data. The checkpoint.json already has extensive history. I'll add a new session entry (session9) and update updated_at. Actually, I should keep the checkpoint concise and current — update `updated_at`, and add the fresh reverification record.
+
+Let me write the updated checkpoint.json carefully — read it fully first, then update. Actually I saw its content already via cat. Let me just do a targeted python edit: load JSON, update updated_at, add session9 entry, save.
+
+Also I should double check there's nothing in the task about the local `longrun/results` vs the parent `longrun/results`. The task says 'write `longrun/results/D11-reduced-volume-euclidean.md` + `.json`'. The files exist at the worktree's longrun/results/ (since `ls -la longrun/results/ | grep -i d11` showed them). Wait — in the first command, I did `ls -la /data/.../longrun/results/` which listed many D7/D8/D9/D10 files. Hmm, that was the parent directory `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/`? Let me re-check: the first command was `ls -la /data/home/guoshaoyang/workdir/lean_poincare/longrun/results/ 2>/dev/null | tail -30` — that listed D10, D11, D6, D7, D8, D9 files. So the worktree's longrun is a symlink or bind to the shared longrun dir? Let me check.
+
+Actually the worktree path is `/data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D11-reduced-volume-euclidean`, and it contains a `longrun` directory. The results directory `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/` is the top-level longrun results — and D11-reduced-volume-euclidean.md/.json are there. And `longrun/results/` within the worktree — I did `ls -la longrun/results/` in the worktree? No — the second command in my first call was `ls /data/home/.../worktrees/D11-reduced-volume-euclidean/longrun/results/ 2>/dev/null || echo "no local results dir"` — it didn't print "no local results dir", so the worktree's longrun/results exists. But the first command listed the top-level `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/`. Both exist?
+
+Hmm wait, the output of the first command shows D10-*, D11-*, D6-*, D7-* files — that's the top-level longrun results. And the second `ls` of the worktree's local results printed nothing visible before the stderr line... Actually looking at the output again: the results listing ends with VERIFIER files and then `[stderr] landlock-run...`. The second command's output would have appeared after. There was no "no local results dir" printed, so the worktree's longrun/results exists. But its contents weren't shown because... wait, I only did `ls` (not `ls -la`) on it, and if it's a symlink to the parent results dir, `ls` would show the target's contents — which is what the first listing already showed. Hmm, actually the two outputs were combined into one result block. Let me check whether worktree longrun is a symlink.
+
+The checkpoint's card_path is "longrun/results/D11-reduced-volume-euclidean.md" — relative to the worktree. The grep in my second command confirmed `longrun/results/D11-reduced-volume-euclidean.md` exists in the worktree with the TASK_DONE last line. Good — that's what matters.
+
+Let me verify the symlink structure quickly and also confirm the card's last line exactly. Then update checkpoint.json and finish. Also record the session9 logs are in place.
+dsh: reasoning:
+Everything is in place:
+- `longrun/results/` is a real directory in the worktree (not a symlink) — wait, `longrun/results` is listed as a directory dated Sep 11 02:36. And the top-level `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/` — maybe that's where the relay picks up. Actually the first command listed `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/` and it contained the D11 files. Hmm, but the worktree has its own `longrun/results/`. Is the worktree's longrun/results the same as the top-level one? The worktree listing shows `results` as a directory inside `longrun/`. Let me check if `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/` and `longrun/results/` in the worktree are the same (bind mount or symlink). The card path in the task is `longrun/results/D11-reduced-volume-euclidean.md` relative to the worktree, which exists.
+
+Wait, actually — looking again at the first command output: I ran `ls -la /data/home/guoshaoyang/workdir/lean_poincare/longrun/results/` and it listed D10-*, D11-*, D6-D9 files. And the worktree's `longrun/` contains `results` as a directory. Are they the same filesystem location? The D11 md/json there... Possibly the top-level `longrun` IS a symlink into the worktree, or the results dirs are synced. Either way, the task-relevant path `longrun/results/D11-reduced-volume-euclidean.md` in the worktree exists and has the TASK_DONE last line.
+
+Hmm, but wait: is `/data/home/guoshaoyang/workdir/lean_poincare/longrun` the same as the worktree's `longrun`? The worktree is at `/data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D11-reduced-volume-euclidean`, and its `longrun/` subdir is a separate directory (drwxrwxr-x, not a symlink shown in ls -la — `longrun` entry shows no `->`). The first command's listing of the top-level results dir showed D11-reduced-volume-euclidean.md/.json — dated Sep 11 02:31 and 02:36 which matches the worktree's card. That's probably a copy/sync the relay does, or the same file via hardlink. Not critical.
+
+Now update checkpoint.json to record session9 verification, keeping the structure. Let me read the full checkpoint.json to preserve structure and then update it.
+dsh: reasoning:
+I'll add a session9 fresh reverification entry. The current time — let me get the actual current time for the timestamp. The checkpoint's previous entries use UTC timestamps like 2026-09-10T18:36Z. Let me get the current UTC time.
+dsh: reasoning:
+Now update checkpoint.json: add the session9 entry and update the timestamp. I'll use python to load and modify the JSON safely.
+dsh: reasoning:
+Everything is done. Let me do one final sanity pass on the whole gate: verify the results files (md + json) exist at the card path, the md's last line is the TASK_DONE line, and summarize.
+
+One more consideration: the task says "Only your own longrun/results/D11-reduced-volume-euclidean.md can complete this task." — the card exists and was written by this task's sessions. It's current (hashes match, verdict TASK_DONE). The task is complete.
+
+Should I append a session9 note to the card? The card already has a verification-trail section from session8. The md's last line must remain the TASK_DONE line. The checkpoint records session9. I could append a session-9 reverification row to the card's verification table, but that risks breaking the "last line" requirement if done carelessly. The card already documents prior sessions. Since the task says "keep checkpoint.json/results current for high-frequency relay", updating the results card with the session9 verification would be appropriate. Let me check the tail section of the card to see its structure and whether there's a per-session log section to extend.
+dsh: reasoning:
+The card has a per-session verification history section. I'll append a session9 record. Let me read lines 277-289 to see the exact end of the card so I can insert a new section before the final "No change..." and "**Last line:**" lines.
+dsh: reasoning:
+Now update the .json result file too with the session9 verification (keep it current). Let me look at the JSON structure around the verification trail.
+dsh: reasoning:
+All done. Final sanity checks:
+1. Card last line still the TASK_DONE line ✓ (verified after edit)
+2. checkpoint.json valid ✓
+3. Result JSON valid ✓
+
+One more check — the top-level `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/` contains D11 files; is that a relay-synced copy that I also need to update? The task says the card path is `longrun/results/...` relative to the worktree, and only that card completes the task. The worktree's card is updated. The top-level copy at `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/D11-reduced-volume-euclidean.md` — let me check whether it's the same file (hardlink/symlink) or a separate copy. If separate, I should update it too for consistency since the relay reads it. Let me check inodes.
+dsh: reasoning:
+Interesting — the top-level results dir listing earlier must have actually been the worktree's own longrun/results (since `ls -la longrun/results/` relative to... wait, my first command was `ls -la /data/home/guoshaoyang/workdir/lean_poincare/longrun/results/ 2>/dev/null | tail -30` — that succeeded and listed D10/D11 files. But now stat says the D11 md does not exist there. Hmm, maybe the top-level `longrun/results/` is a symlink to the worktree's? Or maybe the earlier listing came from a different path resolution.
+
+Actually wait — the first command's results listing could have been from `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/` — and now the files aren't there? That's odd. Maybe there's a symlink: `/data/home/guoshaoyang/workdir/lean_poincare/longrun` → `worktrees/D11-reduced-volume-euclidean/longrun`? That would explain: the worktree's longrun dir is the "shared longrun" via symlink from the parent. So `/data/home/guoshaoyang/workdir/lean_poincare/longrun/results/D11-...md` == worktree path. But stat failed on the top-level path...
+
+Hmm, unless the top-level `longrun` IS the worktree's `longrun` directory itself (bind mount), and my stat failed because of the sandbox (landlock) path restriction? The earlier `ls` succeeded though. Let me re-check with ls -la on the top-level path.
+dsh: reasoning:
+The top-level `/data/home/guoshaoyang/workdir/lean_poincare/longrun/` has no `results` directory and no D11 files. So the earlier first-command listing of "longrun/results" — wait, my first command was `ls -la /data/home/guoshaoyang/workdir/lean_poincare/longrun/results/ 2>/dev/null | tail -30`. Hmm, that listed many D6–D10 files... but now `ls -la /data/home/guoshaoyang/workdir/lean_poincare/longrun/results/` fails with grep exit 1 (grep found nothing because ls errored — stderr was redirected). Actually the `2>&1 | grep -i d11` would show the "No such file" error line but grep filtered it.
+
+So where did the first listing come from? Oh wait — I see. In my first message, the two tool calls ran in parallel. The second call was `ls /data/home/.../worktrees/D11-reduced-volume-euclidean/longrun/results/` — and the first was `ls -la /data/home/guoshaoyang/workdir/lean_poincare/longrun/results/`. The combined output shows the big list with D10/D11 files... Actually the outputs were returned in order: first the big results listing (which must have come from the first command), then "no local results dir" was NOT printed.
+
+Hmm wait, actually re-reading the first result block: the first part lists D10-*, D11-*, D6/D7/D8/D9 files. That was attributed to the first command. But now the top-level results dir doesn't exist. Unless... the worktree's longrun/results/ directory listing WAS the second command's output and the first command produced nothing (its stderr went to /dev/null and stdout was empty), and the harness merged outputs in order — the visible listing was actually from command 2 (`ls /data/.../worktrees/D11-.../longrun/results/`), which contained D10/D11 files.
+
+Wait, but the worktree's longrun/results/ listing earlier (via `ls -la longrun/`) showed `results` as a subdir. And `ls -la longrun/results/ | grep -i d11` in my second verification call showed the two files. So the worktree's own `longrun/results/` contains D11 md/json (dated 02:31/02:36). And that big D6-D10 listing... was it from the worktree results dir too? If the worktree's longrun/results contains copies of ALL the other cards (D6-D10), that would explain it. That's plausible: the relay copies all sibling cards into each worktree's longrun/results.
+
+Hmm, actually no: the first command `ls -la /data/home/guoshaoyang/workdir/lean_poincare/longrun/results/ 2>/dev/null | tail -30` — if that dir doesn't exist, it prints nothing (stderr suppressed). Then the second command `ls /data/home/.../worktrees/D11-.../longrun/results/` printed the full listing (D10, D11, D6... files). The harness result shows both outputs concatenated. So the worktree's longrun/results/ has all those cards.
+
+Fine — the bottom line: the card path `longrun/results/D11-reduced-volume-euclidean.md` relative to the worktree exists, is fresh, hashes match, last line is TASK_DONE with card path. That's what the task requires.
+
+Let me do a final confirmation of the last line of the updated card, verify checkpoint and card are in sync, and then report. Also double-check no changes were accidentally made outside the allowed dirs (the card/checkpoint/logs are in longrun/ which is expected for results).
+dsh: reasoning:
+Everything is in place and verified fresh in this session:
+
+1. **7 authored files** under `release/Poincare/D11/ReducedVolume/` — compile 7/7 exit 0, 0 warnings.
+2. **lake build** of the whole release: exit 0, "Build completed successfully (9155 jobs)".
+3. **Axiom audit**: 74/74 declarations; 71 × [propext, Classical.choice, Quot.sound], 2 × [] (no-dep), 1 × [propext]; 0 nonstandard.
+4. **Forbidden tokens**: 0 hard, 0 soft (comment/string-aware scan).
+5. **Content**: ℓ = |x|²/4τ from D10 heat kernel, L-geodesics = straight rays (minimizer_iff), integrand = Gaussian, reduced volume = 1 constant, named monotonicity Prop + manifold interface with per-field references.
+6. **Result card**: `longrun/results/D11-reduced-volume-euclidean.md` + `.json` updated with session-9 verification; last line TASK_DONE with card path.
+7. **checkpoint.json** updated and valid.
+
+Task is complete. The final answer should report TASK_DONE with the card path.
+All gates verified fresh in this session. The task was already complete in the pre-scaffolded worktree; I re-ran the full verification independently and kept the checkpoint/results current.
+
+## Verification summary (session 9, 2026-09-10T18:40Z)
+
+| Gate | Result |
+| --- | --- |
+| Authored files | 7 files only under `release/Poincare/D11/ReducedVolume/` (Basic, StraightRays, Volume, Statements, All, Probe, Audit) |
+| Per-file compile | **7/7 exit 0, 0 warnings** (`lake env lean` from worktree root; `longrun/d11rve-session9/compile_*.log`) |
+| Whole release `lake build` | **exit 0**, "Build completed successfully (9155 jobs)", 0 build-error lines |
+| `#print axioms` audit | **74/74 declarations**: 71 × `[propext, Classical.choice, Quot.sound]`, 2 × `[]` (pure defs), 1 × `[propext]`; **0 nonstandard** (`longrun/d11rve-session9/axiom_audit.json`) |
+| Forbidden tokens | **0 hard, 0 soft** over 7 files (comment/string-aware `scan_forbidden.py`) |
+| Source integrity | 7/7 sha256 prefixes match the result card |
+
+## Mathematical content (re-read and confirmed in source)
+
+- **Item 1** — `flatLIntegrand = √τ·(0 + |γ'|²)` with `R = 0`, `flatLlength`, agreement with the D7 `MetricFlowInterface`; `heatKernelReducedDistance = -log((4πτ)^(n/2)·K)` extracted from the D10 heat kernel, with `heatKernelReducedDistance_eq : ℓ(x,τ) = |x|²/(4τ)` for `τ > 0`.
+- **Item 2** — straight rays minimize: `LMinimizer_eq_straightRay` and `minimizer_iff_eq_straightRay` (completing-the-square deficit + a.e. velocity rigidity); `reducedVolumeIntegrand_eq_gaussianKernel`, `τ^{-n/2}` unnormalized form, `reducedVolume_eq_one` and `reducedVolume_constant` (Gaussian integral = 1 via the D10 toolbox).
+- **Item 3** — `ManifoldReducedVolumeInterface` (fields `flow`/`dimension`/`reducedDistance`/`reducedVolume`) with per-field reference theorems; `ReducedVolumeMonotonicityTheorem` as a named `def … : Prop` (never an axiom) and proved for the Euclidean instantiation (`euclidean_manifoldReducedVolumeMonotonicity`, with equality, via the constant-1 certificate); the ten general-case missing D7 inputs are recorded honestly in `generalMonotonicityMissingDependencies`.
+
+Checkpoint.json updated and valid; result card (`.md` + `.json`) appended with this session's re-verification record; card last line:
+
+TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`

@@ -1,0 +1,245 @@
+dsh: reasoning:
+Let me start by exploring the worktree to understand the current state.
+dsh: reasoning:
+No checkpoint.json yet. Let me look at the structure: LONG_PLAN.json, release/ directory, and the existing results. Let me explore in detail.
+dsh: reasoning:
+Let me explore the release/Poincare structure and the longrun/queue and DELIVERY.md to understand the task context.
+dsh: reasoning:
+This is a Lean 4 project with mathlib. The task is D12-volume-ibp: Build the measure/geometry bridge: actual Riemannian density from a positive-definite metric matrix, regularity/measurability, and one chart change-of-variables or integration-by-parts statement with compact support.
+
+Let me look at the existing D7/D10/D11 sources, particularly the D7-orientability-volume-form and D7-divergence-ibp modules mentioned in the queue, to see what exists. Wait, the release/ only has Poincare/Longrun/{CurvatureODE,Entropy,Evolution,Geometry,PDE,Surgery,Topology}, Stage1, Stage6. But the task says "Read D7/D10/D11 sources, available result cards, the pinned mathlib source and LONG_PLAN.json."
+
+Let me check whether D7/D10/D11 sources exist somewhere. Maybe in the input/ or maybe there are result cards in longrun/results/. Let me check.
+dsh: reasoning:
+Interesting. There are sibling worktrees including D10/D11 worktrees. But I should only work in my own worktree. I can read D7/D10/D11 sources from sibling worktrees (reading is fine — I shouldn't modify them). Let me check the sibling worktrees for D7 sources and D10/D11 sources. The task says "Read D7/D10/D11 sources, available result cards".
+
+Let me look at:
+- D10-bochner-euclidean (result card for D10)
+- D11-bochner-manifold, D11-spectral-torus (D11 cards)
+- D6_weekly_release (contains release/)
+- D12-plan.json for context
+
+Also, the release/ dir in my worktree is the D6 package. The D7+ sources would be in the D6_weekly_release worktree or D9/D10/D11 worktrees.
+dsh: reasoning:
+There's a wealth of context. Key files for my task (D12-volume-ibp, blockers U7, U11, I4):
+- D7-orientability-volume-form.md/json — the prior attempt at volume forms
+- D7-divergence-ibp.md/json — prior attempt at divergence IBP
+- D11-bochner-manifold — related
+- D12-plan.json
+
+Let me read the D7 result cards for orientability-volume-form and divergence-ibp, and the D12-plan.json. Also check what's in the release/ of my worktree (D6 package) and whether there is a D7+ release tree that includes the volume form / divergence-ibp sources. Let me check the release dirs of D10/D11 worktrees more and my own release dir — my release dir only has D6 stuff plus .lake.
+
+Wait — my worktree's release/ dir: `.lake`, Audit, Ledger, Poincare, Probe — the D6 package. The task says "Build from release/, not the parent" and "The snapshot may include preliminary dependencies: rebuild before relying on them." and "Add authored Lean files under release/Poincare/D12/VolumeIBP/".
+
+Let me read the D7 result cards first, plus D12-plan.json.
+dsh: reasoning:
+Now I understand the history. The D7 work did:
+- D7-orientability-volume-form: finite-dim linear algebra volume form stuff + blocked manifold props
+- D7-divergence-ibp: discrete graph divergence theorem + blocked smooth manifold divergence theorem
+
+My task D12-volume-ibp (blockers U7, U11, I4):
+"Build the measure/geometry bridge: actual Riemannian density from a positive-definite metric matrix, regularity/measurability, and one chart change-of-variables or integration-by-parts statement with compact support. Compare existing mathlib orientation/volume APIs rather than assuming their absence from an old ledger. Prove at least one nontrivial identity consumed by the entropy or Bochner chain. A supplied measure named volume and an assumed divergence theorem are not a construction. Keep global manifold/Stokes gaps explicit."
+
+So the key gaps to close:
+1. **Riemannian density from a positive-definite metric matrix**: In a chart (i.e. on ℝⁿ or an open set U ⊆ ℝⁿ), given a positive-definite symmetric matrix g(x) (metric coefficients), define the density function x ↦ √(det g(x)). Prove measurability/regularity (if g is measurable/continuous, so is the density). This is the actual "√det g" construction.
+2. **One chart change-of-variables**: e.g. measure of a set under a diffeomorphism φ: ∫ over φ(U) of f(y) dy = ∫ over U f(φ(x)) |det Dφ(x)| dx, or equivalently the Riemannian density transforms appropriately under coordinate changes: √det(g̃(y)) = √det(g(x)) / |det Dφ(x)| where g̃ = pushforward metric. Actually for the volume form: √det g(y) dy = √det g(φ(x)) |det Dφ(x)| dx. The natural "chart change of variables" statement: the measure with density √det g is chart-invariant: μ_g = ∫_A √det(g) dx is invariant under coordinate change.
+3. **One IBP statement with compact support**: In a chart, for the Riemannian measure dvol = √det g dx, ∫ ⟨∇f, ∇h⟩ ... hmm. The classical one: div(X) dvol = ∂_i (√det g X^i) dx. IBP: for X compactly supported (vanishing at boundary), ∫ div_g(X) dvol = 0, or ∫ f · Δ_g h dvol = -∫ ⟨∇f, ∇h⟩_g dvol. With compact support inside a chart domain, use the Euclidean divergence theorem (mathlib has `MeasureTheory.integral_divergence_of_hasFDerivAt_off_countable`, the Euclidean box divergence theorem!).
+
+That's the key mathlib API: `MeasureTheory.integral_divergence_of_hasFDerivAt_off_countable`. So the plan:
+
+**In a chart U ⊆ ℝⁿ (modeled as a box or ℝⁿ), given a symmetric positive-definite matrix field g (x : ℝⁿ → Matrix (Fin n) (Fin n) ℝ), define:**
+- density: ρ x = √(det (g x)) — need to prove det (g x) > 0 from positive definiteness. mathlib has `Matrix.posDef` — there are lemmas `Matrix.det_pos_of_posDef`? Let me check what mathlib has. I recall `Matrix.PosDef.det_pos`. Also `Matrix.det_pos_of_posDef`. In recent mathlib: `Matrix.PosDef.det_pos : h.det_pos`? There's `Matrix.posDef_det_pos`. I need to check.
+- measurability: g measurable → ρ measurable. sqrt of measurable, det of measurable matrix function... Need to prove det as a function of matrices is continuous (hence Borel measurable). mathlib has `Matrix.det` continuous? There is `continuous_det` or `Matrix.det` as a polynomial, `continuous_matrix_det`? Need to check. There's `Matrix.det_continuous` maybe. Let me probe.
+
+Then the Riemannian measure on the chart: `μ_g = Measure.withDensity (volume : Measure (EuclideanSpace ℝ (Fin n))) ρ`.
+
+**Chart change of variables**: If φ : EuclideanSpace → EuclideanSpace is a diffeomorphism (C¹ with derivative), and g̃(y) is the metric in y-coordinates such that g̃(φ x) = (Dφ(x))⁻ᵀ g(x) (Dφ(x))⁻¹ (pushforward), then ρ̃(φ x) |det Dφ(x)| = ρ(x). Equivalently: measure_preserving statement: μ_{g̃} on φ(U) equals map of μ_g. Actually the cleaner statement to prove: `∫_V √det g̃(y) dy = ∫_{φ⁻¹(V)} √det g(x) dx` using the Euclidean change of variables. The Euclidean change of variables for the Lebesgue/Haar measure under a diffeomorphism: mathlib has `MeasureTheory.integral_image_eq_integral_abs_det_fderiv_smul` or similar. For the linear case we have D7's Haar results. For a general diffeomorphism there's `MeasureTheory.integral_comp_det_fderiv_smul`? Let me probe. There is:
+- `MeasureTheory.integral_image_eq_integral_abs_det_fderiv_smul` (for measure-preserving... ) 
+- Actually mathlib has `integral_image_eq_integral_abs_det_fderiv_smul` in `Mathlib.MeasureTheory.Integral.Bochner`? I recall `MeasureTheory.integral_abs_det_fderiv_smul` and the change of variables for continuous linear maps, and for `C¹` diffeos: `MeasureTheory.integral_image_eq_integral_abs_det_fderiv_smul` under hypotheses (AEMeasurable, etc.)? There's the famous `MeasureTheory.integral_image_eq_integral_abs_det_fderiv_smul` which needs `Diffeomorph`? Let me just probe in Lean.
+
+Simpler robust approach that still closes a real gap: **the transformation law of the density under a linear change of coordinates**, combined with the **Euclidean box divergence theorem** for the IBP. But the task asks "one chart change-of-variables or integration-by-parts statement with compact support" — so either is acceptable ("one ... or ..."). And "Prove at least one nontrivial identity consumed by the entropy or Bochner chain."
+
+The entropy/Bochner chain uses: ∫ |∇f|² dvol = -∫ f Δ f dvol, or ∫ Δf dvol = 0, or ∫ div(X) dvol = 0. The Bochner chain: Δ|∇f|² etc. The entropy chain: ∫ f Δ f = -∫|∇f|². In a chart with metric g: Δ_g f = (1/√det g) ∂_i (√det g g^{ij} ∂_j f). IBP with compact support: ∫ f Δ_g f dvol = -∫ g^{ij} ∂_i f ∂_j f dvol = -∫ |∇f|²_g dvol.
+
+Plan: Work on the open subset of ℝⁿ (a box domain, or all of ℝⁿ with compactly supported functions). Steps:
+
+1. **Density construction**: `RiemannianDensity n g x = Real.sqrt ((g x).det)` for a matrix field g : ℝⁿ → Matrix (Fin n) (Fin n) ℝ that is pointwise symmetric positive definite. Prove:
+   - det (g x) > 0 from PosDef.
+   - The density is positive.
+   - If g is measurable (Borel), density is measurable. If g is continuous, density is continuous.
+   - Model case: g = id (Euclidean metric), density = 1.
+   - Scaling: g' = c • g gives density c^(n/2) · density (link to D7 scaling law — nice bridge!). Actually that's a nice cross-check: the density scaling law c^(n/2) matches D7's volume form scaling law.
+
+2. **Measure construction**: `riemannianMeasure g = volume.withDensity ρ`. Prove it's a measure, positive on open sets maybe, etc.
+
+3. **Change of variables (linear)**: If T : ℝⁿ →ₗ ℝⁿ with det T ≠ 0 and g̃ = (T⁻¹)ᵀ g (T⁻¹) composed appropriately, then ρ̃ ∘ T · |det T| = ρ (a.e. — actually pointwise). And the measure-level statement: ∫_V ρ̃ dy = ∫_{T⁻¹(V)} ρ dx. Use mathlib's Haar measure change of variables (`Measure.map_linearMap_addHaar_eq_smul_addHaar` as D7 did), or `MeasureTheory.Measure.addHaar_preimage_linearMap`.
+
+   Even better: **general diffeomorphism change of variables** using mathlib's `integral_image_eq_integral_abs_det_fderiv_smul`. Let me check availability. If available, this is the real "chart change of variables": for a chart transition diffeo φ, the Riemannian density transforms: ∫_V ρ̃(y) dy = ∫_{φ⁻¹ V} ρ(x) dx where ρ̃(φx) |det Dφ x| = ρ(x) — invariance of the Riemannian measure under chart transition. That would be a strong, genuinely useful bridge lemma.
+
+4. **Integration by parts with compact support** (chart-level):
+   - Define div_g(X)(x) = ρ(x)⁻¹ Σ_i ∂_i (ρ(x) X_i(x)) — but formalizing the derivative obligations is heavy. Alternative: define the "Riemannian divergence" via the identity: ρ · div_g X = ∂_i (ρ X^i) in distributional terms... 
+
+   Cleaner: use the Euclidean box divergence theorem with a vector field that vanishes on the boundary. `MeasureTheory.integral_divergence_of_hasFDerivAt_off_countable`: for a box domain, ∫ over box of div F = ∫ over boundary... Actually that theorem says: ∫_{Box} ∑ ∂_i F_i = boundary flux integral. If F is compactly supported inside the box, the boundary terms vanish and we get ∫ div F = 0.
+
+   So: define ρ = √det g, and for X : ℝⁿ → ℝⁿ (vector field) with components X_i, define the Riemannian-weighted divergence: div_ρ X = ρ⁻¹ Σ ∂_i (ρ X_i). Then ρ · div_ρ X = Σ ∂_i (ρ X_i) =: divergence of the vector field Y_i = ρ X_i. If X is compactly supported in the box interior and smooth, Y is too, and the Euclidean divergence theorem gives ∫_box Σ ∂_i (ρ X_i) = 0 (boundary terms vanish), i.e. ∫ div_ρ X · ρ dx = 0 — the Riemannian IBP "∫ div_g X dvol = 0".
+
+   But handling "compactly supported in interior" and the Euclidean box theorem's hypotheses (HasFDerivAt, ContDiff etc.) might be heavy. Simpler first step: assume X and ρ are such that ρ·X is compactly supported and each component is C¹ on ℝⁿ with the box big enough... The mathlib theorem `integral_divergence_of_hasFDerivAt_off_countable` has hypotheses like `(∀ x ∈ Box, HasFDerivAt (f ·) (f' x) x)`... Let me look at its exact statement when I probe.
+
+   Actually, maybe an even cleaner path for the IBP with compact support that avoids boundary complications entirely: **the "vanishing integral of a divergence of a compactly supported field" in the whole space**, which needs ∫_{ℝⁿ} ∂_i φ_i dx = 0 for compactly supported smooth φ. mathlib has `integral_eq_zero_of_hasDerivAt` ... hmm, or `integral_fderiv_eq_zero_of_integrable`? There might be a lemma like `MeasureTheory.integral_fderiv_eq_zero` requiring integrability of fderiv... Something like `integral_fderiv_eq_zero_of_integrable`? Hmm. There's `integral_eq_zero_of_forall_hasDerivAt`? Let me probe. If ∫ ∂_i φ = 0 for nice φ exists, then ∫ div F dλ = 0 for compactly supported C¹ F follows by summing components. That gives: ∫ (ρ⁻¹ Σ ∂_i(ρX_i)) ρ dλ = ∫ Σ ∂_i (ρ X_i) dλ = 0.
+
+   Then the Bochner/entropy identity: with u : ℝⁿ → ℝ and X = ∇^g u (i.e. X_i = Σ_j g^{ij} ∂_j u), div_g(∇u) = Δ_g u. The key IBP: ∫ v Δ_g u dvol = -∫ ⟨∇v, ∇u⟩_g dvol + boundary. With v = u and compact support: ∫ u Δ_g u dvol = -∫ |∇u|²_g dvol. This is THE entropy identity (the "F/W" energy identity). That's a big step. We can get it if we can prove:
+
+   (a) ρ · (v Δ_g u) = Σ_i ∂_i (v ρ g^{ij} ∂_j u) - ρ g^{ij} ∂_i v ∂_j u ... using the Leibniz rule pointwise (HasFDerivAt-level).
+   (b) ∫ Σ_i ∂_i (v ρ g^{ij} ∂_j u) dλ = 0 for compactly supported data.
+   (c) identify g^{ij} ∂_i u ∂_j u = |∇u|²_g and ⟨∇v, ∇u⟩_g = g^{ij} ∂_i v ∂_j u.
+
+   The matrix algebra: for a symmetric positive definite matrix A = g(x), the quadratic form x ↦ xᵀ A x and the gradient pairing vᵀ A u. The matrix inverse g⁻¹: A⁻¹ is symmetric (mathlib has `Matrix.inv_symm`? there is `Matrix.IsSymm.inv`). Need to prove: for the inverse metric matrix G = g⁻¹ (symmetric), Gᵀ = G, and the pairing ⟨∇v, ∇u⟩_g = Σ_{i,j} G_{ij} ∂_i v ∂_j u = ∇vᵀ G ∇u where ∇v is a vector. And |∇u|²_g = ∇uᵀ G ∇u = G_{ij} ∂_i u ∂_j u.
+
+   This is a lot of matrix manipulation but with `Matrix.det_pos_of_posDef`... Let me think about what mathlib gives:
+   - `Matrix.posDef`: A : Matrix n n ℝ, PosDef A means ∀ x ≠ 0, 0 < xᵀ A x. 
+   - `Matrix.posDef_iff`? There's `Matrix.posDef_det_pos`? I believe mathlib has `Matrix.PosDef.det_pos`. Let me probe.
+   - `Matrix.isPosDef_det_pos`? 
+   - Symmetric: `Matrix.IsSymm`; `IsSymm` has `inv` instance? There's `Matrix.IsSymm.inv : IsSymm A → IsSymm A⁻¹`? I think `Matrix.inv_symm`? Let me probe.
+
+   For the measurability/regularity: `Matrix.det` is continuous: `continuous_det`? or `Matrix.det_continuous`? There's `Continuous.matrix_det`? Let me probe. sqrt: `Real.continuous_sqrt`, `Continuous.sqrt` (via `ContinuousOn`... `Real.sqrt` is continuous: `continuous_sqrt`).
+
+5. **Model/non-vacuity example**: on ℝ² with metric diag(c, d) constants: ρ = √(cd); with the standard Gaussian-ish function u(x) = exp(-|x|²/2)? Proving ∇u = -x u and compact support is false... need compactly supported example: u(x) = (1 - |x|²)⁺ squared... heavy. Simpler non-vacuous check: constant metric on a box with explicitly computable integrals? Or the linear algebra identities with explicit small matrices (n=1, n=2) via norm_num/decide — e.g. g = diag 4 → ρ = 2; pairing identity Σ G_{ij} v_i u_j = ... in n=2 explicit numbers.
+
+Also the task says: "Compare existing mathlib orientation/volume APIs rather than assuming their absence from an old ledger." So I should re-probe mathlib at the pinned revision for the volume APIs: `Orientation.volumeForm`, `Measure.addHaar`, `withDensity`, `integral_image_eq_integral_abs_det_fderiv_smul` etc. The D7 probe found `Manifold.Orientation` etc. absent; I should re-verify (maybe also verify `WithDensity` stuff, `MeasureTheory.integral_divergence_of_hasFDerivAt_off_countable` presence).
+
+"Prove at least one nontrivial identity consumed by the entropy or Bochner chain." The entropy chain (Perelman W/F): the identity ∫ (τ(2Δf - |∇f|²) ...) ... the fundamental one is ∫ u Δ_g u dvol_g = -∫ |∇u|²_g dvol_g (compact support, no boundary). I'll aim for that.
+
+Alternatively the Bochner chain: Δ|∇f|² = 2|∇∇f|² + 2⟨∇Δf, ∇f⟩ + 2 Ric(∇f, ∇f) — too heavy. The divergence/IBP one is the right scope.
+
+Given 4-hour invocations, let me be pragmatic:
+
+**Deliverable A (density bridge)** — `Poincare/D12/VolumeIBP/Density.lean`:
+- `MetricMatrixField n`: field of symmetric positive-definite matrices g : EuclideanSpace ℝ (Fin n) → Matrix (Fin n) (Fin n) ℝ with pointwise IsSymm (g x) and PosDef (g x).
+- `density x = Real.sqrt ((g x).det)`.
+- `det_pos`: (g x).det > 0.
+- `density_pos`, `density_sq` (ρ² = det g).
+- `density_measurable` (if g measurable) / `density_continuous` (if g continuous).
+- Scaling: `density_smul`: density of (c • g) = c^(n/2) * density (for c>0) — cross-link with D7 `sqrt_pow_eq_rpow_half`-style proof; and equals `(Real.sqrt c)^n`... For n-dim: det(c • A) = c^n det A (mathlib `Matrix.det_smul`), so √(c^n det A) = c^(n/2) √det A.
+- Euclidean model: g = 1 → density = 1; and the measure equals Lebesgue/volume.
+- The Riemannian measure `riemannianMeasure = volume.withDensity density` on EuclideanSpace. Prove `riemannianMeasure` is σ-finite / outer regular (inherited from withDensity), and e.g. positivity on nonempty open sets given continuity+positivity... maybe just record as measurable-with-density measure with proven properties available.
+
+**Deliverable B (chart change of variables)** — `ChangeOfVariables.lean`:
+- Linear: for T : (EuclideanSpace ℝ (Fin n)) →ₗ[ℝ] EuclideanSpace ℝ (Fin n) with det T ≠ 0, and metric fields related by pushforward g̃ = (T⁻¹)ᵀ ∘ g ∘ T⁻¹ ... careful with conventions. Define the "chart transition": in y-coordinates, g̃(y) = (T⁻¹)ᵀ · g(T⁻¹ y) · T⁻¹ (so that pulling back the y-metric to x-coords gives g: (Dφ)ᵀ g̃(φx) (Dφ) = g(x) where φ = T). Then ρ̃(T x) · |det T| = ρ(x). Proof: det((T⁻¹)ᵀ g T⁻¹) = det((T⁻¹)ᵀ) det g det(T⁻¹) = (det T)⁻¹ det g (det T)⁻¹ = det g / (det T)², so ρ̃ = ρ/|det T|, ρ̃(Tx) |det T| = ρ(x). 
+- Measure level: `μ_g̃ (V) = μ_g (T⁻¹ V)` — from mathlib Haar change of variables. D7 already proved `lintegral_comp_linearMap_eq` and `addHaar_preimage_linearMap'`. I can reuse or re-derive. This is genuinely the "Riemannian measure is chart-invariant under linear transition maps".
+
+If mathlib has the general diffeo version (`integral_image_eq_integral_abs_det_fderiv_smul` or `MeasureTheory.integral_comp_det_fderiv`), I can add the smooth version, but that requires substantial hypotheses (C¹ diffeo). Let me first probe. I know mathlib has `MeasureTheory.integral_image_eq_integral_abs_det_fderiv_smul` — hmm, actually I recall in mathlib there is:
+
+```
+theorem MeasureTheory.integral_image_eq_integral_abs_det_fderiv_smul
+    [MeasurableSpace α] [NormedAddCommGroup E] [NormedSpace ℝ E] [FiniteDimensional ℝ E]
+    [MeasurableSpace E] [BorelSpace E] {μ : Measure α} [μ.IsOpenPosMeasure]
+    (φ : α → E) (hφ : Differentiable ℝ φ) (hφ' : Continuous φ)
+    (h2φ : ∀ x, Function.Injective (fderiv ℝ φ x)) (s : Set α)
+    (hs : MeasurableSet s) (f : E → E) ...
+```
+
+Hmm I don't remember exactly. There's `MeasureTheory.integral_image_eq_integral_abs_det_fderiv_smul` with hypotheses: `[μ.IsOpenPosMeasure]`, φ Differentiable, h2φ injective fderiv everywhere, etc. Let me just probe in Lean.
+
+**Deliverable C (IBP with compact support)** — `IntegrationByParts.lean`:
+- Define the Riemannian gradient/divergence in the chart via the inverse metric:
+  - `grad_g f x = (g x)⁻¹ • ... ` hmm, for the Euclidean coordinates: ∇_g f (x) = (g x)⁻¹ ∇_{Eucl} f(x), where ∇_{Eucl} f(x) = gradient vector. mathlib has `gradient`/`Gradient` for EuclideanSpace? There's `EuclideanSpace.gradient` in `Mathlib.Analysis.InnerProductSpace.Gradient`. Yes! mathlib has `gradient ℝ f x : EuclideanSpace ℝ ι` and `hasGradientAt`... There's a whole gradient API: `gradient`, `HasGradientAt`, `Gradient`, `inner_gradient_eq_fderiv`... And `EuclideanSpace.inner_gradient` etc. Good.
+  - Then the Riemannian gradient: ∇^g f x = (g x)⁻¹.mulVec (gradient ℝ f x)? Wait: the Riem gradient satisfies ⟨∇^g f, v⟩_g = df(v) = ⟨∇f, v⟩. So (∇^g f)ᵀ (g x) v = (∇f)ᵀ v for all v → g x (∇^g f) = ∇f → ∇^g f = (g x)⁻¹ ∇f. So `riemGradient g f x = (g x)⁻¹.mulVec (gradient ℝ f x)`.
+  - Riemannian Laplacian: Δ_g f = div_g (∇^g f). In chart: Δ_g f = ρ⁻¹ Σ_i ∂_i (ρ ((g x)⁻¹ ∇f)_i). Hmm.
+  - The IBP target identity: for u, v : ℝⁿ → ℝ compactly supported smooth:
+    ∫ v · Δ_g u dvol_g = -∫ ⟨∇^g v, ∇^g u⟩_g dvol_g.
+    i.e. ∫_ℝⁿ ρ(x) · v(x) · Δ_g u(x) dx = -∫_ℝⁿ ρ(x) · ((g x)⁻¹ ∇u)ᵀ (g x) ((g x)⁻¹ ∇v) dx = -∫ ρ (∇u)ᵀ (g x)⁻¹ ∇v dx.
+    
+    To prove this we need the pointwise identity: Σ_i ∂_i (ρ ((g x)⁻¹ ∇u)_i) = ρ Δ_g u, and ρ · v · Δ_g u = Σ_i ∂_i (ρ v ((g⁻¹ ∇u)_i)) - ρ ∇vᵀ g⁻¹ ∇u — this is the Leibniz rule: ∂_i (v W_i) = v ∂_i W_i + ∂_i v W_i with W_i = ρ (g⁻¹∇u)_i. So the chain is:
+    
+    ∫ v Δ_g u ρ = ∫ Σ_i ∂_i (v ρ (g⁻¹∇u)_i) - ∫ Σ_i (∂_i v) ρ (g⁻¹∇u)_i
+                = 0 - ∫ ρ ∇vᵀ (g⁻¹∇u) (by the vanishing integral of divergence of compactly supported field)
+                = -∫ ⟨∇^g v, ∇^g u⟩_g ρ.
+
+    The core needed analytic lemma: **∫_{ℝⁿ} ∂_i φ dx = 0 for smooth compactly supported φ** (vanishing integral of a divergence). Does mathlib have this? Possibly as `MeasureTheory.integral_fderiv_eq_zero`? I recall there is `integral_fderiv_eq_zero_of_integrable`? Hmm, let me search. There's `integral_eq_zero_of_hasDerivAt_of_integrable`? Not sure. Alternatively use `MeasureTheory.integral_divergence_of_hasFDerivAt_off_countable` on a big box: for φ compactly supported, choose a box containing the support (box = Icc in ℝⁿ, or a set with corners) and apply the box divergence theorem: ∫_box ∂_i φ_i = boundary flux = 0 because φ = 0 near boundary... The box theorem needs HasFDerivAt everywhere in the box (off countably many lines?). Let me check its exact hypotheses when probing.
+
+    Alternative cleaner analytic lemma: use the **fundamental theorem of calculus in one variable iterated (Fubini)**. mathlib has `intervalIntegral.integral_eq_zero_of_forall_deriv_eq_zero`? There's `intervalIntegral.integral_deriv_eq_sub`: ∫_a^b f' = f b - f a. For a compactly supported f: ℝ → ℝ C¹, ∫_ℝ f' = 0: mathlib has `MeasureTheory.integral_deriv_eq_zero_of_...`? Hmm. There might be `integral_eq_zero_of_hasDerivAt`? Let me probe. If I can get ∫_ℝ f' = 0 for compactly supported smooth f, then for φ : ℝⁿ → ℝ compactly supported smooth, ∫ ∂_i φ = 0 by Fubini + the 1D result applied to x_i ↦ φ(x) with other coordinates fixed... but "compactly supported smooth" with Fubini over ℝⁿ — the hypotheses need to propagate (support, differentiability for each slice). Doable but fiddly.
+
+    The box divergence theorem route seems more direct: `MeasureTheory.integral_divergence_of_hasFDerivAt_off_countable` — I believe its statement is:
+
+    ```lean
+    theorem integral_divergence_of_hasFDerivAt_off_countable (f : ℝ × ℝ × ℝ → E) (f' : ℝ × ℝ × ℝ → ℝ × ℝ × ℝ →L[ℝ] E)
+        (h : ∀ x, x.1 ∈ Set.Ioo a₁ b₁ → x.2.1 ∈ Set.Ioo a₂ b₂ → x.2.2 ∈ Set.Ioo a₃ b₃ → HasFDerivAt f (f' x) x) :
+        ∫ x in BoxIntegral.Box.Icc (a₁,b₁,a₂,b₂,a₃,b₃), ((f' x) (1,0,0)).1 + ((f' x) (0,1,0)).2.1 + ... = surface integral
+    ```
+    Hmm no, that's 3D. For n-dim there's `integral_divergence_prod_Icc_of_hasFDerivAt_of_le`. Actually I recall `MeasureTheory.integral_divergence_of_hasFDerivAt_off_countable` is for ℝ³. For n-dim: `integral_divergence_prod_Icc_of_hasFDerivAt_of_le` takes f : (Fin n → ℝ) → (Fin n → ℝ) and gives ∫ over Icc box of ∑ ∂_i f_i = ∫ over boundary... With off_countable versions too.
+
+    Using that with f supported in the interior of the box: the boundary integral is 0 (f = 0 on boundary? boundary of box has measure... the theorem's boundary term is an integral over the faces; if f vanishes on the faces, the surface term vanishes — need to prove: if ∀ x ∈ boundary faces, f x = 0... or if f = 0 in a neighborhood of the boundary of the box).
+
+    Simpler: choose f compactly supported in open box (a,b)ⁿ (product of Ioo), and apply `integral_divergence_prod_Icc_of_hasFDerivAt_of_le` with the Icc box; the surface term: ∫ over each face of f·n. The theorem's exact form: boundary term = ∑ integrals over the faces of ± f_i. If f vanishes on each face, each face integral is 0. Faces: x_i = a_i or b_i. If f's support ⊆ interior (Ioo), then f vanishes on each face, so each face integral = 0 by integral_eq_zero_of_aestronglyMeasurable... Need f = 0 on the face. If support(f) ⊆ box interior (open), then f = 0 on ∂box pointwise (support is closure of {f≠0}... in mathlib, `support f = closure {x | f x ≠ 0}`? For functions to ℝ with T2 topology, `tsupport` = closure. If tsupport f ⊆ Ioo-box, then x ∈ face (x_i = a_i) implies x ∉ tsupport f so f x = 0? Since tsupport f is closed and x ∉ tsupport... x ∈ face, face ∩ (closure of Ioo box) = face ∩ Icc box ⊇ face point... hmm face points ARE in the closure of the Ioo box, so tsupport ⊆ interior(Icc) = Ioo means face points ∉ tsupport, hence f x = 0 pointwise (since f x ≠ 0 → x ∈ tsupport). Yes! f x ≠ 0 implies x ∈ {y | f y ≠ 0} ⊆ tsupport ⊆ Ioo box, contradiction with x on face. So f = 0 pointwise on each face, face integrals vanish. 
+
+    So: theorem `integral_divergence_eq_zero_of_tsupport_subset_box` or directly: for f : (Fin n → ℝ) → (Fin n → ℝ) with HasFDerivAt everywhere in Icc box, tsupport f ⊆ Set.pi univ (fun _ => Ioo a b) (or ⊆ Icc box interior), integrability conditions, then ∫_box div f = 0.
+
+    Then: for the Riemannian density ρ and vector field X, f = ρ • X (pointwise mulVec) — need to show HasFDerivAt for products: need ρ differentiable (C¹) and X C¹. Under hypotheses "g : C¹ metric field" and "u : C²" we'd need chain rules: ρ = √det g → ρ C¹ requires det g C¹ and det g > 0... formalizing fderiv of ρ = (1/(2ρ)) · derivative of det g — heavy but doable via `HasFDerivAt.sqrt`? mathlib has `HasFDerivAt.sqrt`? There is `HasFDerivAt.const_mul` etc. There's `Real.HasDerivAt.sqrt`? Possibly `HasDerivAt.sqrt : HasDerivAt f f' x → 0 < f x → HasDerivAt (Real.sqrt ∘ f) (f' / (2 * Real.sqrt (f x))) x`? I think mathlib has `HasDerivAt.sqrt`? Not sure.
+
+    **Simpler architectural choice to keep obligations tractable**: Prove the IBP identity in "weak form" WITHOUT differentiating the metric: 
+    
+    ∫ v Δ_g u ρ dx = -∫ (∇v)ᵀ g⁻¹ (∇u) ρ dx where Δ_g u ρ = div(ρ g⁻¹ ∇u) is taken as the DEFINITION of the Riemannian Laplacian density pairing... But that would make Δ_g u defined by the identity — "zero operators masquerading as geometry" risk? No — defining the Laplace-Beltrami via divergence IS the standard definition: Δ_g u = (1/ρ) div(ρ ∇^g u). The pointwise derivative obligations come through the Euclidean divergence of the vector field W = ρ g⁻¹ ∇u. The chain: need W differentiable → needs ρ differentiable. 
+    
+    Alternative: define everything at the level of the Euclidean divergence of W where W = ρ g⁻¹ ∇u is given the differentiability hypothesis directly. I.e., state the theorem as: 
+
+    **Theorem (chart IBP with compact support)**: Let g be a measurable metric-matrix field, ρ = √det g its density. Let u, v : ℝⁿ → ℝ be such that:
+    - W_i := ρ · ((g x)⁻¹ ∇u)_i and Z := v·W ... 
+    
+    Hmm, but to *relate* ∂_i W_i to "Δ_g u" I need the actual chain rule computation anyway. The honest approach: define `riemannianLaplacian g ρ u x := (ρ x)⁻¹ · (Euclidean divergence of (x ↦ ρ x • (g x)⁻¹.mulVec (∇u x)))`, and then prove the IBP identity:
+
+    ∫ v · Δ_g u dμ_g = -∫ ⟨∇^g v, ∇^g u⟩_g dμ_g
+
+    by: ∫ v Δ_g u ρ = ∫ v · div(W) = ∫ div(v·W) - ∫ ∇v · W = 0 - ∫ ρ ∇vᵀ g⁻¹ ∇u. The step ∫ div(v·W) = 0 uses the box divergence theorem on the vector field v·W which is compactly supported & differentiable (hypotheses). The step v·div W = div(v·W) - ∇v·W is the Leibniz rule at the derivative level: ∂_i (v W_i) = ∂_i v · W_i + v ∂_i W_i. To have this, need HasFDerivAt for v, W_i, v·W_i and the product rule — mathlib `HasFDerivAt.mul` gives the scalar product rule: HasFDerivAt (x ↦ v x * W x) ... and `fderiv` of product = ...; then the divergence (sum of ∂_i) is the sum of components of fderiv applied to basis vectors... divergence = trace-ish: Σ_i ∂_i F_i where ∂_i F_i = (fderiv F x) (basis i) · ... 
+
+    This is getting into heavy formalization of fderiv arithmetic. To keep it manageable within a few hours, I'll structure the analytic core as: 
+
+    **Core analytic lemmas (Euclidean, reusable):**
+    L1. `integral_divergence_eq_zero_of_tsupport_interior_box`: for F : (Fin n → ℝ) → (Fin n → ℝ), each component C¹ on the Icc box (HasFDerivAt on interior, continuous on box), tsupport F ⊆ interior, integrability, then ∫_box Σ_i (fderiv (F ·) x (basis i))_i? Hmm — actually the box theorem itself gives: ∫_box (divergence of f w.r.t. f') = surface term. I need divergence written as Σ ∂_i f_i. The mathlib box theorem `integral_divergence_prod_Icc_of_hasFDerivAt_of_le` — what is its divergence exactly? Let me check the source at the pinned rev. I'll read mathlib source: `Mathlib/MeasureTheory/Integral/DivergenceTheorem.lean`. It defines `divergence` hmm.
+
+    Let me just probe mathlib concretely first, then design. 
+
+    Actually — maybe there's a much simpler path for L1: mathlib might have directly `MeasureTheory.integral_fderiv_eq_zero_of_...`? Hmm, I'm fairly sure mathlib has, in `Mathlib/MeasureTheory/Integral/FundThmCalculus` or similar... there's `intervalIntegral.integral_eq_zero_of_hasDerivAt_...`? Let me probe for names containing `integral` + `deriv` + `zero`.
+
+OK. Enough planning in the abstract; the concrete mathlib probing will determine the design. Also read D12-plan.json (the plan for this batch of tasks) to see what specifically is expected for my task. Then check the existing release tree in MY worktree (D6 package — do D7 layers exist there? No — my worktree release/ is the D6 package; the D7+ layers live in other worktrees. My task adds release/Poincare/D12/VolumeIBP/. I can copy in the D7 Volume/Divergence layers as dependencies? The task says "The snapshot may include preliminary dependencies: rebuild before relying on them." — my release tree doesn't have D7. I could vendor-copy D7 Volume (Basic/Scaling/ChangeOfVariables) into my release tree under Poincare/D7/... but the instruction says "Do NOT re-scaffold, delete imported modules..." — copying D7 sources in as read-only dependencies might be acceptable if needed; but better to keep my D12 module self-contained and rely only on mathlib + D6 release + optionally re-prove what I need. The D7 ChangeOfVariables lemmas are useful (Haar linear change of variables). I can restate/prove them fresh in my module (self-contained) — cleaner for audit. Actually re-proving `lintegral_comp_linearMap_eq` is a few lines from mathlib. Let me keep my module mathlib-only, with D6 release import for the package structure only.
+
+Let me now read D12-plan.json and check the pinned mathlib for the relevant APIs.
+dsh: reasoning:
+My task is clear. Now let me set up the environment and probe mathlib. First check the toolchain works and the release package builds. Let me check ELAN_HOME and try to compile a probe file.
+
+The environment notes: `export ELAN_HOME=/data3/guoshaoyang/workdir/lean_poincare/elan` — but on this machine the path is /data/home/guoshaoyang/workdir/lean_poincare/elan? Let me check `ls /data/home/guoshaoyang/workdir/lean_poincare/elan` — yes, earlier listing of /data/home/guoshaoyang/workdir/lean_poincare showed bin, elan, longrun. So ELAN_HOME=/data/home/guoshaoyang/workdir/lean_poincare/elan.
+
+Let me verify lean works and check the .lake state.
+dsh: reasoning:
+The elan bin is on PATH already. release/.lake/build/lib/lean is empty — the package hasn't been built in this worktree yet (or the .lake dir is fresh). Let me check the state of release/.lake and try building. First a quick sanity check of lean version, then start `lake build` in the background since it may take a while (mathlib is already downloaded in .lake/packages, so it's just compilation — could take 10-30 min with parallelism).
+dsh: reasoning:
+`lean --version` fails because elan has no default toolchain configured in this environment. But the worktree's release/ has a lean-toolchain file. Let me check how previous invocations ran — they used `export ELAN_HOME=...; export PATH=...` and `cd release && lake build`. The lean-toolchain file in release/ pins `leanprover/lean4:v4.34.0-rc2`. When running inside release/ (or via `lake env lean`), elan should read lean-toolchain. Let me test.
+dsh: reasoning:
+The toolchain works inside release/. Note "environment override by ELAN_TOOLCHAIN" — there's an ELAN_TOOLCHAIN env var set. Good.
+
+Now let me start a `lake build` in the background (it will take a while — mathlib compilation). Actually wait, let me check if .lake/build has anything... it was empty. Let me check for oleans elsewhere. `.lake/build/lib/lean/` was empty. So a full build is needed. mathlib is ~10-20 minutes with many cores. Let me start it in the background with many jobs and meanwhile probe mathlib source files by reading them directly (grep in release/.lake/packages/mathlib/Mathlib).
+
+Let me kick off the build first.
+dsh: reasoning:
+The build is running. Now let me probe the key mathlib APIs by reading sources. Key things to find:
+
+1. **Positive definite matrix → det > 0**: search for `posDef` and `det_pos` in Matrix.
+2. **Matrix.det continuity**: search `continuous` in Determinant.
+3. **PosDef.det**: `Matrix.PosDef.det_pos`? 
+4. **Inverse symmetric**: `IsSymm.inv`?
+5. **DivergenceTheorem.lean** — the box divergence theorem statement.
+6. **WithDensity / setIntegral API**.
+7. **Change of variables for diffeos**: search `det_fderiv` in Integral.
+8. **Gradient API**: Mathlib/Analysis/InnerProductSpace/Gradient.lean.
+9. **sqrt derivative**: HasDerivAt.sqrt / HasFDerivAt.sqrt.
+
+Let me grep for these.
+dsh: reasoning:
+Excellent! The divergence theorem for Bochner integral exists: `MeasureTheory.integral_divergence_of_hasFDerivAt_off_countable` on `ℝⁿ⁺¹ = Fin (n + 1) → ℝ`, with `E` being `ℝ` (taking E = ℝ gives Eⁿ⁺¹ = Fin(n+1) → ℝ — vector fields of scalars).
+
+Let me see the main theorem statements:
+dsh: reasoning:
+The build log was empty at tail — odd. Let me check the build status. The job exited with code 1 but tail showed only the stderr line. Let me look at the whole log.
+dsh: reasoning:
+The build log is empty — the background job redirected to /tmp/d12-build.log but the sandbox may have blocked writes to /tmp, or the job ran in a different sandbox context where /tmp is different. The `[stderr] landlock-run: partial enforcement` line appeared in the tail but the file is 0 lines... Actually the log has 0 lines, meaning even the `echo "BUILD EXIT: $?"` didn't land. The background job's stdout was redirected to /tmp/d12-build.log, but /tmp in the background job sandbox may not be shared. Let me just rerun the build in the background with output written inside the worktree instead.
+The toolchain works inside `release/`. Let me start the package build in the background while I probe mathlib sources.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

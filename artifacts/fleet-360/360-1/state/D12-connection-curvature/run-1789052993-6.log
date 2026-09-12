@@ -1,0 +1,159 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree, the checkpoint.json, and the existing files.
+dsh: reasoning:
+The checkpoint.json doesn't exist yet in this worktree, it seems. Let me look for it, check the LONG_PLAN.json and the release directory structure.
+dsh: reasoning:
+No checkpoint.json exists yet. The D12 directory doesn't exist yet. Let me look at the LONG_PLAN.json, the release structure more fully, and understand what D7, D9, D10, D11 contain.
+dsh: reasoning:
+My task is D12-connection-curvature:
+
+"Connect actual metric/connection geometry to D7 tensor data. Inspect LeviCivita, covariant derivatives, D7 curvature and D9 tensor algebra. Prove one substantive theorem constructing the smooth Levi-Civita connection or curvature from metric coefficients on a real chart, with a correctly proved coordinate transformation/naturality or contraction statement. Begin with a nonconstant smooth metric example if needed, but record that it is a model. Do not assume the desired tensor identities in the structure used to prove them. Derive one downstream Ricci/scalar identity with theorem provenance."
+
+Blockers: U1, U2, U3, U4, U5, I1, I3.
+
+Let me explore the release directory to understand:
+1. What D7 has (tensor data, curvature)
+2. What D9 has (tensor algebra)
+3. What mathlib has (LeviCivita? Manifold APIs? Riemannian metrics?)
+4. The geometry modules in Longrun/Geometry: ConnectionAdapter.lean, Contraction.lean, LeviCivitaBlocked.lean, MetricData.lean
+
+Let me look at those files and understand what's already there.
+dsh: reasoning:
+Now I understand the existing state. There's a Stage 1 abstract algebraic setup with `MetricData`, `AbstractConnection`, `LeviCivitaBlocked`. My task (D12-connection-curvature) is to:
+
+1. Connect actual metric/connection geometry to D7 tensor data.
+2. Inspect LeviCivita, covariant derivatives, D7 curvature and D9 tensor algebra.
+3. Prove one substantive theorem constructing the smooth Levi-Civita connection or curvature from metric coefficients on a real chart, with a correctly proved coordinate transformation/naturality or contraction statement.
+4. Begin with a nonconstant smooth metric example if needed, but record that it is a model.
+5. Derive one downstream Ricci/scalar identity with theorem provenance.
+
+Blockers to inspect: U1, U2, U3, U4, U5, I1, I3. Let me find the blocker ledger (queue.updated.json, README.md, DELIVERY.md).
+
+Also I should inspect:
+- release/Poincare/Stage1/CurvatureAlgebra.lean
+- release/Poincare/Stage1/RiemannAdapter.lean
+- D7 tensor data: where is it? The task says "D7 tensor data" and "D9 tensor algebra". Let me find these modules. Since the worktree only has release/, let me look at the full release tree.
+
+Also check the mathlib pinned revision and whether LeviCivita/manifold support exists. The key decision: what approach?
+
+Approach options:
+A. Use mathlib's manifold API (CovariantDerivative etc.) — heavyweight, hard to get smoothness facts.
+B. Work at the level of a single chart: a metric given by smooth coefficients g_ij : E → ℝ on an open set of Euclidean space, construct the Christoffel symbols Γ^k_ij = ½ g^kl (∂_i g_jl + ∂_j g_il − ∂_l g_ij), prove the connection is symmetric, metric compatible, and compute curvature. Smoothness obligations are painful in mathlib's manifold API.
+C. Abstract algebraic approach in finite-dimensional real vector spaces: MetricData already exists. Construct the Levi-Civita connection on a "flat chart model" where the bracket of coordinate vector fields is zero — but that's just the trivial connection on a fixed frame, i.e., the Christoffel symbols relative to a constant frame with vanishing structure constants. Hmm, but that would give zero curvature, which is "zero operators masquerading as geometry" — forbidden? No — the rule says "zero operators masquerading as geometry" not allowed. So the connection must be nontrivial.
+
+Actually the honest, substantive theorem achievable in Lean with the existing Stage1 algebra: 
+Construct the Levi-Civita connection on a real finite-dimensional vector space from metric coefficients: Given metric coefficients g_ij as a symmetric positive-definite matrix and Christoffel symbols Γ via the classical formula, define ∇ on the basis. But curvature will vanish unless we have a nontrivial bracket... Actually in the abstract algebra setup with LieBracketData, the general Levi-Civita connection exists only if the metric is invariant under the bracket action (LeviCivitaBlocked notes this).
+
+Hmm. Let me think about the classical Koszul formula: For a metric g and Lie bracket [·,·], the Levi-Civita connection exists iff the metric is invariant: g([X,Y],Z) + g(Y,[X,Z]) = 0 for all X,Y,Z. In that case, the Koszul formula:
+2g(∇_X Y, Z) = X·g(Y,Z) + Y·g(Z,X) − Z·g(X,Y) + g([X,Y],Z) − g([Y,Z],X) + g([Z,X],Y)
+
+In the abstract setting with no "vector field direction derivative X·g(Y,Z)", the standard approach is: the Koszul formula on a Lie algebra with invariant metric gives the "canonical connection":
+2g(∇_X Y, Z) = g([X,Y],Z) − g([Y,Z],X) + g([Z,X],Y)
+
+This is the classical canonical bi-invariant connection on a Lie group. For this connection, torsion-free holds: ∇_X Y − ∇_Y X = [X,Y], and metric compatibility holds iff the metric is invariant.
+
+So a substantive theorem: "For a metric datum m and Lie bracket b such that the metric is invariant (g([X,Y],Z) + g(Y,[X,Z]) = 0), the canonical connection ∇_X Y = ½([X,Y] − ad_X^* Y − ad_Y^* X)... " wait let me get the formula right.
+
+The canonical connection on a Lie group: ∇_X Y = ½ [X, Y] − ½ ad_X^T Y − ½ ad_Y^T X where ad^T is the metric adjoint? Let me recall: the standard bi-invariant connection is ∇_X Y = ½[X,Y]... Hmm, no.
+
+Let me just derive from the Koszul formula: 2 g(∇_X Y, Z) = g([X,Y],Z) − g([Y,Z],X) + g([Z,X],Y).
+= g([X,Y],Z) + g([Z,Y],X)... using skew [Y,Z] = −[Z,Y], −g([Y,Z],X) = g([Z,Y],X).
+So 2g(∇_X Y, Z) = g([X,Y],Z) + g([X,Z],Y) + g([Z,X],Y) using invariance g([Z,X],Y) + g([X,Y],Z)?? no wait.
+
+Actually with invariance: g([Z,Y],X) = −g(Y,[Z,X])... hmm, invariance says g([A,B],C) + g(B,[A,C]) = 0. So g([Z,Y],X) = −g(Y,[Z,X])... wait: g([A,B],C) + g(B,[A,C]) = 0 gives g([Z,Y],X) = −g(Y,[Z,X]).
+
+Hmm, I recall the classical result: on a compact Lie group with bi-invariant metric, the Levi-Civita connection satisfies ∇_X Y = ½[X,Y] for left-invariant vector fields. Yes! That's the mean connection that's already in ConnectionAdapter. And indeed `meanConnection_isMetricCompatible_iff` says exactly: the mean connection is metric-compatible iff the metric is invariant under the bracket. And torsion-free is automatic. So the "LeviCivitaData" existence = the invariance condition. So LeviCivitaExistenceStatement holds iff invariance holds. The mean connection IS the Levi-Civita connection in this setting, and its curvature is R(X,Y)Z = −¼[[X,Y],Z].
+
+So the abstract Levi-Civita existence theorem is proved under the invariance hypothesis, and its curvature is computed, and the Ricci is symmetric. This is substantive but is it "the smooth Levi-Civita connection from metric coefficients on a real chart"? Not exactly — it's the Lie-algebra/left-invariant version, which is the natural exact analogue where the bracket is nontrivial.
+
+The task says: "Prove one substantive theorem constructing the smooth Levi-Civita connection or curvature from metric coefficients on a real chart, with a correctly proved coordinate transformation/naturality or contraction statement. Begin with a nonconstant smooth metric example if needed, but record that it is a model."
+
+So the ideal target: on ℝ^n (a single chart), given smooth metric coefficients g_ij, construct Christoffel symbols, prove torsion-freeness + metric compatibility (Koszul), compute curvature tensor, derive Ricci and scalar, and prove a coordinate transformation statement. That's the "real chart" model. This is what the task explicitly allows as a "model" ("Begin with a nonconstant smooth metric example if needed, but record that it is a model").
+
+The question: what's feasible in 72 hours with mathlib? The smoothness of Christoffel symbols from smooth metric coefficients requires derivatives of smooth functions, inverse matrix smoothness, etc. That's very heavy in mathlib's manifold API. However, there's a much more tractable algebraic approach:
+
+**The polynomial/algebraic model**: Work in the module of tangent vectors at a point? No — curvature is genuinely differential.
+
+Alternative: work with smooth functions on ℝ^n via `ContMDiff` and mathlib's manifold machinery. mathlib has `CovariantDerivative`, `leviCivitaConnection`, etc. Let me check the pinned mathlib version. Let me look at what's available.
+
+Actually, wait. Let me reconsider. There's a classical trick: prove the Levi-Civita theorem at the algebraic level of "directional derivative operator acting on the metric coefficients". I.e., abstract the structure: a real vector space V of "vector fields on a chart" (abstract, with a Lie bracket), and a derivation-like structure giving the directional derivative of functions. The Koszul formula in its "coordinate-free on a manifold" form:
+
+2 g(∇_X Y, Z) = X g(Y,Z) + Y g(Z,X) − Z g(X,Y) − g(X,[Y,Z]) + g(Y,[Z,X]) + g(Z,[X,Y])
+
+For this to be well-defined and metric-compatible, you need the "Leibniz" property: the map (X, f) ↦ X·f is a derivation on functions w.r.t. the bracket: [X, fY] = (X·f) Y + f [X,Y]... The invariance condition g([X,Y],Z) + g(Y,[X,Z]) = 0 disappears in the general manifold case — it's replaced by the Leibniz rule that makes everything work.
+
+The cleanest framework that mathlib gives us: `CovariantDerivative` on a smooth manifold. mathlib has `IsLeviCivitaConnection`, `leviCivitaConnection`, torsion, etc. But curvature is NOT in mathlib. So the plan:
+
+1. Define the curvature tensor for a mathlib `CovariantDerivative` at the algebra level? mathlib's CovariantDerivative is defined via charts locally. There's `CovariantDerivative.boundaryless`... Hmm. Doing Riemann curvature in mathlib's manifold API would be extremely heavy (needs commutativity of covariant derivatives in coordinate charts, etc.).
+
+2. The more tractable target: **the Koszul formula on an abstract "chart model"**: a finite-dimensional real vector space V (tangent vectors at a point? no...). Hmm.
+
+Let me reconsider the structure. In the existing Stage1 setup:
+- `MetricData V ι`: finite-dim real vector space with orthonormal basis. 
+- `AbstractConnection`: bilinear nabla with torsion-free w.r.t. a Lie bracket.
+
+The most natural "chart" model: take V = ℝ^n = ι → ℝ with the standard basis, and the "vector fields on the chart" = all V (constant vector fields). The Lie bracket of constant vector fields vanishes, so any torsion-free connection on this model... hmm, with the trivial bracket, torsion-free means ∇_X Y = ∇_Y X. Then a metric-compatible symmetric connection ∇ with constant metric coefficients is forced... actually not forced to be zero: ∇_X Y = ∇_Y X and metric compatibility g(∇_X Y, Z) + g(Y, ∇_X Z) = 0. Polarize: the difference from mean connection... For the trivial bracket, the mean connection is zero. Two Levi-Civita connections coincide (uniqueness theorem, already proved). So the unique one is ∇ = 0? Not quite — uniqueness is proved in LeviCivitaBlocked (leviCivita_nabla_unique), so if one exists, all agree. But existence with trivial bracket: ∇=0 is metric compatible (g(0,Z)+g(Y,0)=0 ✓) and torsion-free (0−0=0 ✓). So on a fixed frame with zero bracket, the only Levi-Civita connection is the trivial one, and the curvature is zero. So that path gives zero curvature = "zero operators masquerading as geometry" — banned.
+
+So the interesting algebra-level content is the Lie-algebra case: bracket nontrivial, metric invariant, mean connection = Levi-Civita, curvature = −¼[[X,Y],Z]. That's genuine geometry (bi-invariant metrics on Lie groups; e.g. SO(3) / su(2), where sectional curvature is positive, Ricci is ⅛ or ¼ of the Killing form — the round sphere!). 
+
+**Concrete non-vacuous example**: Take V = su(2)-like 3-dim real space with basis e1,e2,e3, bracket [e1,e2]=e3, [e2,e3]=e1, [e3,e1]=e2, and the Euclidean metric (g_ij = δ_ij). Then invariance holds (the standard cross product is skew). The mean connection is the Levi-Civita connection, curvature R(e1,e2)e2 = −¼ [[e1,e2],e2] = −¼ [e3,e2] = ¼ e1. So sectional curvature ¼... The standard round sphere S³ of radius 2? Let me compute: For SU(2) with bi-invariant metric, R(X,Y)Z = −¼[[X,Y],Z], sectional curvature K(X,Y) = g(R(X,Y)Y, X)/(|X|²|Y|²−g(X,Y)²) = −¼ g([[X,Y],Y],X) = ¼ g([X,Y],[X,Y]) = ¼ |[X,Y]|². For orthonormal e1,e2: K = ¼. Ricci: Ric(X,X) = Σ_i g(R(X,e_i)e_i, X)... for orthonormal basis with |[e1,e2]|=1: Ric(e1,e1) = ¼(|[e1,e1]|² + |[e1,e2]|² + |[e1,e3]|²) = ¼(0+1+1) = ½. Scalar = 3/2. So the model is the round 3-sphere of radius 2 (K = 1/4), with Ric = ½ g, S = 3/2.
+
+This is a great concrete model: "the round 3-sphere as SU(2) with bi-invariant metric" — model, not general. And it's provable purely algebraically. This gives:
+- Levi-Civita existence construction: mean connection, under invariance hypothesis (proved, general for any invariant metric on any Lie bracket — genuinely general theorem at the algebraic level).
+- Curvature computation: R = −¼[[X,Y],Z] (general).
+- Ricci: Ric = ¼ ad^* ad pairing... trace stuff (general, symmetric).
+- Einstein property for the specific example: Ric = ½ g on su(2) (concrete computation).
+- Scalar curvature: 3/2.
+
+But is that "metric coefficients on a real chart"? Partially. The task says "Begin with a nonconstant smooth metric example if needed, but record that it is a model." The SU(2) model is a constant-coefficient metric on a Lie group — a model. Hmm.
+
+But the task's core demand: "constructing the smooth Levi-Civita connection or curvature from metric coefficients on a real chart, with a correctly proved coordinate transformation/naturality or contraction statement."
+
+Two possible target theorems:
+(A) **Chart model with nonconstant metric coefficients**: On ℝⁿ with a metric g_ij(x) smooth, construct Christoffel symbols and the Levi-Civita connection. This requires real smooth analysis in mathlib — hard but let me check what mathlib provides. The manifold API has `leviCivitaConnection` already! mathlib defines it via Koszul formula in charts with `∇_X Y` given by the formula. So existence is in mathlib. But curvature/Ricci/scalar is not.
+
+(B) **Algebraic Lie-algebra model**: As above. Achievable, rigorous, genuinely nontrivial, matches existing Stage1 infrastructure. Downstream: Ricci identity for su(2) Einstein model; contraction statements (trace) with theorem provenance.
+
+Given "Do not assume the desired tensor identities in the structure used to prove them" and the 72-hour budget, (B) is the tractable substantive route. But the task explicitly says "smooth Levi-Civita connection or curvature from metric coefficients on a real chart". Hmm, "or curvature". Let me think about what a "real chart" connection could be.
+
+Actually, there's an important middle path: the **Koszul formula on a chart** can be captured algebraically as follows. Take V = ℝⁿ with standard basis e_i (coordinate vector fields ∂_i, treated as the abstract module V). The metric coefficients g_ij : V → ℝ are smooth functions... but in the abstract algebra approach we'd need the derivations X(g_ij). We can abstract: "chart model structure" = (V, bracket, D : derivation map on a function algebra). That's heavy.
+
+Alternatively, the classical approach with **constant structure coefficients**: the general left-invariant metric on a Lie group with basis e_i: metric coefficients g_ij constant on the chart (left-invariant). Christoffel symbols Γ^k_ij = ½ g^kl (c_ijl + c_jil + c_lij) where c_ijk = g([e_i,e_j],e_k) structure constants... Actually the standard formula for the Levi-Civita connection of a left-invariant metric on a Lie group in the left-invariant frame: ∇_{e_i} e_j = Σ_k Γ^k_ij e_k with
+
+Γ^k_ij = ½ Σ_l g^kl (g([e_l, e_i], e_j) + g([e_l, e_j], e_i) + g([e_i, e_j], e_l))
+
+This is EXACTLY "constructing the Levi-Civita connection from metric coefficients (g_ij) and the bracket data". It's the algebraic version of the Christoffel symbol formula where "∂_i g_jk" terms are replaced by the bracket terms g([e_i,e_j],e_k) etc. And it's a genuine theorem: prove that this Γ defines the unique metric-compatible torsion-free connection — for ANY metric (no invariance needed! the left-invariant frame version doesn't need invariance, because the bracket encodes the "noncommutativity of the frame"). This is the correct general theorem at this level: "every metric on a Lie algebra has a unique Levi-Civita connection given by the Koszul formula" — that's the actual content of the Levi-Civita existence theorem in the algebraic setting.
+
+Wait, but in the abstract algebraic setting with `IsMetricCompatible` defined as the "invariant metric" condition (no derivation term!), the Koszul formula with brackets only works iff the metric is invariant. Hmm right. The abstract `IsMetricCompatible` in LeviCivitaBlocked is X g(Y,Z) = 0 — it doesn't include the X·g(Y,Z) term because there's no derivation structure. So existence = invariance. 
+
+To do the real thing (nonconstant metric coefficients), I need the derivation structure: a function algebra A with a module structure and bracket on V acting by derivations, and the metric g_ij as elements of A. Then:
+
+**Chart model structure**: 
+- `ChartModelData` = (V, ι, A, bracket : LieBracketData ℝ V, act : A-module structure, g : metric with coefficients g_ij ∈ A, Leibniz rule, ...).
+- Koszul formula: 2 g(∇_X Y, Z) = X·g(Y,Z) + Y·g(Z,X) − Z·g(X,Y) − g(X,[Y,Z]) + g(Y,[Z,X]) + g(Z,[X,Y]).
+
+This is doable but requires proving the Koszul formula gives a well-defined connection (requires R-linearity in Y and Z, which uses Leibniz and the derivation property). That's the classical computation — heavy in Lean but possible. Hmm.
+
+Actually, let me reconsider what's realistic within the budget and most valuable. The existing codebase has:
+- MetricData (metric + ON basis)
+- AbstractConnection + curvature + first Bianchi (proved)
+- LeviCivitaBlocked: uniqueness proved; existence blocked; invariance characterization proved.
+- Contraction: curvatureForm lowering, ricci linearity, etc.
+
+The D12 task says blockers U1,U2,U3,U4,U5,I1,I3. Let me look at the queue file to see what these blockers are. Let me read queue.updated.json and README.md.
+
+Also, the task says "Inspect LeviCivita, covariant derivatives, D7 curvature and D9 tensor algebra". Let me find D7/D9 modules. In release/Poincare there's Longrun with Geometry etc. Where's "D7 tensor data" and "D9 tensor algebra"? Maybe Stage1/CurvatureAlgebra is D7's and there are D9 modules elsewhere. Let me search.
+
+Plan for this invocation (4 hours):
+1. Read README, queue.updated.json (blockers), Stage1 modules, find D7/D9/D10/D11 sources.
+2. Check mathlib pinned revision and available LeviCivita API.
+3. Build the package (lake build) to establish baseline.
+4. Decide approach and write the plan; create checkpoint.json; start the first compiling lemma.
+
+Let me proceed.
+dsh: reasoning:
+Now let me look at the blockers manifest to understand U1-U5 and I1, I3. And find the D7/D9 tensor modules in release. Let me check manifest/blockers.json and look for D7/D9-related Lean modules.
+dsh: reasoning:
+Now let me look at Stage1/CurvatureAlgebra.lean and RiemannAdapter.lean (the D7 tensor data mentioned in the task: "D7 tensor data" probably refers to the CurvatureOperator interface; "D9 tensor algebra" might be in some other worktree, not present here — the task says "D7 curvature and D9 tensor algebra" but D9 may be a sibling worktree. In this worktree I can only see D1-D7 stages. Let me check the Stage1 CurvatureAlgebra and RiemannAdapter to know the "tensor data").
+
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

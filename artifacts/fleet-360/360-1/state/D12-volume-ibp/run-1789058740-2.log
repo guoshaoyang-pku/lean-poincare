@@ -1,0 +1,91 @@
+dsh: reasoning:
+Let me start by exploring the worktree to understand the current state.
+dsh: reasoning:
+The checkpoint.json doesn't exist at the root yet. Let me look for the longrun directory and any existing checkpoint.json, plus the LONG_PLAN.json.
+dsh: reasoning:
+This is D12-volume-ibp. The objective:
+
+"Build the measure/geometry bridge: actual Riemannian density from a positive-definite metric matrix, regularity/measurability, and one chart change-of-variables or integration-by-parts statement with compact support. Compare existing mathlib orientation/volume APIs rather than assuming their absence from an old ledger. Prove at least one nontrivial identity consumed by the entropy or Bochner chain. A supplied measure named volume and an assumed divergence theorem are not a construction. Keep global manifold/Stokes gaps explicit."
+
+Blockers: U7, U11, I4.
+
+Let me explore:
+1. The release directory structure (the Lean package).
+2. The Poincare modules.
+3. The third_party/frenzymath snapshot.
+4. Existing checkpoints / results from D12 (there's longrun/logs/d12-build-1.log, so there's been some work).
+5. The pinned mathlib source.
+
+Let me check the existing state more.
+dsh: reasoning:
+There's already a build (d12-build-1.log) but no checkpoint.json at the root. Let me check whether there is a checkpoint.json somewhere, maybe inside release or longrun. Also let me check the task-local modules for D12 (like Poincare/Longrun/Topology/NormalizedVolume.lean might be relevant). The objective D12-volume-ibp: "Build the measure/geometry bridge: actual Riemannian density from a positive-definite metric matrix, regularity/measurability, and one chart change-of-variables or integration-by-parts statement with compact support."
+
+Blockers U7, U11, I4. Let me look at the blocker manifest and the theorem-dependency-ledger for those blockers. Also check existing work on VolumeIBP (maybe there's a checkpoint.json in the worktree somewhere).
+dsh: reasoning:
+There's no checkpoint.json yet in this worktree for D12-volume-ibp. So I'm starting essentially fresh on the D12-volume-ibp track (the build log d12-build-1.log shows the D6 release build succeeded).
+
+Task D12-volume-ibp:
+- Build the measure/geometry bridge: actual Riemannian density from a positive-definite metric matrix, regularity/measurability, and one chart change-of-variables or integration-by-parts statement with compact support.
+- Compare existing mathlib orientation/volume APIs.
+- Prove at least one nontrivial identity consumed by the entropy or Bochner chain.
+- Blockers: U7 (no Riemannian volume form/divergence theorem in mathlib), U11 (no manifold orientability), I4 (FDerivativeStatement, WeightedIBPStatement etc. unproved Props).
+
+Let me look at the existing interface files to understand what's claimed: `Perelman.riemannianVolumeDensity`, `WeightedIBPStatement`, `BochnerStatement`. Let me find these in release.
+
+Key first steps:
+1. Read relevant source: release/Poincare/Longrun/Entropy/*.lean, the D7 sources (input/ directory may have D7 sources), the result cards, pinned mathlib source (probably in release/.lake/packages? or elsewhere).
+2. Search mathlib for orientation/volume APIs: `Orientation`, `volumeForm`, `Measure.volume`, etc.
+3. Design the approach: On ℝ^n (a chart), given a positive-definite symmetric matrix field g (smooth), define the Riemannian density ω = sqrt(det g) dx. Prove measurability/regularity (e.g., continuous if g continuous). Prove change-of-variables: if we have a diffeomorphism φ and metric pulls back, then ∫ f φ = ∫ f∘φ sqrt(det g) ... The change of variables for the density.
+
+Actually, the most natural scope: chart-level Riemannian measure on Euclidean space. mathlib has `MeasureTheory.Measure.map` and change of variables theorems for linear maps (`map_linearMap`?) — actually mathlib's change-of-variables for the Lebesgue measure under linear maps is `Measure.map_linearMap_eq` or `MeasureTheory.Measure.map_apply` etc. There's also `lintegral_comp_linearEquiv`? Let me check what's available in the pinned mathlib.
+
+Also there's `volumeForm`? I don't think mathlib has Riemannian volume forms. There is `Orientation` and `MeasureTheory.Measure.Orientation`? Actually mathlib has `Orientation` (module over ℝ) and there's a file `Mathlib/Geometry/Manifold/Orientation.lean` and `Mathlib/MeasureTheory/Measure/Haar/...`. There is `Mathlib/Analysis/Calculus/...`. In recent mathlib there is `Mathlib/Geometry/Manifold/VectorBundle/...`. There is also `MeasureTheory.Measure.withDensity`.
+
+The natural approach given mathlib capabilities:
+- Work on Euclidean space ℝ^n (a single chart / open set).
+- Define the Riemannian density function: g : E → (n×n) symmetric positive-definite matrix (as a function), density ρ(x) = sqrt(det (g x)).
+- Prove: if g is continuous, ρ is continuous; if g is measurable, ρ is measurable (needs det measurability, sqrt measurability).
+- Define the Riemannian measure μ_g = withDensity volume (λ x, sqrt(det (g x))).
+- Change of variables: for a diffeomorphism φ with derivative Dφ, the pulled-back metric satisfies det(g(φ x)) * det(Dφ x)^2 = det((Dφ)^T g(φ) Dφ). Prove the integral identity: ∫_{φ⁻¹ s} f(φ x) sqrt(det g(φ x)) |det Dφ x| dx = ∫_s f(y) sqrt(det g y) dy. This needs mathlib's change of variables for Lebesgue measure under diffeomorphisms: `lintegral_comp_diffeomorph`? Actually there is `MeasureTheory.IntegrableOn`... hmm.
+
+What does mathlib have for change of variables? There's `lintegral_map_equiv`, `Measure.map_apply_of_aeMeasurable`... For general diffeomorphisms there is `MeasureTheory.Measure.map_of_addHaar`? I recall mathlib has:
+- `MeasureTheory.lintegral_comp_diffeomorph`? Not sure.
+- For linear maps: `MeasureTheory.Measure.addHaar_map_linearEquiv`? Hmm.
+
+Let me check the pinned mathlib source directly. Where is it? Let me look at release/lake-manifest.json and the lakefile.
+
+Also the entropy chain: Perelman entropy W(g, f, τ) = ∫ [τ(R + |∇f|²) + f - n] u dV, u = (4πτ)^{-n/2} e^{-f}. The identity consumed by the entropy chain could be: the Gaussian integral normalization: ∫ e^{-|x|²/4τ} dx = (4πτ)^{n/2}? Or the "shrinking soliton" identity? Or more apt for the volume/IBP track: the weighted integration-by-parts on ℝ^n: ∫ div(X) e^{-f} dμ = -∫ ⟨X, ∇ e^{-f}⟩... Actually with compact support: ∫ ∂_i (X^i u) dx = 0.
+
+A very concrete nontrivial identity consumed by the entropy chain: the Gaussian normalization in general dimension: ∫_{ℝ^n} e^{-|x|^2/4τ} dx = (4πτ)^{n/2}. But proving that in Lean requires multivariate Gaussian integral — mathlib may have `integral_cexp_neg_mul_sq_add_real` for n=1: `∫ x, exp(-x²/2) = sqrt(2π)`. There's `integral_gaussian`? mathlib has `integral_cexp_neg_mul_sq_add_real` in `Mathlib/Analysis/SpecialFunctions/Gaussian.lean`. For n-dimensions, by Tonelli over ℝ^n... mathlib may have `integral_prod` and could iterate. Actually there's a known result: `MeasureTheory.measure_le_eq_lt`... hmm.
+
+Alternatively, the natural "nontrivial identity consumed by the entropy chain" for the Volume/IBP track: integration by parts for the weighted measure: 
+
+∫_{ℝⁿ} ∂ᵢφ · e^{-f} dx = -∫ φ · ∂ᵢ(e^{-f}) dx for φ compactly supported... but actually the divergence form with compact support: ∫ div X dx = 0 over ℝⁿ for X smooth compact support. That's the "fundamental theorem of calculus in each variable" (Fubini + FTC). mathlib has `integral_deriv_eq_sub` and multidim versions? There might be `intervalIntegral` FTC. A multivariate version: `∫ x in univ, ∂ xᵢ f x = 0` for f smooth compactly supported — mathlib might have this as `integral_deriv_eq_zero`? Hmm, there's `MeasureTheory.integral_deriv_eq_zero`? I'm not sure. Let me check the pinned mathlib.
+
+Actually the standard approach: use `lintegral` and Fubini: for compactly supported smooth f on ℝⁿ, ∫ ∂ᵢf = 0. Proof: Fubini reduces to 1D FTC: ∫_{-R}^{R} f' = f(R) - f(-R) = 0 for support inside (-R, R). mathlib has `intervalIntegral.integral_deriv_eq_sub` (FTC-2) and `integral_eq_sub_of_hasDerivAt`... With compact support inside an interval, both ends equal 0.
+
+But first, the change-of-variables route may be more "volume"-like. Let me first check what the D7 sources and result cards claim, then check mathlib's APIs, then design.
+
+Where is the pinned mathlib source? Let me check release/lake-manifest.json and find the mathlib checkout. Also check the input/ directory which contains D7/D10/D11 sources (per the task: "Read D7/D10/D11 sources, available result cards, the pinned mathlib source and LONG_PLAN.json").
+
+Let me explore more.
+dsh: reasoning:
+The docs/ directory doesn't exist at the root of the worktree — the supervisor update says "Read `docs/UPSTREAM-INTEGRATION.md` and `third_party/frenzymath/IMPORT.md`" but IMPORT.md seems empty or doesn't exist. Let me check third_party structure.
+dsh: reasoning:
+Good. So:
+- `third_party/frenzymath/Poincare-Conjecture` is a symlink into the D6 worktree with the full Frenzymath snapshot.
+- mathlib is at `release/.lake/packages/mathlib`, pinned at rev `7974e751bece493b6ff508039423ca9fa2452fa8`.
+- The release build has been done (`release/.lake/build/lib/lean` exists).
+
+Let me now:
+1. Check the mathlib revision and confirm the pinned source.
+2. Look at the frenzymath packages (Shared, MorganTian, DoCarmo, Topping) — what's there relevant to volume/measure: probably `Shared/.../VolumeForm.lean` or similar.
+3. Read the D7 sources: the task says "Read D7/D10/D11 sources, available result cards". Where are D7/D10/D11 sources? They're in the release package: Poincare/Longrun/Entropy (D7 entropy objects), Poincare/Longrun/Topology/NormalizedVolume.lean etc. Also input/d5-manifest might contain manifest info about D1-D11. Let me look at those.
+dsh: reasoning:
+The frenzymath formalized-sources don't have a "Shared" directory at that level. Let me look for the shared package. The supervisor said "Reuse MorganTian, Topping, DoCarmo, Shared and other upstream packages". Let me find them.
+dsh: reasoning:
+The frenzymath snapshot uses a different mathlib rev (`520045ab14e26149ee970e2e617ca04b09bde5d6`) and a different Lean toolchain (v4.32.1). The release package uses mathlib rev `7974e751bece493b6ff508039423ca9fa2452fa8` — a newer one (Sep 5, 2026). So the frenzymath libraries can't be imported directly into the release package without porting. That's an important constraint: "Reuse MorganTian, Topping, DoCarmo, Shared and other upstream packages instead of recreating geometry/Ricci-flow foundations" — but since toolchains differ, reuse may mean reading/porting with recorded source URL/revision/license and modifications. Let me check what the D6/D11 integration did. Actually let me check the frenzymath IMPORT.md - it was empty. Let me search for how the release package integrated frenzymath.
+
+Actually, the supervisor update says the snapshot was added under third_party/frenzymath/Poincare-Conjecture at commit bb91a09. Let me check if the release package references it. The release lakefile doesn't require frenzymath. So integration would require adding a require of the frenzymath package — but its toolchain is different (v4.32.1 vs release's toolchain). Let me check the release lean-toolchain.
+
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

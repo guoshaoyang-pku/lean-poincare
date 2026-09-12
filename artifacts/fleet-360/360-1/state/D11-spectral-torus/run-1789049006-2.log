@@ -1,0 +1,137 @@
+dsh: reasoning:
+No checkpoint.json in root. Let me look at longrun and release dirs.
+dsh: reasoning:
+Let me look at the README, the longrun structure, and the tools. Also check lakefile and toolchain.
+dsh: reasoning:
+The worktree is pre-scaffolded with the D1-D10 codebase. My task is to add files only under `release/Poincare/D11/SpectralTorus/`. I need to define the flat torus spectral theory.
+
+Let me check the environment: ELAN_HOME, mathlib availability, and whether the release package builds. Also check what already exists in D9 Sobolev estimates since that may be relevant (D9-sobolev-parabolic-estimates) — maybe there are existing definitions of Sobolev spaces I should build on.
+
+Let me check the D9 directory and also look at what mathlib has for Fourier analysis on tori. There might be existing mathlib material: `Mathlib.Analysis.Fourier.*`, `AddCircle`, `MeasureTheory`, etc. In recent mathlib there's `Mathlib.Analysis.Fourier.AddCircle` (Fourier series on `AddCircle T`), and there is a "Pontryagin duality" file. Let me check.
+
+Let me first check environment and build state.
+dsh: reasoning:
+Good context. Now, the key question: what does the pinned mathlib have for Fourier analysis on tori? Let me check mathlib's `Analysis/Fourier` directory. Notably, the D9 card says the pinned mathlib has no Sobolev spaces.
+
+Let me check what's available.
+
+My task:
+1. Define flat n-torus as ℝⁿ/ℤⁿ with Fourier modes indexed by ℤⁿ; define Sobolev spaces Hˢ via Fourier weight (1+|k|²)^{s/2}.
+2. Prove: Fourier modes eigenfunctions of Laplacian with eigenvalues 4π²|k|² (explicit computation); Parseval for finite Fourier support functions; Sobolev embedding Hˢ ↪ C⁰ for s > n/2 via Cauchy–Schwarz on Fourier coefficients (summability of (1+|k|²)^{-s/2} over ℤⁿ — via integral comparison or dyadic shell bounds, fully checked).
+3. Poincaré inequality on the torus (mean-zero): ‖u‖₂ ≤ (1/2π)‖∇u‖₂, unconditionally.
+4. Axiom discipline.
+
+Given mathlib's state, defining the actual quotient ℝⁿ/ℤⁿ and functions on it with a Laplacian would require substantial machinery. But I can take a pragmatic approach that's mathematically rigorous:
+
+Option A: Work with the torus as the quotient `(Fin n → ℝ) / (Fin n → ℤ)`... Actually in Lean, `(Fin n → ℝ) ⧸ AddSubgroup` ... hmm. There's `AddCircle` in mathlib which is `ℝ ⧸ ℤ` (actually `AddCircle p = ℝ ⧸ (AddSubgroup.zmultiples p)`). For n-dimensional torus, we could define `Torus n := (Fin n → ℝ) ⧸ (AddSubgroup.pi Set.univ fun _ => ℤ)` or something. But then doing Fourier analysis requires Pontryagin duality on such quotients, which mathlib may not have.
+
+More pragmatic and still mathematically faithful: Define functions on the torus as `ℤⁿ`-indexed Fourier coefficients — i.e., define the "Fourier side" of the theory. Then:
+- Define `TorusFunction n := (Fin n → ℤ) → ℂ` with finite support (as the Fourier coefficient sequence), which corresponds to functions on ℝⁿ/ℤⁿ.
+- Define Fourier modes `e_k(x) = exp(2πi k·x)` on ℝⁿ; show they are eigenfunctions of the Laplacian `Δ = Σ ∂²/∂x_j²` with eigenvalue `-4π²|k|²`. Wait sign conventions: Δ = sum of second derivatives, e_k has Δ e_k = -(2π)²|k|² e_k. Whereas the "Laplacian" convention -Δ has eigenvalue +4π²|k|². The task says eigenvalues 4π²|k|². So we use `L = -Δ` (the geometer's Laplacian) or state with Δ. I should be careful and prove both: compute `HasFDerivAt`/second derivative iterated. In Lean, one can compute second derivative of `x ↦ exp(2πi k·x)` with `HasDerivAt` etc. Perhaps simplest: compute the Laplacian as a sum of second partial derivatives using `iteratedFDeriv` or via `fderiv` twice. That's doable but fiddly.
+
+Alternative approach in Lean: Use `inner`-product space of complex-valued functions and define the Laplacian on the torus as a Fourier multiplier: `(Δ f)^(k) = -(2π)²|k|² f̂(k)`. Then "eigenfunction" is on the coefficients side: mode `δ_k` maps to eigenvalue. Hmm.
+
+But the task explicitly says "Prove unconditionally: the Fourier modes are eigenfunctions of the Laplacian with eigenvalues 4π²|k|² (explicit computation)". This suggests computing the second derivative of the exponential function. That's a concrete, checkable analytic computation in ℝⁿ. I can do it: for `k : Fin n → ℤ`, define `fourierMode k : (Fin n → ℝ) → ℂ := fun x => exp(2πi * Σ j, (k j : ℝ) * x j)`. Then prove `HasFDerivAt` and the second derivative, giving `∑ j, iteratedFDeriv ℝ 2 (fourierMode k) x (basis j) (basis j) = -(2π)² |k|² • fourierMode k x`. Using `iteratedFDeriv` in Lean can be painful. Alternative: prove that the function `x ↦ fourierMode k x` has second partial derivative along each coordinate: for each j, `deriv (fun t => fourierMode k (Function.update x j t))` etc. Then combine.
+
+Actually maybe simplest and cleanest: Build up coordinate-wise. Let `g : ℝ → ℂ := fun t => exp(2πi * c * t)`, prove `HasDerivAt g (2πi c * g t) t`, and hence `deriv (deriv g) t = -(2π c)^2 * g t` — actually `HasDerivAt (deriv g) (-(2π c)^2 * g t) t`. Then for the multivariate function `fourierMode k`, `fun t => fourierMode k (update x j t) = fun t => C * exp(2πi k_j t)` where C = exp(2πi * Σ_{l≠j} k_l x_l). Then the second partial derivative in direction j equals `-(2π k_j)² * fourierMode k x`. Summing over j gives `-4π² Σ k_j² * fourierMode k x = -4π² |k|² ...`. So define `laplacianAt f x := ∑ j, (second partial derivative)`. Hmm, but that requires a definition of Laplacian. We can define `laplacian f x := ∑ j, deriv (fun t => deriv (fun s => f (update (update x j s) j t)) t) 0`? Messy.
+
+Cleaner: define the Laplacian via `iteratedFDeriv ℝ 2 f x` applied twice to basis vectors: `Δf(x) = ∑ j, iteratedFDeriv ℝ 2 f x (e_j) (e_j)`. And prove the eigenfunction equation with `iteratedFDeriv` computation. Mathlib has lemmas about `iteratedFDeriv` of `exp`-like functions? Possibly `iteratedFDerivWithin` and `ContDiff`. There is `HasFTaylorSeriesUpTo` machinery. For a function written as composition of linear maps and `exp`, we can compute via `HasFTaylorSeriesUpTo` or via `HasFDerivAt` + `HasFDerivAt` of the derivative. Perhaps the most robust path: prove `fourierMode k` is `C^∞` with explicit derivative formula using `HasFDerivAt` and then apply `iteratedFDeriv` congruence? Hmm.
+
+Alternative robust approach: Since the total function is `x ↦ exp(2πi * L x)` where `L : (Fin n → ℝ) →L[ℝ] ℂ`? Actually `L x = ∑ k_j x_j` is a linear functional `(Fin n → ℝ) →L[ℝ] ℝ`, so `x ↦ exp((2πi) • (L x))` is `exp ∘ (smulRight L (2πi))`... Complex exponential with complex argument. `Complex.exp : ℂ → ℂ` is `ContDiff ℝ ⊤`, and mathlib has `Complex.hasDerivAt_exp`, `HasFDerivAt` of `Complex.exp` as a real function equals `cexp z • continuousLinearMap`. There might be a `HasFTaylorSeriesUpTo` for `cexp`. Let me search mathlib for iterated derivative of `cexp`.
+
+Actually, there's a simpler and fully rigorous formulation which sidesteps `iteratedFDeriv`: Define the Laplacian as a *formal* operator via a difference quotient / or define it through the Fourier series. But the task says "explicit computation". Hmm. Let me think about what is achievable and faithful.
+
+Alternatively, define the torus Laplacian eigenvalue equation on the *quotient* level: A function `u : ℝⁿ → ℂ` that is ℤⁿ-periodic descends to the torus. Define `Periodic` and the eigenvalue equation `∀ x, ∑ j, (iteratedFDeriv ℝ 2 u x) (e_j) (e_j) = -4π²|k|² u x`.
+
+I think using `iteratedFDeriv` is best but let me check what mathlib offers. Let me look at the mathlib version in the lake packages and search for relevant lemmas.
+
+Also for the Poincaré inequality: on the Fourier side, for mean-zero functions, `∑' |c_k|² ≤ (1/(4π²)) ∑' (4π²|k|²)|c_k|²` since `|k|² ≥ 1` for k ≠ 0. In the finite-support setting this is elementary. Fully unconditionally provable for finitely-supported coefficient families, and for ℓ² via tsum. Great: Poincaré becomes `∑ |c k|² ≤ (1/(2π))² * ∑ (4π² |k|²) |c k|²` using `1 ≤ |k|²`. Wait (1/2π)² * 4π²|k|² = |k|² ≥ 1. Yes. So ‖u‖₂ ≤ (1/2π)‖∇u‖₂ where ‖∇u‖² = ∑ 4π²|k|²|c_k|². Good.
+
+For Sobolev embedding: H^s ↪ C⁰ for s > n/2: `‖u‖_∞ ≤ C ‖u‖_{H^s}` with `C = (∑_k (1+|k|²)^{-s})^{1/2}`. Need summability of `(1+|k|²)^{-s/2}`^2 = `(1+|k|²)^{-s}` over ℤⁿ for s > n/2. Prove via dyadic shell bounds or integral comparison. This is the hard analytic part in Lean.
+
+Approach for summability: Bound `(1+|k|²)^{-s} ≤ ...` and compare with an integral. Options:
+1. Show `∑_{k ∈ ℤⁿ} (1+|k|²)^{-s} < ∞` using `Summable` of a comparable function and a domination by an integral over ℝⁿ: `(1+|k|²)^{-s} ≤ ∫_{cube around k} (1+|x|²/...)^{-s}`... Standard: on the unit cube centered at k, `|x| ≤ |k| + √n/2`, so `1+|k|² ≤ ...`. Hmm, easier: `(1+|k|²)^{-s} ≤ C ∫_{[k-1/2,k+1/2]^n} (1+|x|²)^{-s} dx` where on the cube `|x| ≥ |k| - √n/2` so `1+|x|² ≥ 1 + (|k|-r)²_+`... Then need `(1+(m-r)²)^{-s} ≥ c (1+m²)^{-s}`, which holds with c depending on r. That gives domination by a constant times the integral, and the integral converges for s > n/2.
+
+But in Lean, integrating over ℝⁿ with a radial-ish function is nontrivial. Instead, **dyadic shell bounds** are more elementary and well-suited to Lean: 
+- Inner part: finitely many terms (`|k| ≤ 1`... using `Finset` over `Finset.Icc`).
+- Shell `2^j ≤ |k| < 2^{j+1}`: number of lattice points `≤ (2^{j+1}+1)^n ≤ C·2^{jn}`, each term `≤ (1+2^{2j})^{-s} ≤ 2^{-2js}`, product `≤ C 2^{j(n-2s)}`, summable geometrically when n - 2s < 0, i.e., s > n/2.
+
+Doing that in Lean for ℤⁿ with |k| the sup norm or Euclidean norm — doable but let's think about what's cleanest. Using the sup norm `‖k‖_∞ = max |k_j|`: the ball of radius R has `(2⌈R⌉+1)^n` points, and `|k| ≥ ‖k‖_∞ ≥ 2^j` on the shell. Using sup-norm is much easier for counting lattice points: `{k : |k|_∞ ≤ N}` is a box, cardinality `(2N+1)^n` via `Fintype.card` of `Finset.Icc` products. And sup-norm ≤ Euclidean norm ≤ √n·sup-norm, so summability in one implies the other. That's clean.
+
+In Lean, for `k : Fin n → ℤ`, `Finset.univ.filter (fun k => ‖k‖ ≤ N)` cardinality ≤ `(2N+1)^n`. We can bound via `Finset.card_le_card` of an injection into `Fin n → Finset.Icc (-N) N`, cardinality `(2N+1)^n`.
+
+Alternative approach for summability: use mathlib's existing summability results. Mathlib has `summable_norm_iff`, and there's `summable_one_div_nat_rpow` style results. For ℤⁿ-indexed, there might be existing results like `Summable (fun k : ℤ => (1+|k|)^(-s))`. Let me check mathlib for `Summable` over `ℤ` or `ℤ^ι`. Hmm, there's `summable_norm_pow_mul_exp_neg`. Not sure about ℤⁿ.
+
+Another approach avoiding explicit counting: use `Finsupp`/metric entropy. Could use established theorem: `Summable (fun k : Fin n → ℤ => (1 + ‖k‖^2)^(-s))` might exist in mathlib as part of `Mathlib.Analysis.PSeries` or lattice point counting in `Mathlib.NumberTheory`? Let me search.
+
+Also possible: mathlib has `Mathlib.Analysis.InnerProductSpace.lattice` ... Actually there's a file `Mathlib/Analysis/Normed/Lattice.lean`? Hmm. And there's `Mathlib/Analysis/PSeries.lean` with `summable_norm_iff`, `Real.summable_one_div_int_rpow`. Let me check the mathlib source.
+
+Also, importantly: for the Sobolev embedding, we can define H^s via the weight, and the embedding map. Let me think about the overall design so that the "embedding H^s ↪ C⁰" is meaningful. Options:
+
+Design: Define
+- `Torus n := (Fin n → ℝ) ⧸ (AddSubgroup.pi (fun _ => ℤ))`? Let me check if there's a nice way. Actually simpler: functions on the torus = periodic functions on ℝⁿ: `∀ x, f (x + m) = f x` for `m : Fin n → ℤ`. Define the space of such functions with sup norm and the Fourier coefficient map `f ↦ (fun k => ∫_{[0,1]^n} f(x) e^{-2πi k·x} dx)`. That requires integration over the cube — feasible in Lean with `MeasureTheory` (restrict volume to the unit cube `Set.pi Set.univ (fun _ => Set.Icc 0 1)`), and orthogonality of characters ∫ e^{2πi(k-l)·x} dx = δ_{kl}. But this is a lot of measure theory (Bochner integrals of ℂ-valued functions, Fubini for product measures...).
+
+Given the 4-hour budget and the requirement that everything be fully checked and axioms clean, a realistic and honest approach: build the **Fourier-coefficient (spectral) model** fully, and prove:
+
+(a) On ℝⁿ, the explicit modes `e_k(x) = exp(2πi k·x)` satisfy the Laplacian eigenfunction equation with explicit iterated derivatives — unconditional computation.
+
+(b) The mode functions are ℤⁿ-periodic (i.e., descend to the torus), and satisfy orthogonality on the fundamental domain... maybe ∫ over cube = δ. Could be nice but heavy; maybe we can prove orthogonality of the *discrete* inner product? Hmm, can't do integral.
+
+(c) Define the torus Fourier space: `ℓ²(ℤⁿ, w_s)` with weight `w_s(k) = (1+|k|²)^{s/2}`; define `H^s` as the subtype of sequences with summable `w_s * |c|²`? Or define the norm `‖c‖_{H^s} = (∑' (1+|k|²)^s |c_k|²)^{1/2}` on finitely-supported sequences, and prove the Sobolev embedding inequality `|∑_k c_k| ≤ C_s ‖c‖_{H^s}` for finitely supported c — that's exactly Cauchy–Schwarz plus summability of the weight. This is the "embedding H^s ↪ C⁰" in coefficient form: since `u(x) = ∑_k c_k e_k(x)` and `|e_k(x)| = 1`, we get `‖u‖_∞ ≤ ∑|c_k| ≤ C_s ‖u‖_{H^s}`. Fully unconditional and honest, with the summability proof being the mathematical content (dyadic shells).
+
+(d) Poincaré: for mean-zero (c_0 = 0), `∑|c_k|² ≤ (1/4π²) ∑ 4π²|k|²|c_k|²`, i.e. `‖u‖₂ ≤ (1/2π)‖∇u‖₂`; and `‖∇u‖₂² = ∑ 4π²|k|²|c_k|²`. Fully unconditional for finite support and for ℓ² sequences (tsum version). Also: we could prove the equality `(1/2π)² * ∑ 4π²|k|²|c_k|² = ∑ |k|² |c_k|² ≥ ∑|c_k|²` using `|k|² ≥ 1` for `k ≠ 0`.
+
+To make (d) genuinely about "the torus Laplacian", define the Fourier multiplier operator `lapMultiplier c k = -(4π²|k|²) c k` etc. And a `WeakDerivative`? Hmm, better: define the gradient Fourier multiplier `gradMultiplier`.
+
+Now, the task says "Define the flat n-torus as ℝⁿ/ℤⁿ". I should define something named `FlatTorus n` with the quotient or the periodic-function model. The safest: define `FlatTorus n := (Fin n → ℝ) ⧸ AddSubgroup.pi ...`? But do I use it? It may be unused and thus pointless. Better: define it and prove the basic fact that the mode functions factor through the quotient (i.e., are ℤⁿ-periodic), giving a genuine map `FlatTorus n → ℂ`. That's a real connection: define the torus quotient, define `PeriodicFn`, show `e_k` is periodic, and get a function on `FlatTorus n` via `Quotient.liftOn`. Actually mathlib has `Function.Periodic` and `AddCircle`. Let me check if there's something for ℤⁿ-periodicity.
+
+For the quotient `(Fin n → ℝ) ⧸ (AddSubgroup.pi fun _ => ℤ)` — hmm, in Lean: `AddSubgroup.pi (Set.univ : Set (Fin n)) (fun _ => (AddSubgroup.zmultiples (1:ℝ)))`? There's `AddSubgroup.pi` requiring a family over `Set`. Let me check mathlib's definition. Actually there's `AddSubgroup.pi (s : Set ι) (H : ∀ i, AddSubgroup (G i))`? Let me look. Alternatively define the subgroup directly: `{m : Fin n → ℝ | ∀ j, ∃ z : ℤ, m j = z}` and prove it's an additive subgroup (`IsAddSubgroup`). Then quotient. Hmm, could also use `(Fin n → ℤ)` as a subgroup of `(Fin n → ℝ)` via `AddSubgroup.map` or the image of the coercion `(Fin n → ℤ) →+ (Fin n → ℝ)`. Let's do: the coercion `Int.castAddHom` composed with Pi: `AddMonoidHom.pi (fun _ => Int.castAddHom ℝ) : (Fin n → ℤ) →+ (Fin n → ℝ)`; then `AddSubgroup.map` of `⊤`. So `torusLattice n : AddSubgroup (Fin n → ℝ) := (⊤ : AddSubgroup (Fin n → ℤ)).map (AddMonoidHom.pi ...)`. Then `FlatTorus n := (Fin n → ℝ) ⧸ torusLattice n`. This works: `QuotientAddGroup.Quotient.addCommGroup`? For a quotient of an additive group by an additive subgroup, `quotient` instance: `QuotientAddGroup.Quotient.addCommGroup` needs `[AddCommGroup]`, yes there is an instance. Then `QuotientAddGroup.mk` is the projection, and `QuotientAddGroup.eq` / `mk_eq_mk_iff` etc.
+
+To show `e_k` descends: prove `∀ m ∈ torusLattice n, fourierMode k (x + m) = fourierMode k x` and use `Quotient.liftOn` with well-definedness via `QuotientAddGroup.leftRel_apply`. Since the quotient is by an additive subgroup, the relation is `x - y ∈ H`. Mathlib has `QuotientAddGroup.leftRel_apply : QuotientAddGroup.leftRel H x y ↔ x - y ∈ H`? Let me check. Then `Quotient.liftOn` requires showing `f x = f y` whenever `x - y ∈ H`. Doable: `f (x) = f (y + (x-y)) = f y` using periodicity.
+
+Hmm, actually there's a cleaner route: define `Periodic` predicate and prove the collection of ℤⁿ-periodic functions. And use `Function.Periodic.lift`. For a function periodic w.r.t. a subgroup, mathlib has `Function.Periodic` for a single period `c`: `f (x + c) = f x`. For a whole subgroup, there's `AddSubgroup.periodic`? Hmm. There's `Function.Periodic` and `AddCircle.liftIco` etc.
+
+Let me consider: maybe simpler to define the periodicity w.r.t. the subgroup, then use `Quotient.liftOn` directly with `QuotientAddGroup.leftRel_apply`. And mathlib might already have `AddSubgroup.quotient`-lifting API: `QuotientAddGroup.lift`? Hmm, there is `QuotientAddGroup.lift`? For groups: `QuotientGroup.lift` (for normal subgroups). For additive: `QuotientAddGroup.lift`. But there are also generic helpers: `AddSubgroup.quotientEquivOfEq`... Let me check the actual mathlib in the workspace.
+
+Actually the simplest and most robust: define `FlatTorus n := (Fin n → ℝ) ⧸ torusLattice n` and for lifting, prove by `Quotient.inductionOn` + `Quotient.sound`. Since the API `QuotientAddGroup.leftRel_apply` exists (`x - y ∈ H`), and given `hm : x - y ∈ H`, we need `f x = f y`. We can show `x = y + (x - y)`, so `f x = f (y + (x-y)) = f y` if `f` is invariant under adding elements of H. That's straightforward.
+
+But is it needed? The task's item 1 says "Define the flat n-torus as ℝⁿ/ℤⁿ with Fourier modes indexed by ℤⁿ". So yes, defining `FlatTorus n` is required. It's worth doing well: define the quotient, prove the modes descend, define `torusMode k : FlatTorus n → ℂ`.
+
+Now, what about integration/Parseval? "Parseval's identity for finite Fourier support functions" — in the coefficient (spectral) model, Parseval is just the statement `∑_k |c_k|² = ‖u‖²` where `u = ∑ c_k e_k` and orthonormality of modes. Without the integral, "Parseval's identity" is trivially the definition of the L² norm on the coefficient side. To make it meaningful, I should prove orthonormality of the Fourier modes under the inner product `⟨f,g⟩ = ∫_{[0,1]^n} f \bar g` — that requires measure theory over the cube. That's a real chunk of work but valuable and mathematically central ("Parseval's identity"). Alternatively, define the L² inner product on the torus *by* the Fourier coefficients (Plancherel as definition) — but then it's not an honest "Parseval".
+
+Hmm. Let me assess feasibility of the integral approach in mathlib:
+- `MeasureTheory.volume` on `Fin n → ℝ`, restrict to `Set.Icc 0 1` (as `Set.pi Set.univ (fun _ => Set.Icc 0 1)`).
+- Integral of complex-valued function: `∫ x in box, f x ∂volume` using `MeasureTheory.integral` (Bochner). 
+- Compute `∫ x in box, exp(2πi * ∑ k_j x_j) dx = ∏_j ∫_0^1 exp(2πi k_j x_j) dx_j` via Fubini for product measures; mathlib has `MeasureTheory.integral_fin`? Hmm, there is `MeasureTheory.Measure.pi` and `volume_preserving`... Fubini: `integral_prod` / `integral_integral_swap` works for product measures `μ.prod ν`; for `Fin n → ℝ` with `Measure.pi`, there might be a lemma `MeasureTheory.integral_fin`? Let me search. Actually, mathlib does have `MeasureTheory.Measure.pi` and `integral_fin`? There's the file `Mathlib/MeasureTheory/Integral/Pi.lean` with lemmas about integrals over product measures and `Measure.pi`. Hmm.
+
+Then need `∫_0^1 e^{2πi m t} dt = 0` for `m ≠ 0` and `= 1` for `m = 0`. That's an explicit complex integral: `∫_0^1 exp(2πi m t) dt`. With `intervalIntegral` and `Complex.exp` antiderivative `exp(2πi m t)/(2πi m)`. Since `m : ℤ`, `2πi m ≠ 0`. Doable: `intervalIntegral.integral_deriv_eq_sub` with derivative `fun t => c * exp(c*t)`. Mathlib has `Complex.deriv_exp`... The antiderivative: `fun t => (2πi m)⁻¹ * exp(2πi m * t)`, derivative `exp(2πi m t)`. Fine.
+
+But the mode functions as I'd define them: `exp(2πi * (∑ k_j x_j))` with `2πi` as a complex number: `(2 * Real.pi * Complex.I)`. Then `∫_0^1 exp(c * m * t) dt`. Need `c*m ≠ 0`. OK.
+
+The 1-D integral then needs `Real` and `Complex` basics: `Complex.exp`, `Complex.ofReal_mul`, `integral_exp_mul`. There's a lemma `intervalIntegral.integral_exp_mul_complex`? Hmm, maybe. Let me search mathlib for "integral_exp".
+
+Given the time budget (4 hours), I need to be strategic. Priority:
+1. Eigenfunction computation (iterated derivatives) — core; must be solid.
+2. Sobolev embedding via Cauchy–Schwarz + summability of weight with dyadic shells — core hard analysis.
+3. Poincaré inequality — core.
+4. Parseval: option (a) full measure-theoretic orthonormality (expensive), option (b) prove Parseval in the form: for finitely supported `c`, the function `u = ∑ c_k e_k` satisfies `∫_{box} |u|² = ∑ |c_k|²` — needs orthonormality, i.e., ∫ e_k \bar e_l = δ_{kl}. Alternatively prove a weaker but still honest statement and document clearly. The task says "Parseval's identity for finite Fourier support functions". I could interpret as: define the inner product on torus functions as the L² integral and prove for finite Fourier support `‖u‖² = ∑|c_k|²`. I'd like to attempt it, but time-box it: first get 1–3 done with compile-checked checkpoint, then attempt Parseval with integrals, then the torus quotient.
+
+Actually let me reconsider. The final card must be honest. It's acceptable to state exactly what's proved. The task demands unconditional proof of these specific items; if I do them in the coefficient model with clear documentation of the model and the (checked) equivalence-free statements, that should count as genuine mathematics: the spectral theory of the torus Laplacian is precisely the ℓ² spectral theory; the Poincaré inequality and Sobolev embedding at the level of Fourier coefficients are the real content.
+
+Let me now check what mathlib provides, especially:
+- `Summable` over `ℤ` and products: is there `summable_int_rpow`? 
+- Existing `AddCircle` Fourier analysis.
+- `MeasureTheory.integral_fin` / product measure integral.
+- `iteratedFDeriv` lemmas for `Complex.exp`.
+
+Let me look at the mathlib directory.
+dsh: reasoning:
+Excellent! There is `Mathlib/Analysis/Fourier/AddCircleMulti.lean` — Fourier analysis on multi-dimensional tori! That's `AddCircle (Fin n → ℝ)`? Let me check. This could be a huge help: it likely defines the Fourier coefficients on `(Fin n → ℝ) / ℤⁿ`-ish spaces, and the characters `fourier n k x = exp(2πi k·x)`.
+
+Let me read it.
+dsh: reasoning:
+`UnitAddTorus d` exists in mathlib! Let me see the rest of AddCircleMulti.lean and find where `UnitAddTorus` is defined (maybe in `Mathlib/Topology/Instances/AddTorus.lean` or `Mathlib/Analysis/Fourier/AddCircle.lean`).
+
+Let me grep.
+I'll start by examining the existing state of the worktree.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

@@ -1,0 +1,50 @@
+/- SEMREV-L5 independent replay: printed definitions (semantic-class evidence). -/
+import Poincare.D10.TriangulationLowDim.Complex
+import Poincare.D10.TriangulationLowDim.Moise
+import Poincare.D12.SurgeryRecognition.All
+import Poincare.D12.TriangulationTopology.DiskGluing
+import Poincare.D12.TriangulationTopology.NegControl.NegControl
+import Poincare.D12.TriangulationTopology.TwoHemisphereInstance
+import Poincare.D12.VolumeIBP.Audit
+import Poincare.D13.CriticalPathReview.NegControl
+import Poincare.D7.Limit.Blocked
+import Poincare.D7.Limit.Convergence
+import Poincare.D7.Recognition.All
+import Poincare.D7.SurgeryFlow.Basic
+import Poincare.D7.SurgeryFlow.Statements
+import Poincare.Longrun.Evolution.Bridge
+import Poincare.Longrun.Surgery.Missing
+import Poincare.Longrun.Topology.Stage6Bridge
+import Poincare.VKPort.HatcherLib.Ch1.VanKampen
+
+set_option autoImplicit false
+set_option maxHeartbeats 0
+#print Poincare.Stage6.poincareConjectureTopologicalThree
+#print Poincare.Longrun.Topology.stage6Target
+#print Poincare.Longrun.Topology.SphereThree
+#print Poincare.Longrun.Topology.EuclideanThree
+#print Poincare.Longrun.Topology.CompactThreeManifold
+#print Poincare.D12.SurgeryRecognition.AntipodalGroup
+#print Poincare.D10.TriangulationLowDim.MoiseTriangulationTheorem
+#print Poincare.D7.SurgeryFlow.missingFullNeckAnalysis
+#print Poincare.D7.SurgeryFlow.missingExtinctionTheorem
+#print Poincare.D7.SurgeryFlow.missingSurgeryFlowTheorem
+#print Poincare.D7.SurgeryFlow.NeckAnalysisHypotheses
+#print Poincare.D7.SurgeryFlow.ExtinctionData
+#print Poincare.Longrun.Surgery.ExtinctionTheorem
+#print Poincare.Longrun.Surgery.MissingInputs
+#print Poincare.Longrun.Surgery.NeckAnalysis
+#print Poincare.Longrun.Evolution.FiniteMeshConvergence
+#print Poincare.Longrun.Evolution.FiniteRepresentsContinuousPerelman
+#print Poincare.Longrun.Evolution.PerelmanEvolutionBoundary
+#print Poincare.Longrun.Evolution.ContinuousPerelmanFMonotonicity
+#print Poincare.D7.Limit.HeatMeshConvergence
+#print Poincare.D7.Limit.HeatMeshConvergenceTheorem
+#print Poincare.D7.Recognition.ExtinctionCertificate
+#print Poincare.D7.Recognition.SphericalPieceRecognition
+#print Poincare.D7.Recognition.CanonicalNeighborhoodInput
+#print Poincare.D7.Recognition.RecognitionHypotheses
+#print Poincare.D12.SurgeryRecognition.ConnectedSumDecompositionV2
+#print Poincare.D12.SurgeryRecognition.RemainingRecognitionHypothesesV2
+#print Poincare.D12.SurgeryRecognition.RemainingRecognitionHypothesesV3
+#print Poincare.D12.SurgeryRecognition.SphericalSpaceFormModel

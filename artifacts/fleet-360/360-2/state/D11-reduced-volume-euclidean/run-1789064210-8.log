@@ -1,0 +1,99 @@
+dsh: reasoning:
+Let me start by exploring the worktree to understand the existing state, checkpoint.json, and the D10 codebase I need to build on.
+dsh: reasoning:
+The checkpoint says the task is COMPLETE. The task says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work." So the work appears complete. My job: verify the current state is actually consistent (compile checks, axiom audit, results files exist), and if everything checks out, keep checkpoint.json/results current and end with TASK_DONE.
+
+Let me look at the existing files and results, verify compiles, and re-verify the audit. Let me first look at the results card and the source files.
+dsh: reasoning:
+The checkpoint says the task is COMPLETE and re-verified. My job as a long-running builder: verify the current state is genuinely green (fresh compile gates, axiom audit, forbidden tokens), keep checkpoint.json/results current, and end with TASK_DONE.
+
+Let me re-run the verification gates fresh:
+1. Per-file compile with `lake env lean` from worktree root (7 files)
+2. Axiom audit via `lake env lean release/Poincare/D11/ReducedVolume/Audit.lean`
+3. Forbidden-token scan
+4. `lake build` (cached, exit 0)
+
+Let me kick off these gates. I'll run them in the background since `lake build` may take a while, but since it's cached it should be fast. Let me first do per-file compiles.
+dsh: reasoning:
+Forbidden tokens scan: 0 hard, 0 soft. Good.
+
+Now while the per-file compile runs, let me look at the source files to double-check the content quality — particularly the Statements.lean interface and the Audit.lean. Also check that no forbidden tokens exist. Let me read the main files to sanity-check the mathematics.
+dsh: reasoning:
+Basic.lean looks solid. Let me check StraightRays.lean and Volume.lean and Statements.lean quickly.
+dsh: reasoning:
+This looks mathematically rigorous and complete. Let me check Volume.lean and Statements.lean as well.
+dsh: reasoning:
+All 7 files compile with exit 0. Now let me run the axiom audit fresh and `lake build`. The Audit.lean already ran (exit 0). Let me capture its output to verify the axiom cones.
+dsh: reasoning:
+While those run, let me check the Audit.lean file to make sure it audits all 74 declarations, and check the remaining files (All, Probe, Audit) quickly.
+dsh: reasoning:
+- lake build: exit 0, 9155 jobs, "Build completed successfully". Good.
+- Axiom audit: 72 lines containing "propext", but that grep count is a rough proxy (some `#print axioms` outputs may print "propext" on multiple lines, and some have empty cones). The nonstandard check had a grep conflict error (I used both `-E` and `-P` flags). Let me redo the analysis properly: parse the audit log for the cone lines and classify.
+
+Let me write a small python script to parse the audit output.
+dsh: reasoning:
+My regex didn't match. Let me look at the actual format of the audit log first.
+dsh: reasoning:
+72 blocks parsed, but the checkpoint claimed 74 declarations (2 with empty cone `[]`). The empty-cone declarations (`#print axioms` with no dependencies) print a different format — in Lean 4, a declaration with no axioms prints something like `'name' depends on axioms: []`? Actually in newer Lean versions, when the axiom set is empty it prints differently. Let me check the audit log tail for the empty-cone entries.
+dsh: reasoning:
+The 2 empty-cone declarations are `generalMonotonicityMissingDependencies` and `generalMonotonicityMissingDependencies_length` (a List String and a rfl theorem — no axioms). Total: 72 + 2 = 74 declarations, matching the checkpoint exactly.
+
+Cones: 71 × [propext, Classical.choice, Quot.sound], 1 × [propext], 2 × []. 0 nonstandard. ✓
+
+Now update the recheck JSON with the corrected totals, update checkpoint.json timestamp, and ensure the results card reflects this session's fresh re-verification. Also verify git worktree clean status, and confirm no forbidden tokens (already done: 0/0).
+
+Let me update the axiom audit JSON and then bump the checkpoint + card session re-verification section.
+dsh: reasoning:
+The worktree root is not itself a git repository (or git discovery stops at the filesystem boundary). The parent may be a git repo. Not critical — the checkpoint claimed "git worktree clean" previously, but it's not a git repo here, so skip.
+
+Now update checkpoint.json with a fresh timestamp and this session's re-verification, and append a session re-verification section to the result card. Since this session changed nothing in the authored files, the verdict stays TASK_DONE.
+
+Let me get the current time and update checkpoint.json.
+dsh: reasoning:
+All 7 file hashes match the ones recorded in checkpoint.json and the result card — no source drift. Now update checkpoint.json (bump `updated_at`, `reverification` fields) and add a session re-verification section to the result card. I'll keep the changes minimal and factual.
+dsh: reasoning:
+Now update the result card with a session re-verification section. I'll add a section after the existing "Session re-verification (2026-09-10T18:10Z)" section. Let me look at the end of the card to find where the last section is.
+dsh: reasoning:
+Now update the JSON card too: add the new session re-verification block and bump `reverified_at`. Let me edit the JSON.
+dsh: reasoning:
+Now validate the JSON files are well-formed, and do a final sanity pass:
+1. JSON validity of checkpoint.json and the result JSON.
+2. Confirm the card's last line is the TASK_DONE line.
+3. Confirm no `sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted` in the 7 authored files (already covered by the scan — the scan_forbidden.py covered hard tokens; but let me double check the hard token list covers `native_decide`/`proof_wanted`; the earlier scan output said 0 hard, 0 soft).
+4. Also verify the Probe.lean compiles — done.
+
+One more thing: the task says "Only your own longrun/results/D11-reduced-volume-euclidean.md can complete this task" and "Last line: TASK_DONE or TASK_BLOCKED with the card path." The card's last line is "**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`". Good.
+
+Let me run JSON validation and a final grep for forbidden tokens to be extra safe.
+dsh: reasoning:
+The backticks in my grep broke the shell quoting. Let me use the python-based scan instead (already done: 0 hard, 0 soft) and a simpler python check for tokens.
+dsh: reasoning:
+All gates green:
+
+1. ✅ 7/7 files compile with `lake env lean` from the worktree root (exit 0)
+2. ✅ `lake build` exit 0, 9155 jobs, "Build completed successfully"
+3. ✅ Axiom audit: 74/74 declarations; cones only `[propext, Classical.choice, Quot.sound]` (71), `[propext]` (1), `[]` (2); 0 nonstandard
+4. ✅ Forbidden tokens: 0 hard, 0 soft over 7 files
+5. ✅ Source hashes unchanged vs. the card (7/7 match)
+6. ✅ checkpoint.json and result JSON valid; card last line is the TASK_DONE line with card path
+
+The work was previously completed (phase COMPLETE), and I've re-verified it fresh in this session and updated checkpoint.json and the results card/JSON. The final answer should end with the required last line: TASK_DONE with the card path.
+
+Wait — the task says "Last line: TASK_DONE or TASK_BLOCKED with the card path." This refers to my report's last line. Let me ensure my final message ends with that line.
+All verification gates pass in this session. Summary of the fresh re-verification and state:
+
+**D11-reduced-volume-euclidean — verified complete (no restart needed, checkpoint was COMPLETE):**
+
+| gate | result |
+| --- | --- |
+| per-file compile `lake env lean release/Poincare/D11/ReducedVolume/<F>.lean` × 7 | **7/7 exit 0** (`longrun/d11rve-logs/recheck_*.log`) |
+| `lake build` (whole release package) | **exit 0**, 9155 jobs, "Build completed successfully" |
+| `#print axioms` audit (74/74 declarations) | 71 × `{propext, Classical.choice, Quot.sound}`, 1 × `{propext}`, 2 × `{}`; **0 nonstandard** (`longrun/d11rve-logs/recheck_axiom_audit.json`) |
+| forbidden tokens (comment/string-aware scan) | **0 hard, 0 soft** over all 7 files |
+| source integrity | sha256 of all 7 authored files match the hashes recorded in the result card (no drift) |
+
+**Content recap (all pre-existing, unchanged):** flat `L`-length `∫ √τ (|γ'|² + R) dτ` with `R = 0` and the reduced distance `ℓ = |x|²/4τ` from the D10 heat-kernel asymptotics (`Basic.lean`); `L`-geodesics from the origin are exactly the straight rays, proved unconditionally via the completing-the-square deficit (`StraightRays.lean`); reduced-volume integrand `τ^{-n/2} exp(-ℓ)` coincides with the Gaussian and `Ṽ(τ) = 1` for all `τ > 0` using the D10 Gaussian toolbox (`Volume.lean`); named `ReducedVolumeMonotonicityTheorem` / `ManifoldReducedVolumeInterface` Props with field-by-field Euclidean instantiation of the D7 certificate, Jacobian comparison, and `LMinimizerExistence` (`Statements.lean`). The general manifold monotonicity theorem is honestly stated as a named `Prop` (state-only) and proved for the Euclidean instantiation.
+
+**Bookkeeping updated this session:** `checkpoint.json` (`updated_at` 2026-09-10T18:15:06Z, new fresh-reverification block), result card `.md` (section 7 session re-verification) and `.json` (session_reverification block) — all valid JSON, card last line intact.
+
+TASK_DONE — card: longrun/results/D11-reduced-volume-euclidean.md

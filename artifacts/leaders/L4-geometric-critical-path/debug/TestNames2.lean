@@ -1,0 +1,11 @@
+import Mathlib.MeasureTheory.Measure.Doubling
+import Mathlib.Algebra.Order.Floor.Extended
+#check @ENat.le_floor
+#check @ENat.floor_le_self
+#check @ENat.gc_toENNReal_floor
+#check @mul_le_mul_left
+#check @ENat.floor
+#check @ENat.toNat
+#check @ENNReal.coe_toNNReal_le_self
+#check @nndist_lt_iff_dist_lt
+#check @edist_le_coe

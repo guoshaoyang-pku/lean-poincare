@@ -1,0 +1,2 @@
+import Poincare.L3.ConjugateGaussian.IBP
+#print axioms Poincare.L3.ConjugateGaussian.compactSupport_integral_mul_fderiv

@@ -1,0 +1,551 @@
+dsh: reasoning:
+The task appears to be already COMPLETE from a prior session. The checkpoint says phase COMPLETE, and the results card exists. But this invocation asks to "Continue from existing files and checkpoint.json in this worktree; do not restart completed work." Let me verify the current state is still valid — re-run the compile gate, axiom audit, forbidden token scan, and confirm the card's last line.
+
+Let me check git status and the card's last line.
+
+Let me be efficient. I should:
+1. Verify the authored files exist, compile exit 0.
+2. Re-run axiom audit.
+3. Check forbidden tokens.
+4. Verify card last line.
+5. Update checkpoint with a fresh re-verification if all good, and report.
+
+Since the checkpoint says COMPLETE and multiple fresh reverifications were done, this session is likely a re-verification invocation. Let me do a genuine fresh verification.
+
+Let me look at the files first.
+dsh: reasoning:
+The task is complete from prior sessions. This session (session 21 presumably) should do a fresh independent verification. Let me do the full verification: compile all 7 files, run axiom audit, check forbidden tokens, verify lake build.
+
+Let me first read the Audit.lean to see what it does, and check the tooling.
+dsh: reasoning:
+Good. Now let me run the fresh verification. Let me set up a session21 dir and run:
+1. Compile all 7 files
+2. Axiom audit
+3. Forbidden token scan
+4. lake build
+
+Let me start the compile gate in background since it may take a while (Mathlib imports).
+
+Actually, let me first check if there's a script from session20 I can reuse.
+dsh: reasoning:
+Let me reuse the gate script approach for session21. Let me check if session20 is the most recent and what the tooling for axiom audit is. Let me look at how the axiom audit was generated.
+
+Let me write a fresh session21 gate script and run it in background (compilation of 7 files with Mathlib may take several minutes).
+
+Also I should verify the source hashes are unchanged vs. what the card claims.
+
+Let me look at the card content to understand structure and the claimed hashes.
+dsh: reasoning:
+All 7 hashes match exactly what the card records. Sources are unchanged. Now let me run the fresh compile gate + axiom audit + forbidden scan. Let me kick off the compile gate in background.
+
+Let me write a session21 gate script.
+dsh: reasoning:
+The scanner reports "lean_files_scanned: 0" which means it doesn't accept file arguments in that form. It probably needs a root dir. Let me check the script usage.
+
+Hmm, but hard_match_count 0 and lean_files_scanned 0 — that means it scanned nothing, so the 0 is meaningless. Let me check the script.
+dsh: reasoning:
+The scanner takes directories (os.walk), so passing files means os.walk on a file yields nothing. I need to pass the directory. Let me re-run with the directory root.
+
+Also, compile gate finished. Let me collect.
+dsh: reasoning:
+Compile gate: 7/7 exit 0. Forbidden scan: 7 files scanned, 0 hard, 0 soft.
+
+Now let me run the axiom audit. I need to compile Audit.lean and parse the `#print axioms` output. Let me check the session20 axiom_audit.json structure to replicate.
+
+Let me look at how the audit was generated. The compile_Audit.log contains the `#print axioms` outputs. Let me parse it.
+
+Let me check the existing axiom_audit.json format.
+dsh: reasoning:
+Now I'll write a parser script for the new audit log. Let me compile Audit.lean (already done in gate — compile_Audit.log). Let me parse that log into axiom_audit.json.
+
+The log format: `'Name' depends on axioms: [propext, Classical.choice, Quot.sound]` possibly wrapped over lines. Also some declarations have no axioms — the format is `'Name' does not depend on any axioms`.
+
+Let me write a Python parser.
+
+Also I need to verify coverage: the 74 declarations in Audit.lean match the 74 authored declarations. And the `#print axioms` for the Audit.lean file itself — the gate already compiled it.
+
+Let me write the parser.
+dsh: reasoning:
+Excellent — fresh audit: 74/74, 71 × [propext, Classical.choice, Quot.sound], 1 × [propext], 2 × [], 0 nonstandard. No errors or warnings.
+
+Now let me verify coverage: the 74 names in the audit match exactly the 74 authored declarations. Let me do the namespace census check.
+
+Also I should verify the axioms are exactly within the allowed set [propext, Classical.choice, Quot.sound]. Confirmed: 0 nonstandard.
+
+Let me also verify lake build. And do a coverage check — extract declaration names from the authored files and compare with audit names.
+
+Let me run lake build in background and meanwhile do the coverage check.
+dsh: reasoning:
+The grep for declarations gives 70, but the audit has 74. The difference could be due to declarations with different formatting (e.g., `theorem` with `@[simp]` attributes on preceding lines, or declarations spanning, or `def foo : ...` on the same line). Let me do a more careful census — extract from the audit list the names and check each is actually declared in the sources.
+
+Let me write a proper coverage check: for each of the 74 names in the audit, verify the name (short form) appears as a declaration in one of the 4 content files. And conversely, find all declarations in the content files.
+
+Actually, the key check the task cares about: "#print axioms only [propext, Classical.choice, Quot.sound]" — done. And no sorry/axiom/unsafe/native_decide/proof_wanted — done.
+
+But the coverage claim in checkpoint says "audit coverage 74/74 exact bijection". Let me verify that properly. The grep-based declaration count is unreliable due to formatting. Let me use Lean itself to do the census, or use a better regex.
+
+Let me look at the actual declaration syntax in the files.
+dsh: reasoning:
+My grep pattern missed `theorem euclideanFlow_scalarCurvature` etc. because they may be in a `namespace` with an attribute on the preceding line, or the pattern `^(theorem|...)` matched but the count was 70. Wait, looking at the output above, I see declarations listed. Let me count: the list above shows declarations but some are missing (e.g., `euclideanFlow_scalarCurvature`, `euclideanFlow_metric`, `straightRay_eq_gaussianPath`, `straightRayVelocity_eq_gaussianVelocity`, `straightRay_zero`, `straightRay_isLMinimizer` is there...). Those missing ones are probably written as `@[simp] theorem ...` or with the declaration keyword not at line start... Actually `euclideanFlow_scalarCurvature` — let me check.
+
+Actually, my earlier grep piped through `head -90` and the total was 70 with the sed. Hmm, the count 70 came from `grep -hoE ... | wc -l` with pattern requiring keyword + space + name. Some declarations might be `theorem euclideanFlow_scalarCurvature (n : ℕ) :` which would match.
+
+Wait — the discrepancy: `-h` with `-o` and `^` anchor. Some declarations may have leading whitespace inside namespaces. My second grep included `^[[:space:]]*` and produced the list above. Let me count that list properly and find the missing ones.
+
+Let me just do the coverage check programmatically against the audit names. That's the real question: does every audit name resolve to a real declaration (it must, since `#print axioms` on a nonexistent name errors — and the gate exited 0 with no errors, so all 74 names exist).
+
+Actually that's a strong point: since `lake env lean Audit.lean` exited 0 with zero errors, all 74 `#print axioms` commands referenced existing constants. So the coverage "every audit name exists" is proven by the successful compile.
+
+The reverse direction (every authored declaration is audited) is what I should check. Let me do that comparison: extract names from the audit (short form) and names from the source files, and see which source declarations are not audited.
+
+Let me do this in Python more robustly by matching the audit names against source text.
+dsh: reasoning:
+- `lake build` exit 0, 9155 jobs, "Build completed successfully".
+- Coverage: 74 audited names ↔ 74 real declarations. The single "source-but-NOT-audited: ['and']" is a false positive from my regex matching the prose line "theorem and the manifold reduced-volume interface..." inside a docstring in Statements.lean (line visible in grep output above: `theorem and the manifold reduced-volume interface consumed by D7-reduced-length-volume.**`). That's inside a `/-! ... -/` doc comment, not a declaration. Wait — it appears my regex ran on raw text including comments. Yes: `Statements.lean: theorem and the manifold reduced-volume interface consumed by...` — that's a docstring line. So it's a regex artifact, not a missing declaration.
+
+So: exact bijection 74 audited = 74 authored declarations. 
+
+Note: 2 declarations depend on [] and 1 on [propext] — all subsets of [propext, Classical.choice, Quot.sound]. 0 nonstandard. 
+
+Everything verified:
+1. ✅ 7/7 compile exit 0
+2. ✅ lake build exit 0, 9155 jobs
+3. ✅ axiom audit 74/74, all within [propext, Classical.choice, Quot.sound], 0 nonstandard
+4. ✅ forbidden tokens 0 hard, 0 soft over 7 files
+5. ✅ source hashes 7/7 match card
+6. ✅ card last line TASK_DONE
+
+Now, this session's job per the task: "Continue from existing files and checkpoint.json in this worktree; do not restart completed work." The work is complete and verified. I should:
+- Update checkpoint.json with session21 fresh verification
+- Append a session-21 re-verification section to the result card (keeping last line TASK_DONE)
+- Update the .json result card
+- Report.
+
+But wait — I should be careful. The instruction says "Only your own longrun/results/D11-reduced-volume-euclidean.md can complete this task." The card already exists and is complete. I should verify the mathematical content is genuinely what's claimed, not just that it compiles. Let me spot-check the actual theorems to make sure they state what the task requires — i.e., that this isn't a vacuous/weakened formalization. This is an important independent check: the task warns "Report a genuine mathematical blocker rather than claiming completion with a weaker theorem."
+
+Let me read the key statements to confirm the mathematics is real and non-vacuous:
+- `heatKernelReducedDistance_eq` : reduced distance = |x|²/4τ
+- `reducedVolume_eq_one` : Ṽ = 1
+- `LMinimizer_eq_straightRay` : L-geodesics are straight rays
+- `reducedVolumeIntegrand_eq_gaussianKernel`
+
+Let me read Basic.lean, Volume.lean and key parts of StraightRays/Statements.
+dsh: reasoning:
+This is genuinely substantive. `reducedVolume_eq_one` is expressed in terms of the D10 `gaussianKernel_integral` (heat kernel total mass 1), and `reducedVolumeIntegrand_eq_gaussianKernel` really rewrites the integrand to the D10 Gaussian kernel. Good — this is a real, unconditionally-proved theorem, not vacuous.
+
+Let me check the key math statements in Basic.lean and the reduced distance, and the straight-ray minimality, plus the named Props in Statements.lean (especially the monotonicity and D7 interface). Let me read Basic.lean and the critical parts of Statements.lean.
+
+Let me check `heatKernelReducedDistance_eq` and `heatKernel_asymptotics`.
+dsh: reasoning:
+This is genuinely real. The reduced distance is defined from heat kernel asymptotics, and proven equal to |x|²/4τ and to the D7 variational reduced length.
+
+Now let me verify the straight-ray minimality and the named Props (monotonicity theorem + manifold interface). Let me read the key parts of Statements.lean and StraightRays.lean.
+dsh: reasoning:
+Everything is genuinely substantive. `minimizer_iff_eq_straightRay` is a real iff characterization (both directions), unconditional.
+
+Now let me verify the named Props in Statements.lean — monotonicity theorem and manifold reduced-volume interface consumed by D7.
+dsh: reasoning:
+Everything is exactly as described and genuinely substantive. The named Props are real, the monotonicity theorem is stated as `def ... : Prop` (a statement, not an axiom), and proved unconditionally in the Euclidean case (`euclidean_manifoldReducedVolumeMonotonicity`).
+
+Verification is complete. All the task requirements are met and independently re-verified in this session:
+
+1. ✅ L-length defined from D10 heat kernel; R=0 flat case — `flatLlength`
+2. ✅ Unconditional proofs: L-geodesics = straight rays (`minimizer_iff_eq_straightRay`), ℓ = |x|²/4τ (`heatKernelReducedDistance_eq`), integrand = Gaussian (`reducedVolumeIntegrand_eq_gaussianKernel`), reduced volume constant = 1 (`reducedVolume_eq_one`)
+3. ✅ Named Props: `ReducedVolumeMonotonicityTheorem` (monotonicity) and `ManifoldReducedVolumeInterface` (D7 interface) with field-instantiation table
+4. ✅ `#print axioms` only [propext, Classical.choice, Quot.sound] — 74/74 with 0 nonstandard; no sorry/axiom/unsafe/native_decide/proof_wanted
+
+Now I need to update the checkpoint.json and append the session-21 re-verification to the card + json, keeping the last line TASK_DONE.
+
+Let me read the tail of the card to see the format of the re-verification sections and the .json structure.
+
+Let me check the card structure around the last re-verification section.
+dsh: reasoning:
+Now I see the structure. I notice something important in section 25: RLV-5 and RLV-7 are "bypassed, not instantiated". This is an honest disclosure already recorded. Good.
+
+I need to append section 26 for session21. Let me be careful about the card's last-line contract: the very last line must be the `TASK_DONE` line. I'll insert my new section before the "Last line" line, or append and re-add. Cleanest: replace the trailing block.
+
+Let me first run one additional independent check to add value this session — the namespace census probe (EnvProbe) was done in session20. Let me do something new and genuinely independent this session:
+- Verify that the `#print axioms` output includes zero occurrences of `sorryAx` — already covered by nonstandard check.
+- A new check: confirm the 2 declarations with `[]` and 1 with `[propext]` are identified, and confirm the exact set of axioms used across all 74 is a subset of the allowed 3.
+- Another meaningful new check: verify the D7-consumed interface fields actually match the D7 structure field names (i.e., that `ManifoldReducedVolumeInterface` genuinely references D7). I partially did by reading.
+
+Let me do a genuinely new independent check: verify the *lower bound* direction of the reduced volume / that `reducedVolume_eq_one` isn't vacuous due to a degenerate integral — i.e., check that the integral is over a nontrivial measure. Actually `gaussianKernel_integral = 1` proves non-vacuity (mass 1 ≠ 0).
+
+Let me instead add a new independent check this session: use Lean itself to print the *statement* of the key theorems (`#check`) and confirm the exact mathematical content in a fresh file — this is a form of independent statement verification that doesn't rely on my regex reading. Also verify that `minimizer_iff_eq_straightRay` type-checks with the expected shape.
+
+Actually a stronger, genuinely new check: confirm that the key theorems are not trivially true by verifying their hypotheses are satisfiable and conclusions have content. E.g. verify `reducedVolume_eq_one` at a concrete n and τ, and verify `heatKernelReducedDistance_eq` at a concrete point numerically-ish. That would require `#eval`/norm_num which is fine (not native_decide).
+
+Let me do a concrete instantiation check in a fresh Probe2 file — but the task says "Add files only under release/Poincare/D11/ReducedVolume/". I can add a probe file there. But adding files changes the file count and the card claims 7 files. Better: put the probe in the session dir and compile with `lake env lean` — but it needs to import the package. A file outside the package dir can still import if the search path is right. Session20 had `EnvProbe.lean` in the session dir and compiled it. Let me check how.
+
+Let me check session20's env_probe — it was in longrun/d11rve-session20/EnvProbe.lean. So it works from anywhere as long as lake env is used. Let me do that: write a session21 check file that instantiates the key theorems at concrete values to demonstrate non-vacuity, compiled with `lake env lean`.
+
+Let me do:
+- `example : heatKernelReducedDistance 3 1 (0 : EuclideanSpace ℝ (Fin 3)) = 0`
+- `example : reducedVolume 2 1 = 1` (needs hτ proof)
+- `example : euclideanReducedVolume 2 1 = 1`
+- non-vacuity of the L-length: `flatLlength` of straight ray at n=2, τ=1 equals ‖x‖²/2.
+
+Let me write this as a genuine "non-vacuity certificate" probe compiled fresh. This is a real new independent check.
+
+Let me check the exact signatures first.
+
+`heatKernelReducedDistance_zero {τ : ℝ} (hτ : 0 < τ) : heatKernelReducedDistance n τ 0 = 0`
+`reducedVolume_eq_one {τ : ℝ} (hτ : 0 < τ) : reducedVolume n τ = 1`
+
+So:
+```lean
+example : reducedVolume 2 1 = 1 := reducedVolume_eq_one (n := 2) (τ := 1) (by norm_num)
+```
+
+And straightRay_length signature: `theorem straightRay_length (x : ...) {τ : ℝ} (hτ : 0 < τ) : ...` — let me check its statement.
+
+Let me check.
+dsh: reasoning:
+Now let me write a non-vacuity instantiation probe, compiled with `lake env lean` from the worktree root. It will check concrete instances (n=2,3, τ=1, x concrete vectors) to demonstrate the theorems are non-vacuous and meaningful.
+
+Let me write it.
+dsh: reasoning:
+My probe file has errors — these are my probe's errors, not the release code's. I need to fix them. `EuclideanSpace ℝ (Fin n)` is a type synonym for `Fin n → ℝ`. So `![1,1]` doesn't directly elaborate. Let me use explicit function construction or `EuclideanSpace.single`.
+
+For `EuclideanSpace ℝ (Fin 1)` and value 4: use `![4]`? Since `EuclideanSpace ℝ (Fin 1) = Fin 1 → ℝ`, `![4]` should work. The issue with `![1,1]` is it needs type annotation properly: `(![1, 1] : Fin 2 → ℝ)`.
+
+Actually the error says `![1, 1] has type Fin (Nat.succ 0).succ → ?m.15 but is expected to have type EuclideanSpace ℝ (Fin 2)`. Since `EuclideanSpace ℝ (Fin 2)` is `Fin 2 → ℝ` (a def, not reducible for elaboration?). EuclideanSpace is defined as `EuclideanSpace 𝕜 ι = ι → 𝕜`. It should be reducible... maybe the notation `![...]` creates a mismatch because `EuclideanSpace` doesn't unfold during `OfNat`/`Matrix.cons` elaboration.
+
+Simplest fix: avoid `![...]` entirely and use `EuclideanSpace.single` or `Pi.single`, or just use functions like `fun _ => 1`. For concrete norm computations, use `fun i => if i = 0 then 1 else 1`? Simpler: use `EuclideanSpace.single 0 (1:ℝ) + EuclideanSpace.single 1 (1:ℝ)`.
+
+Or avoid needing concrete coordinates entirely: use a general `x` and prove things abstractly, with only `0` as the concrete point (which works: `(0 : EuclideanSpace ℝ (Fin 3))`).
+
+For the value-carrying instantiations (ℓ = |x|²/4τ with x = (1,1)), that needs a concrete nonzero vector. Let me construct it via `EuclideanSpace.single`:
+`(EuclideanSpace.single 0 (1:ℝ) : EuclideanSpace ℝ (Fin 2))`.
+
+Hmm, what's the mathlib API: `EuclideanSpace.single : ι → 𝕜 → EuclideanSpace 𝕜 ι`. Yes.
+
+For `Fin 1` with x = 4: `EuclideanSpace.single 0 (4:ℝ) : EuclideanSpace ℝ (Fin 1)`.
+
+Let me check that these exist. Let me use `PiLp.single`? Actually `EuclideanSpace.single` should exist. Let me test quickly with a small file.
+
+Alternative simpler approach: since `EuclideanSpace ℝ (Fin n)` is `Fin n → ℝ` definitionally, I can write `(funext_iff.mp rfl ▸ ...)`. Too complex.
+
+Let's just test `EuclideanSpace.single`.
+
+Actually, an even simpler and robust approach: state the probe with `x` as a variable and use `‖x‖` in the goal, then instantiate the norm computation. E.g.:
+
+```lean
+example (x : EuclideanSpace ℝ (Fin 2)) (hx : ‖x‖ ^ 2 = 2) :
+    heatKernelReducedDistance 2 1 x = 1/2 := by
+  rw [heatKernelReducedDistance_eq (n := 2) (τ := 1) (by norm_num)]
+  rw [hx]; norm_num
+```
+
+But then `hx` is an assumption — the non-vacuity is shown by the fact that a concrete x satisfies it. Hmm, weaker. Better to just build the concrete vector properly.
+
+Let me test the API quickly.
+dsh: reasoning:
+`EuclideanSpace.single` works (the noncomputable error is just because `example` tries to compile; adding `noncomputable` or using it in a Prop-valued goal avoids it).
+
+The `![1]` mismatch persists — so `EuclideanSpace` is not reducible to function type for `Matrix.cons` elaboration. Fine, I'll use `EuclideanSpace.single`.
+
+For `Fin 2` with x = (1,1): `EuclideanSpace.single 0 1 + EuclideanSpace.single 1 1`.
+
+Now the norm: `‖EuclideanSpace.single 0 (1:ℝ) + EuclideanSpace.single 1 (1:ℝ)‖ ^ 2 = 2`. Since the two single vectors are orthonormal (different indices), norm² = 1+1 = 2. Proving this needs some work. There might be a simp lemma `EuclideanSpace.norm_single`. Let me check what lemmas exist: `EuclideanSpace.norm_single`, `EuclideanSpace.inner_single_left`...
+
+Actually, an easier route: rather than computing norms of concrete vectors, I can use a *general* nonzero `x` and the already-proven general theorem, which is what the release proves. The non-vacuity concern is really about whether the theorems have satisfiable hypotheses. A clean way to demonstrate: instantiate at `x = EuclideanSpace.single 0 1` in `Fin 1`, where the norm computation is easy.
+
+For `Fin 1`, `EuclideanSpace.single 0 (4:ℝ)` — the norm is `4`. There should be `EuclideanSpace.norm_single : ‖EuclideanSpace.single i c‖ = ‖c‖`. Let me use that.
+
+Let me test:
+```lean
+example : ‖(EuclideanSpace.single 0 (4:ℝ) : EuclideanSpace ℝ (Fin 1))‖ = 4 := by
+  rw [EuclideanSpace.norm_single]; norm_num
+```
+
+Let me probe available lemma names.
+
+Actually, let me simplify my probe significantly. The core non-vacuity checks that matter and are easy:
+1. `reducedVolume n τ = 1` at concrete n, τ — easy, no coordinates needed. ✅ (this is the headline result)
+2. `heatKernelReducedDistance n τ 0 = 0` — easy. ✅
+3. `0 ≤ heatKernelReducedDistance ...` at a general x — fine (uses `_`).
+4. `reducedVolume_constant` at concrete times — easy.
+5. `euclideanReducedVolume_eq_one` — easy.
+6. `heatKernel_asymptotics` at a general point — the statement is an identity, hypotheses are `0 < τ`; instantiating at `x := 0` and τ=1 gives a real numeric identity.
+7. `IsLMinimizer (straightRayLPath ...)` — needs concrete x; can use `x := 0`? Then it's the constant ray. That's still a valid non-vacuous instantiation but a bit degenerate. Better: use `x` general with `hτ` general — but then nothing is concretely instantiated.
+
+For the straight ray length identity, I can prove the general statement is non-vacuous by instantiating at `x` general and noting RHS > 0 for x ≠ 0 — but that requires a concrete nonzero x again.
+
+Let me just get the concrete vector machinery working. Let me probe `EuclideanSpace.norm_single` and `Fin.sum_univ_one`.
+
+Let me write a probe.
+dsh: reasoning:
+`PiLp.norm_single` works. The norm² of the sum in Fin 2: let me use a different approach — since EuclideanSpace ℝ (Fin 2) is `Fin 2 → ℝ`, and `EuclideanSpace.single` is `PiLp.single 2`. There might be a simp lemma for the inner product of singles.
+
+Actually, let me avoid this complexity. I can use `Fin 1` for the concrete-vector checks: `EuclideanSpace ℝ (Fin 1)` with `EuclideanSpace.single 0 4`. The norm is 4 via `PiLp.norm_single`. That's enough to demonstrate non-vacuity with a concrete nonzero vector.
+
+For the `|x|²/4τ = 1/2` at (1,1) check in Fin 2 — I can instead do it at Fin 1 with x = single 0 1: ℓ = 1/4. That's a concrete nontrivial value.
+
+Let me restructure the probe to use `Fin 1` and `EuclideanSpace.single 0 c` for all concrete-vector checks, and `0` where a zero vector suffices. That keeps everything simple and robust.
+
+Let me rewrite:
+- ℓ(0,τ)=0 at n=3,τ=1 ✅
+- ℓ(x,τ) = |x|²/4τ at n=1, τ=1, x = single 0 1 → 1/4
+- ℓ nonneg at n=2, τ=5, x general ✅ (use `_`)
+- reducedVolume 2 1 = 1 ✅
+- reducedVolume 3 7 = 1 ✅
+- euclideanReducedVolume 4 2 = 1 ✅
+- reducedVolume 2 1 = reducedVolume 2 9 ✅
+- straightRay length at n=1, τ=1, x = single 0 4 → |x|²/(2√1) = 16/2 = 8
+- straightRay reduced length → 16/4 = 4
+- heatKernel_asymptotics at n=1,τ=1, x = single 0 4
+- reducedVolumeIntegrand_eq_gaussianKernel at n=1,τ=1,x = single 0 4
+- flatLlength = 8 at n=1
+- IsLMinimizer (straightRayLPath ... single 0 4 ...)
+- AntitoneOn certificate volume
+
+For the norm computations: `‖EuclideanSpace.single 0 (4:ℝ)‖ ^ 2 = 16`.
+
+Let me check the `straightRay_length` RHS: `‖x‖^2 / (2 * sqrt 1) = 16/2 = 8`. Good.
+
+For `heatKernelReducedDistance_eq` at x = single 0 1, τ=1: `‖x‖^2/(4*1) = 1/4`.
+
+Let me write and test.
+dsh: reasoning:
+Wait, I need to check the signature of `euclideanManifoldReducedVolumeInterface_reducedVolume`. Let me check.
+
+Also `heatKernelReducedDistance_nonneg (n := 2) (τ := 5) ... _` — the point is `EuclideanSpace ℝ (Fin 2)` but p4 is `Fin 1`. That's a type error. The `_` should infer from the expected type... Actually `0 ≤ heatKernelReducedDistance 2 5 p4` — no, I wrote `heatKernelReducedDistance_nonneg (n := 2) (τ := 5) (by norm_num) _` in a goal `0 ≤ heatKernelReducedDistance 2 5 p4`. The `_` would be `EuclideanSpace ℝ (Fin 2)` and p4 is Fin 1 → mismatch. Let me fix that to use `0` or a Fin 2 point.
+
+Let me fix that line and check the interface lemma signature.
+dsh: reasoning:
+The interface lemma says `(euclideanManifoldReducedVolumeInterface n).reducedVolume = fun τ => reducedVolume n τ`, not `euclideanReducedVolume`. So my last example should be:
+```lean
+example : (euclideanManifoldReducedVolumeInterface 2).reducedVolume 1 = 1 := by
+  rw [euclideanManifoldReducedVolumeInterface_reducedVolume]
+  exact reducedVolume_eq_one (n := 2) (τ := 1) (by norm_num)
+```
+
+Wait, `rw [euclideanManifoldReducedVolumeInterface_reducedVolume]` rewrites `(euclideanManifoldReducedVolumeInterface 2).reducedVolume` to `fun τ => reducedVolume 2 τ`, so goal becomes `(fun τ => reducedVolume 2 τ) 1 = 1`, which beta-reduces to `reducedVolume 2 1 = 1`. Should be fine, maybe need `simp` or `show`.
+
+And fix the nonneg example to use `0`. Let me make both edits.
+dsh: reasoning:
+Two issues:
+1. `π` vs `Real.pi` — I need to write `Real.pi` or ensure the notation is available. I used `open scoped RealInnerProductSpace` which may shadow `π`. Let me just write `Real.pi` explicitly.
+2. `IsLMinimizer` is in the `Poincare.D7.Reduced` namespace — I need `open Poincare.D7.Reduced`. Let me add that open.
+
+Let me fix both.
+dsh: reasoning:
+Progress. Remaining issues:
+
+1. Line 104: `(4 * Real.pi * 1) ^ (-↑1 / 2)` vs `(4 * Real.pi * 1) ^ (-1 / 2)` — the `↑1` is `Nat.cast` vs `OfNat.ofNat`. The problem is the `-(1:ℝ)/2` vs `-↑1/2`. Hmm, it says the expected has `-1 / 2` where `1` is... Actually the issue: in the statement `heatKernel_asymptotics`, the exponent is `-(n : ℝ) / 2` with n=1, so `-↑1/2`. My goal writes `-(1:ℝ)/2` which displays as `-1/2`. These should be definitionally equal... but the mismatch is shown. The difference might be that `-(1:ℝ)/2` elaborates the `1` as `OfNat` while `↑1` is `Nat.cast 1`. They are defeq but the error says type mismatch. Hmm, actually it's likely the `1` inside `(4 * Real.pi * 1)` — no.
+
+Hmm, actually the real issue could be that the expected type uses `1` for `n` where `n : ℕ` is coerced to ℝ. Let me just avoid the issue by writing the goal to match: use `(4 * Real.pi * 1) ^ (-(1:ℕ) / 2)`? No, that's Nat division.
+
+Simplest fix: make the example polymorphic in nothing — state it exactly as the theorem's conclusion with `n := 1` substituted, using a `show` or by providing the point explicitly and letting Lean unify. The cleanest: use `have := heatKernel_asymptotics (n := 1) (τ := 1) (by norm_num) p4; simpa using this`.
+
+Using `simpa` will handle the defeq. Let me restructure these examples to use `simpa using ...` or just `exact heatKernel_asymptotics ...` with the point supplied positionally.
+
+Actually the original error was `heatKernel_asymptotics ?m.46 ?m.47` — the `_` placeholder for the point wasn't being inferred properly? No, it says `?m.47` which is the point. The issue is the exponent defeq.
+
+Let me just use `simpa using heatKernel_asymptotics (n := 1) (τ := 1) (by norm_num) p4`.
+
+2. Lines 112-113: `IsLMinimizer` still unresolved? Error is `⊢ 0 < ?m.10` and `0 < ?m.16` — these are from `straightRayLPath (n := 1) p4 (by norm_num)`. The `by norm_num` needs to prove `0 < τ` but τ isn't determined... `straightRayLPath (x) {τ} (hτ : 0 < τ)`. I passed `(n := 1) p4 (by norm_num)` — the τ is implicit so it can't be inferred. I need to give `(τ := 1)`.
+
+Let me fix: `straightRayLPath (n := 1) (x := p4) (τ := 1) (by norm_num)`.
+
+Let me apply these fixes.
+dsh: reasoning:
+The non-vacuity probe now compiles with exit 0 and no warnings/errors. This is a genuinely new independent check this session: the headline theorems are instantiated at concrete values (e.g. `Ṽ(1) = 1`, `L = 8`, `ℓ = 1/4`), demonstrating non-vacuity.
+
+Now let me update:
+1. `checkpoint.json` (root) and `longrun/checkpoint.json`
+2. `longrun/results/D11-reduced-volume-euclidean.md` — append section 26
+3. `longrun/results/D11-reduced-volume-euclidean.json` — add session21 entry
+
+Let me check the .json card structure first.
+
+Also, let me record this session's evidence files properly.
+
+Let me look at the json result card tail.
+dsh: reasoning:
+Now let me write the update script that:
+1. Appends section 26 to the .md
+2. Adds a session21 entry to the .json (`reverification_sessions` list, `session_reverification` updated, `last_verified_at`, `reverified_at`)
+3. Updates checkpoint.json (root and longrun/checkpoint.json)
+
+Let me first read the exact tail of the .md so I can insert before the "Last line" line.
+
+The last lines are:
+```
+**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`
+```
+
+Wait, from `tail -3` earlier:
+```
+re-verification certifies exactly the previously reported artifact.
+
+**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`
+```
+
+So the very last line is the TASK_DONE line. I'll insert my new section before it.
+
+Let me get the exact current UTC time. Let me check `date -u`.
+
+Let me build the section text carefully.
+
+Then update JSON. Let me check the `reverification_sessions` and `reverifications` list element structure to append consistently.
+
+Let me look at one element.
+dsh: reasoning:
+Now let me write the session-21 section and update everything. Time: 2026-09-11T09:20:51Z.
+
+Let me write the markdown section.
+
+Section 26:
+
+```markdown
+## 26. Session re-verification (2026-09-11, session21)
+
+Continuation invocation.  The checkpoint was not trusted: the whole gate set was re-run from
+scratch from the worktree root, and one **new** independent check was added — a *non-vacuity
+probe* that instantiates the headline theorems at concrete dimensions, times and points and
+closes the resulting numeric equalities.  No Lean source was changed.
+
+| gate | command | result |
+| --- | --- | --- |
+| per-file compile | `lake env lean release/Poincare/D11/ReducedVolume/<F>.lean` × 7 | **7/7 exit 0, 0 warning/error lines** (`longrun/d11rve-session21/compile_<F>.log`, `gate_exit_codes.txt`) |
+| whole release package | `lake build` (worktree root) | **exit 0**, "Build completed successfully (9155 jobs)", 0 build errors (`longrun/d11rve-session21/lake_build.log`) |
+| axiom audit | `lake env lean …/Audit.lean` + independent parser (`parse_audit.py`, freshly written this session) | **74/74 declarations**: `[propext, Classical.choice, Quot.sound]` (71), `[]` (2), `[propext]` (1); union of all axiom cones `= {propext, Classical.choice, Quot.sound}` exactly; **0 nonstandard** (`audit_raw.log`, `axiom_audit.json`) |
+| audit coverage | regex extraction of every `theorem`/`def`/`structure` in the four content modules vs the 74 `#print axioms` commands | **exact bijection 74 = 74**: 0 source declarations unaudited, 0 audit commands without a source declaration (the single regex artefact `and` is the prose word inside the `Statements.lean` module docstring, not a declaration) |
+| forbidden tokens | `python3 input/d5-tools/scan_forbidden.py release/Poincare/D11/ReducedVolume` | **0 hard, 0 soft**, **7 files actually scanned** (`forbidden_scan.json`).  Note: the scanner's `os.walk` interface needs a *directory*; passing the seven file paths scans 0 files and yields a vacuous 0 — the directory form was used |
+| source integrity | `sha256sum` × 7 | **7/7 byte-identical** to §1 (Basic `388b62ae`, StraightRays `16a1fa77`, Volume `a6d2bf62`, Statements `c823d0e7`, All `0e8ef1d5`, Probe `81ebdefe`, Audit `51c19cfa`) |
+| **non-vacuity probe (new)** | `lake env lean longrun/d11rve-session21/NonVacuityProbe.lean` (outside the release tree) | **exit 0, 0 warnings** (`nonvac_probe.log`): 19 concrete instances, e.g. `heatKernelReducedDistance 1 1 1 = 1/4`, `heatKernelReducedDistance 1 4 4 = 1`, `reducedVolume 2 1 = 1`, `reducedVolume 3 7 = 1`, `euclideanReducedVolume 4 2 = 1`, `LlengthAlong (straightRay 4 1) … 0 1 = 8`, `reducedLengthAlong … = 4`, `IsLMinimizer (straightRayLPath 4 1)`, `AntitoneOn (euclideanReducedVolumeCertificate 2).volume (Ioi 0)`, and `(euclideanManifoldReducedVolumeInterface 2).reducedVolume 1 = 1` |
+
+**Why the non-vacuity probe matters.**  The release theorems are universally quantified over
+`n`, `τ > 0` and the point, so a compiling proof alone does not exclude a statement whose
+hypotheses are unsatisfiable or whose conclusion is degenerate.  The probe closes genuinely
+numeric statements, so `Ṽ = 1` is an equality between two real numbers that both evaluate to
+`1`, and the `L`-length claim is the numeric equality `8 = 8`.  Together with
+`gaussianKernel_integral : ∫ K = 1` (D10 `Mass.lean`) — whose value is `1`, not `0` — this
+rules out the vacuous reading of `reducedVolume_eq_one`.
+
+**Mathematical re-read (this session).**  `Basic.lean`, `Volume.lean` and the statement blocks
+of `StraightRays.lean` / `Statements.lean` were re-read at definition level and confirm:
+`flatLIntegrand = √τ·(0 + ‖γ'‖²)` (the task's `∫√τ(|γ'|²+R) dτ` with `R = 0`);
+`heatKernelReducedDistance := -log((4πτ)^{n/2} K)` with
+`heatKernelReducedDistance_eq : ℓ = ‖x‖²/(4τ)`; `heatKernel_asymptotics` the inverse identity;
+`minimizer_iff_eq_straightRay` a genuine two-sided characterisation (both directions proved);
+`reducedVolumeIntegrand_eq_gaussianKernel` then `gaussianKernel_integral` giving
+`reducedVolume_eq_one : Ṽ(τ) = 1`; `ReducedVolumeMonotonicityTheorem` a `def … : Prop` (a
+statement, never an axiom) proved for the Euclidean instantiation.  The §25 note stands: RLV-5
+(second variation) and RLV-7 (reduced-length differential inequality) are *bypassed* in the
+flat computation rather than instantiated — an honesty boundary, not a gap in any proved
+theorem.
+
+No change to any authored file or verdict in this session.  Checkpoint updated
+(`checkpoint.json` + `longrun/checkpoint.json`, `fresh_reverification_session21_2026_09_11`);
+`longrun/results/D11-reduced-volume-euclidean.json` gains the session21 entry.  All seven
+authored files are byte-identical to the ones whose hashes are recorded in §1, so this
+re-verification certifies exactly the previously reported artifact.
+```
+
+That's thorough. Now let me also double-check the claim "19 concrete instances" — let me count the examples in the probe.
+
+Let me count.
+dsh: reasoning:
+17 examples + 2 helper theorems (norm_p4, norm_p1). So "19 concrete instances" is right (17 examples + 2 norm lemmas). Let me say "17 `example` instantiations plus 2 concrete norm lemmas".
+
+Note the grep for "^error" exited 1 (no matches), which is the expected outcome — grep returns 1 when no lines match. Not a failure.
+
+Now let me write the updates: markdown section 26, JSON updates, checkpoint updates.
+
+Let me do it with a Python script for precision.
+
+First the markdown insertion. The last line is:
+`**Last line:** TASK_DONE — card: \`longrun/results/D11-reduced-volume-euclidean.md\``
+
+I'll insert the section before that line. Let me check whether there's a trailing newline structure — I need to be careful to keep the last line as the final line.
+
+Let me use Python.
+dsh: reasoning:
+All artifacts updated. Now let me do a final verification pass:
+1. Confirm the card's last line is TASK_DONE
+2. Confirm JSON validity
+3. Confirm no authored source file changed (hashes still match)
+4. Re-run the compile gate one final time to be safe? The sources weren't touched so no need, but let me verify hashes.
+
+Let me do a final consolidated verification.
+dsh: reasoning:
+Everything checks out:
+- Card last line: TASK_DONE
+- All JSON valid, verdict TASK_DONE
+- All 7 source hashes match section 1 exactly (no drift)
+
+Wait — one thing. The task says "Compile every authored file (lake env lean, exit 0)". I've done that. And "#print axioms only [propext, Classical.choice, Quot.sound]". Confirmed.
+
+Let me do one last sanity check: re-verify that the card's claim of the session21 files is accurate and that the NonVacuityProbe file is saved. Also, let me double-check the `longrun/d11rve-session21/` dir contents.
+
+Also I should double check: the task says "Save a compile-checked checkpoint at least every 30 minutes and keep checkpoint.json/results current". Done.
+
+One more consideration: the `update_artifacts.py` wrote `c["status"]["authored_declarations"]` unchanged (74). Good.
+
+Let me verify the final state of files in session21 and confirm the checkpoint status block.
+
+Let me also make sure I haven't left the `/tmp/api_probe.lean` files affecting anything — they're in /tmp, fine.
+
+Let me do a final listing and then report.
+dsh: reasoning:
+Everything is verified and recorded. The task was already complete from prior sessions; this session independently re-verified it from scratch and added a new non-vacuity check.
+
+Summary of this session's work:
+1. Verified all 7 source hashes match the card (no drift)
+2. Fresh compile gate: 7/7 exit 0, 0 warnings/errors
+3. Fresh full `lake build`: exit 0, 9155 jobs
+4. Fresh axiom audit with newly written parser: 74/74, 71×[propext, Classical.choice, Quot.sound], 1×[propext], 2×[], 0 nonstandard
+5. Audit coverage: exact bijection 74=74
+6. Forbidden token scan: 0 hard, 0 soft, 7 files actually scanned (caught the vacuous-0 trap with file args)
+7. New non-vacuity probe: 17 concrete instantiations + 2 norm lemmas, compiled exit 0
+8. Mathematical re-read confirming non-vacuity and the honesty boundary
+9. Updated card (section 26), JSON card, both checkpoints
+
+The card's last line is TASK_DONE.
+
+The task is complete. Let me give the final answer with the last line as required.
+
+Actually, wait. Let me re-read the task instruction: "Last line: TASK_DONE or TASK_BLOCKED with the card path." So my final response's last line should be that.
+
+Let me make sure my response is concise but complete.
+
+One more thing — the task said "This invocation is limited to four hours." I used well under that. Good.
+
+Also "Add files only under `release/Poincare/D11/ReducedVolume/`" — I added files under `longrun/d11rve-session21/` which is the evidence/checkpoint area, consistent with what prior sessions did (d11rve-session4..20). The restriction is about Lean source files, and I added none. Good.
+
+Let me finalize.
+Task was already complete from prior sessions (checkpoint phase `COMPLETE`). This session independently re-verified it from scratch rather than trusting the record, and added one new check.
+
+## Verification performed this session (session21)
+
+| gate | result |
+|---|---|
+| source integrity | **7/7 `sha256sum` byte-identical** to §1 of the card (no drift) |
+| per-file compile | **7/7 exit 0**, 0 warning/error lines (`lake env lean`, worktree root) |
+| whole release | `lake build` **exit 0**, "Build completed successfully (9155 jobs)" |
+| axiom audit | **74/74 declarations**: `[propext, Classical.choice, Quot.sound]` ×71, `[propext]` ×1, `[]` ×2 — union exactly the allowed three; **0 nonstandard** |
+| audit coverage | **exact bijection 74 = 74** (0 unaudited declarations, 0 orphan audit commands) |
+| forbidden tokens | **0 hard, 0 soft over 7 files actually scanned** |
+| **non-vacuity probe (new)** | `NonVacuityProbe.lean` compiled **exit 0, 0 warnings** |
+
+Two methodology traps caught and avoided: `scan_forbidden.py` uses `os.walk`, so the file-path form silently scans **0 files** and returns a vacuous `0` (used the directory form instead); and the regex census produced a spurious unaudited `and` which is a prose word inside a `Statements.lean` docstring, not a declaration.
+
+## Mathematical re-read (the substantive check)
+
+The theorems are genuinely the task's claims, not weakened stand-ins:
+- `flatLIntegrand = √τ·(0 + ‖γ'‖²)` — the task's `∫√τ(|γ'|²+R)dτ` at `R=0`
+- `heatKernelReducedDistance := -log((4πτ)^{n/2}·K)` from the D10 heat kernel, with `heatKernelReducedDistance_eq : ℓ = ‖x‖²/(4τ)` and inverse identity `heatKernel_asymptotics`
+- `minimizer_iff_eq_straightRay` — a real **two-sided** characterisation, unconditional
+- `reducedVolume_eq_one : Ṽ(τ) = 1` via `reducedVolumeIntegrand_eq_gaussianKernel` + D10 `gaussianKernel_integral = 1`
+- `ReducedVolumeMonotonicityTheorem` is a `def … : Prop` (never an axiom), proved for the Euclidean instantiation
+
+The new non-vacuity probe closes 17 concrete numeric instances (e.g. `reducedVolume 2 1 = 1`, `reducedVolume 3 7 = 1`, `LlengthAlong (straightRay 4 1) … = 8`, `ℓ = 1/4`), ruling out a vacuous reading of the universally-quantified theorems.
+
+I preserved the prior session's honest boundary: **RLV-5 (second variation) and RLV-7 (reduced-length differential inequality) are bypassed in the flat computation, not instantiated** — recorded in the card, affecting no proved theorem.
+
+Artifacts updated: card §26 appended, `.json` card entry added, `checkpoint.json` + `longrun/checkpoint.json` refreshed. No Lean source changed.
+
+TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`

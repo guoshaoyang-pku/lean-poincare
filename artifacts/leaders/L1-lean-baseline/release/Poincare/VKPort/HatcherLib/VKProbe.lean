@@ -1,0 +1,3 @@
+import Poincare.VKPort.HatcherLib.Ch1.VanKampenGlobalSweep
+#print axioms HatcherLib.vanKampen_ker_eq_normalSubgroup_of_factorizationsConnected
+#print axioms HatcherLib.vanKampenMap_surjective

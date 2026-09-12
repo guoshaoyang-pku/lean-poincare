@@ -1,0 +1,107 @@
+dsh: reasoning:
+No checkpoint.json exists in this worktree root. Let me check the D11 dir is empty (yes it is). Let me check the longrun/results for any D11 file (none). So we start fresh but can reuse D10 reports and code.
+
+Let me look at the D10 modules and the existing D10 reports. Let's list all files.
+dsh: reasoning:
+Let me check the environment: elan, lake, mathlib build. Let me check the D10 reports (existing from D10 task) to understand the claims, then start auditing.
+
+Let me check the environment first and try compiling a file.
+dsh: reasoning:
+Now let me establish the build environment. The worktree's elan is at /data/home/guoshaoyang/workdir/lean_poincare/elan. Let me check lake env lean works on a D10 file.
+
+Let me set up a plan and start. Key steps:
+1. Recompile every D10 file.
+2. Token scan.
+3. `#print axioms` on every exported theorem.
+4. Hidden hypothesis hunt + vacuity checks.
+5. Write audit files under release/Audit/D11/ and card.
+
+Let me first check build state. Also check how long compiles take. `lake env lean` on a file with mathlib imports can take a while (mathlib oleans should be cached in release/.lake/build/lib).
+
+Let me check.
+dsh: reasoning:
+Fast — the oleans must be cached. Let me check whether `lake env lean` on each file succeeds and how long the full set takes. Let me write the audit infrastructure.
+
+First, read all the D10 source files to hunt for trickery. Let me read them all. Total 4292 lines, manageable but let me be efficient. I'll delegate deep per-module reading to subagents? Actually, I need to do the adversarial audit myself with high care. But I can use subagents for parallel per-module scans, then verify their findings myself. Given 4-hour limit, let me first do the mechanical work (compile, token scan, #print axioms), then deep-read.
+
+Let me look at the D10 reports first for claimed theorem lists, and meanwhile compile all files in background.
+
+Let me start a background job compiling every D10 file individually.
+dsh: reasoning:
+The token scan shows only comments/strings mentioning these tokens. I need a token scan that strips comments and strings, or checks for actual command usage. Actually the standard approach: use Lean's own environment to detect `sorryAx` in axiom cones, and grep for declaration keywords. Let me write a proper scanner: search for the keywords as commands (e.g., `^axiom `, `sorry` not in comments). Better to rely on `#print axioms` which reveals `sorryAx`. And grep for `native_decide`/`unsafe` outside comments.
+
+Let me now read all the D10 sources. I'll read them in batches. Let me start with HeatKernelEuclidean since it's the flagship claim.
+dsh: reasoning:
+These look clean so far. Note `iteratedFDeriv_two_apply` is a mathlib lemma used with `![v,v]`; the statement looks like the true second derivative.
+
+Note the heat equation statement: `deriv (fun s => K n s x) t = Δ (K n t) x`. That's the true heat equation. Good.
+
+Potential hidden issue: `Δ` is scoped `Laplacian` notation; need to check which Laplacian. It's mathlib's `InnerProductSpace.laplacian`, which is defined as `- trace`? Actually in mathlib, `laplacian f x = ∑ i, iteratedFDeriv ℝ 2 f x ![b i, b i]`. Let me check sign convention: heat equation ∂_t K = ΔK with Δ = sum of second derivatives (positive). mathlib's laplacian is the "geometer's" Laplacian? Let's check mathlib definition: In `Mathlib.Analysis.InnerProductSpace.Laplacian`:
+
+```
+noncomputable def laplacian (f : F → 𝕜) (x : F) : 𝕜 :=
+  ∑ i, iteratedFDeriv 𝕜 2 f x ![b i, b i]
+```
+
+Hmm, actually I recall `InnerProductSpace.laplacian` is defined with a sign such that `laplacian (fun x => ‖x‖^2) = 2 * finrank`. The report says it computes Δ exp(a‖x‖²) = (2 a n + 4a²‖x‖²) exp(...), consistent with positive-definite sum of second derivatives. Fine.
+
+Now let me read HeatEquation.lean, Mass.lean, Semigroup.lean.
+dsh: reasoning:
+Compile job finished quickly. Let me check output.
+dsh: reasoning:
+Interesting: many files FAIL to compile with `lake env lean` individually! But wait — Basic.lean compiled fine earlier. Let me look at the actual errors. It's likely the `module` keyword with `public import` requires `lake build` (module system) — no, `lake env lean` should work. Let me check the log.
+
+Actually wait: earlier I ran `lake env lean Poincare/D10/HeatKernelEuclidean/Basic.lean` and got EXIT=0 (2.1s). But in the loop, Basic.lean isn't in the FAIL list... Actually let me re-check: FAIL list has 22 entries, and there are 28 files. 6 OK. So Basic.lean OK. Let me see errors.
+dsh: reasoning:
+These are dependency ordering failures: I need to compile in dependency order, or just `lake build` the whole thing. Better: use `lake build` with the D10 modules, which handles ordering. But the task says "recompile every file" — I can compile each file once its dependencies are built. Simplest: run `lake build Poincare.D10.HeatKernelEuclidean.Semigroup ...` etc. But that only builds reachable modules.
+
+Actually the true audit approach for "recompile every file with exit 0": compile in topological order via `lake build` for all D10 modules. `lake build` automatically orders. Let me check if `lake build` works and how long. Also need to ensure no stale oleans mask errors — a fresh rebuild would be better but could take very long (mathlib is prebuilt, D10 files are small). Since D10 only imports mathlib + each other, `lake build Poincare.D10...` should rebuild D10 quickly.
+
+Let me find the module names: lakefile has `[[lean_lib]] name = "Poincare", globs = ["Poincare.+"]`. So `lake build Poincare.D10.HeatKernelEuclidean.Semigroup` should work.
+
+Plan: compile each file individually in dependency (topological) order using `lake env lean` requires oleans present, which `lake build` produces. Alternatively, use `lake build` per module and record. Let me do: for each lean file sorted topologically, run `lake env lean file` after `lake build` of its imports. Simplest is `lake build <module>` which caches; then `lake env lean <file>` compiles the file itself again (but exit 0 with cached imports). That satisfies "recompile every file".
+
+Actually cleaner: force recompile by removing D10 oleans first, then `lake build` all D10 modules in one command — that compiles every file with the module system. But per-file `lake env lean` evidence is what the task asks. Let me do:
+1. rm -rf release/.lake/build/lib/lean/Poincare/D10 (fresh)
+2. `lake build` all 28 modules (topological) → compiles each.
+3. Then per-file `lake env lean` → exit 0, and capture output (for #print axioms files, the output matters).
+
+Hmm, but `#print axioms` output is only produced when the file is actually elaborated by `lean`, not when `lake build` uses cache... Actually `lake build` will elaborate each file and print `#print axioms` output (informational messages) — but `lake build` may suppress? No, `lake build` shows output of the file compilation (it replays logs). Let's test.
+
+Let me check D10 AxiomAudit files to see what they print.
+
+Also note: tri file `TriangulationLowDim/Audit.lean` — compiled with `lake env lean` failed early due to deps missing.
+
+Let me now do the proper fresh build. First, back up nothing needed; the oleans will regenerate. Let me run:
+
+```
+cd release
+rm -rf .lake/build/lib/lean/Poincare/D10
+lake build Poincare.D10.HeatKernelEuclidean.AxiomAudit Poincare.D10.BochnerEuclidean.Axioms Poincare.D10.BochnerEuclidean.Compat Poincare.D10.GaussianToolbox.PrintAxioms Poincare.D10.JacobiConstantCurvature.AxiomAudit Poincare.D10.MaximumPrincipleRN.AxiomAudit Poincare.D10.TriangulationLowDim.Audit
+```
+This builds all leaves (which pull in all D10 files). Let me also check for other D10 modules not reachable — all 28 files, need to make sure each is imported by some leaf. Let me check imports.
+
+Let me run this in background and meanwhile read more source.
+dsh: reasoning:
+Wait — the import graph output is missing D10/BochnerEuclidean, JacobiConstantCurvature, MaximumPrincipleRN, TriangulationLowDim. That's odd. Maybe those files use a different import syntax (`import` without `public`)? Let me check. Also GaussianToolbox PrintAxioms imports all three.
+
+Let me check the import lines of those modules.
+dsh: reasoning:
+Interesting mixed `module`/non-module style. Some files use `module` + `public import`, some use plain `import`. Note: files using `module` have `public import`; files without `module` use plain `import`. That's fine.
+
+Note: `MaximumPrincipleRN/Basic.lean` imports `Mathlib` (the whole thing) — that's why it compiled fast only if mathlib is cached.
+
+Now, let me run a fresh build of all D10 modules. The leaves: 
+- Poincare.D10.HeatKernelEuclidean.AxiomAudit
+- Poincare.D10.BochnerEuclidean.Axioms
+- Poincare.D10.GaussianToolbox.PrintAxioms
+- Poincare.D10.JacobiConstantCurvature.AxiomAudit
+- Poincare.D10.MaximumPrincipleRN.AxiomAudit
+- Poincare.D10.TriangulationLowDim.Audit
+- TriangulationLowDim Moise imports Poincare.Longrun.Topology.CompactThreeManifold (outside D10).
+
+Let me delete D10 oleans and build all leaves. In background.
+
+Meanwhile continue reading source files. Let me kick off the build now.
+I'll start by getting oriented in the worktree and checking for existing checkpoint state.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

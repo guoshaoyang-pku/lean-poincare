@@ -1,0 +1,685 @@
+dsh: reasoning:
+The checkpoint.json seems to be elsewhere. Let me look at the longrun directory and find checkpoint.json.
+dsh: reasoning:
+No checkpoint.json at root. Let me look at release/ structure, lakefile, and D10 TriangulationLowDim files. The task says "Continue from existing files and checkpoint.json in this worktree" — maybe the checkpoint is elsewhere. Let me search more broadly.
+dsh: reasoning:
+No D11 checkpoint exists. This is a fresh D11 worktree with D1-D10 codebase integrated. The task says "Continue from existing files and checkpoint.json in this worktree; do not restart completed work." — likely no checkpoint exists yet, so I start fresh for D11.
+
+Let me examine the D10 TriangulationLowDim code carefully — it's the foundation I should reuse.
+
+Let me read Complex.lean, Models.lean, Moise.lean, Audit.lean.
+dsh: reasoning:
+Let me look at the build setup and check whether the environment can compile. Also read the D10 Models.lean and Audit.lean to understand what exists. Let me also check the logs directory for D10 build logs and the D10 result card JSON for structure conventions.
+
+Key design decision: The task wants Δ-complex/gluing descriptions: face-pairing data with a checker, constructions of 3-ball, S³, solid torus, lens spaces L(p,q), and computations of face-pairing consistency, Euler characteristic, vertex-link sphere checks.
+
+Let me plan the file structure:
+
+```
+release/Poincare/D11/Triangulation3D/
+  Simplicial.lean      -- reuse D10 finite abstract simplicial complex? Maybe define 3D-specific predicates: IsThreeDimensional, IsClosedThreeManifold (every edge in exactly N triangles? no—link condition), vertex links being 2-spheres (as abstract complexes), IsClosedSurface in D10 for links.
+  DeltaComplex.lean    -- Δ-complex / face-pairing data with checker
+  Models.lean          -- 3-ball, S³, solid torus, lens spaces
+  Audit.lean           -- #print axioms
+```
+
+The critical subtlety: vertex links of a 3-manifold triangulation must be 2-spheres. In D10, IsClosedSurface checks each edge is in exactly 2 triangles and vertex link is 2-regular. For a 3D complex, the link of a vertex is a 2-dimensional complex whose faces are {s.erase v | v ∈ s ∈ K.faces}. To check that the link is a sphere we can check it is a closed surface with Euler characteristic 2 (using D10's IsClosedSurface and eulerChar). Actually for a flag/abstract simplicial complex that is a closed surface with χ=2 is S² (classification of surfaces, but that requires proof; for a "checker" purpose we can state the check combinatorially: IsClosedSurface ∧ eulerChar = 2, and note it's the decidable combinatorial manifold condition. That's fine: the check is decidable, the interpretation as S² is a cited classical theorem. The task says "vertex-link sphere checks for the small examples (the combinatorial manifold condition, decidable)" — so making the check be "link is a closed surface with χ = 2" is reasonable and decidable, with a remark that by classification this is S².
+
+For the Δ-complex / gluing description: define a "Gluing" structure: a finite set of tetrahedra each with 4 vertices (or abstractly, a finset of oriented simplices with multiplicity?), plus face-pairing data: for each of the 4·n faces (tet, face index), a partner (tet', face' index) and a vertex permutation matching, orientation-reversing.
+
+The cleanest checkable design: A `DeltaComplex3` consists of:
+- `n : ℕ` tetrahedra (indexed by `Fin n`)
+- `pairing : Fin n × Fin 4 → Fin n × Fin 4` an involution without fixed points (face `i` of tetra `t` glued to face `pairing (t,i)`).
+- an identification of vertices: each face has 3 vertices; gluing specifies a bijection between the vertices of the face. Simplest: label vertices of tetrahedron `t` by `Fin 4` (local labels). Then represent each tetrahedron `t` as a 4-tuple/list of *global* vertex labels `verts t : Fin 4 → V`... Hmm, but then face pairings must agree on vertices.
+
+Alternative standard combinatorial approach: a "simplicial complex with face identifications" described as: set of tetrahedra with a map assigning to each tetrahedron an ordered 4-tuple of vertices (global labels), and gluing maps specify which face is identified with which. To keep it computationally checkable (decide-friendly), we can define:
+
+Structure `Triangulation3D`:
+- `n : ℕ` (number of tetrahedra; for small examples given concretely)
+- `vert : Fin n → Fin 4 → V` — global vertex label of local vertex j of tetra t.
+- Each tetra's 4 vertices distinct, and the induced simplicial complex on the image of the tetrahedra has all faces from tetrahedra (the "abstract simplicial complex" base).
+
+Actually since all our examples (3-ball, S³, solid torus, lens spaces) have *simplicial* triangulations (no self-identifications needed except for lens spaces... L(3,1) via bipyramid has 3 tetrahedra and identifications), maybe better: use a "face-pairing on a simplicial complex" formulation where the underlying complex is a genuine simplicial complex, plus a set of face pairings identifying boundary faces. Hmm, but the fundamental domain approach: e.g., the 3-ball as single tetrahedron; S³ as boundary of 4-simplex = 5 tetrahedra; S³ as two tetrahedra gluing (the standard 2-tetrahedron sphere is a Δ-complex with identifications); solid torus as 3-tetrahedron triangulation (which is a genuine simplicial complex? Solid torus has a triangulation with 3 tetrahedra: yes, the standard one — e.g., take a triangle × interval? Hmm, 3 tetrahedra triangulating solid torus is known, but I need explicit vertex-link checks).
+
+Let me think about a design that keeps everything decidable and honest. Two layers:
+
+**Layer 1 (Simplicial complexes)**: reuse D10's `FiniteAbstractSimplicialComplex` — construct explicit 3D simplicial complexes:
+- `ball3 : FiniteAbstractSimplicialComplex (Fin 4)` = single tetrahedron (facets: {0,1,2,3}). χ = 2 - 3 + 4 - 1 = 2? For a 3-ball: f = (4,6,4,1); χ = 4-6+4-1 = 1. Yes, since it's contractible. Boundary is S².
+- `sphere3_4simp : FiniteAbstractSimplicialComplex (Fin 5)`: boundary of 4-simplex, facets = all 5 3-subsets of Fin 5 (i.e., complements of vertices). f-vector: f0=5, f1=10, f2=10, f3=5 ⇒ χ = 5 - 10 + 10 - 5 = 0. Vertex links are tetrahedron boundaries (S²).
+- `solidTorus`: 3-tetrahedron triangulation. Need explicit. Standard: solid torus as a 3-tetrahedron triangulation with 3 vertices? Hmm. There is a well-known triangulation of the solid torus with 3 tetrahedra and 3 vertices? Let me recall: the solid torus has a triangulation with 2 tetrahedra? Actually, minimal triangulations: the solid torus has a triangulation with 2 tetrahedra (I think 2), and S¹×D² can be triangulated by 2 tetrahedra glued... Let me think concretely with a Δ-complex rather than a simplicial complex: take a triangle (2-simplex) and a "prism" — the product Δ² × I has 3 tetrahedra (a prism triangulated into 3 tetrahedra: prism on a triangle = 3 tetrahedra). Then glue the two triangular ends with a rotation. That's a Δ-complex with 3 tetrahedra and identifications on the boundary — needs the gluing machinery anyway.
+
+Given the goal statement says "the solid torus (standard 3-tetrahedron triangulation)", they intend the prism triangulation: Δ² × I with ends glued by a rotation; that's a Δ-complex with 3 tetrahedra. And "lens space L(p,q) via face-pairing on a bipyramid" is again a Δ-complex (bipyramid has p+2? Actually the bipyramid on a p-gon has p+2 vertices, 2p tetrahedra; L(p,q) obtained by gluing the two boundary triangles...). Wait: standard description: L(p,q) is obtained from a bipyramid over a p-gon by identifying the upper boundary fan with the lower boundary fan via rotation by 2πq/p. The bipyramid has 2p triangular faces on the boundary; the boundary is a 2-sphere; the gluing identifies top faces to bottom faces in pairs, giving a closed 3-manifold with 2p tetrahedra (each tetrahedron = cone over a boundary triangle from the center? Hmm).
+
+Actually the bipyramid triangulation of L(p,q): Consider the bipyramid with apexes N, S and p equatorial vertices v_0..v_{p-1}. Cut it into 2p tetrahedra {N, v_i, v_{i+1}, S}? That's the cone over each equator edge: tetrahedron T_i = {N, S, v_i, v_{i+1}}. Each T_i has 4 faces: {N,S,v_i}, {N,S,v_{i+1}}, {N,v_i,v_{i+1}}, {S,v_i,v_{i+1}}. The boundary faces are the top triangles {N,v_i,v_{i+1}} and bottom {S,v_i,v_{i+1}}. Gluing top face of T_i to bottom face of T_{i+q} (with appropriate vertex matching) gives L(p,q) — hmm, orientation issues. Actually the standard: glue the top triangle {N, v_i, v_{i+1}} to the bottom triangle {S, v_{i+q}, v_{i+q+1}} by the map N ↦ S, v_i ↦ v_{i+q+1}, v_{i+1} ↦ v_{i+q} (reversing orientation). This yields the lens space L(p,q) (with some convention). Since we're only required to verify face-pairing consistency, Euler char, vertex links — we don't need to prove it's L(p,q) topologically, just define the Δ-complex and check combinatorial conditions; we can name it `lensSpaceBipyramid p q` for p q with gcd p q = 1 maybe (for the manifold condition we need gcd(p,q)=1 to get vertex links spheres? Let's check: For L(p,q), it's a closed 3-manifold iff gcd(p,q)=1. And "(2,1)=RP³" — L(2,1) = RP³. "(3,1)" = L(3,1).
+
+Let me think about what the vertex links look like and whether the check "link is a closed surface with χ=2" via the D10 machinery works when the complex has identifications (Δ-complex not simplicial). The vertex link of a Δ-complex is a 2-dimensional Δ-complex (with identifications), where each face of a tetrahedron contributes triangles. The combinatorial check "every edge of the link is in exactly two triangles" etc. can be adapted: for link of vertex v, the "link faces" are the simplices s \ {v} for each tetrahedron face s containing v... but with face identifications, we must compute in the quotient: i.e., the link is a 2-dimensional Δ-complex. To keep everything decidable and honest, the cleanest formalization:
+
+Define a `DeltaComplex` structure with:
+- `n : ℕ` — number of tetrahedra
+- `vert : Fin n → Fin 4 → V` — global vertex labels
+- `face_glue : Fin n × Fin 4 → Fin n × Fin 4` — for face index i (the face opposite local vertex i? or the face spanned by the other three), partner face and a vertex matching.
+
+For decidable checking, represent the vertex matching as an `Equiv`-like function on `Fin 4`? Hmm, but the matching only matters on the 3 face vertices; represent as a permutation `σ : Fin 4 → Fin 4` with `σ i = i'`? Standard Δ-complex data: for each n-simplex and each face, a pair (m, face map) where the face map is an injection of the face's vertices into the target simplex's vertices. For simplicity and decidability, represent the gluing as a bijection on local vertex labels `Fin 4` that fixes the face index: i.e. a permutation `Fin 4 ≃ Fin 4` that maps the face's vertex set to the partner face's vertex set, plus a global vertex consistency requirement: `vert t j = vert t' (σ j)` for all j — wait, that would force the gluing to be realized by the global labeling; that's the standard way to describe a Δ-complex combinatorially as a quotient of a disjoint union of simplices by face identifications respecting labels. Hmm, but if the global labeling already agrees on the glued faces, the quotient is determined. Actually that's exactly right: a Δ-complex is a disjoint union of simplices modulo identifications of faces *by simplicial maps*, which are determined by maps on vertices. In the quotient, vertices are equivalence classes of local vertex occurrences. So the structure should have:
+
+- `n : ℕ`
+- `glue : Fin n × Fin 4 → Fin n × Fin 4` — an involution without fixed points on "face slots", where `(t,i)` denotes the face opposite vertex i (or the face at index i).
+- `faceEquiv : (x : Fin n × Fin 4) → Fin 4 ≃ Fin 4` — a bijection on local vertices, mapping the face to the partner face; it should fix? Let's define: for x = (t,i), `faceEquiv x : Fin 4 ≃ Fin 4` maps local vertex set of face i of t bijectively onto local vertex set of face i' of t' where (t',i') = glue x; and the global vertex labels agree: `vert t j = vert t' (faceEquiv x j)` for all j... no wait. The identification is between the *face* of t and the *face* of t'; the quotient identifies local vertex occurrences — the global vertex label in the quotient is the equivalence class. If we carry `vert : Fin n → Fin 4 → V` as the gluing data, then requiring `vert t j = vert t' (σ j)` for j in face i is precisely saying the labels agree, so the quotient's vertices are just `V`-labeled. That's the standard "simplicial quotient" approach, and it makes the checks decidable.
+
+Hmm, but there's a subtlety: the vertex link computation then needs to work with the quotient structure. Let me think about a cleaner route: model the quotient complex directly as a "cell complex with identified faces" but compute everything through a *finite set of corners*.
+
+Alternative approach that's fully rigorous and simple to check: define the link of a vertex in a Δ-complex via "corners":
+- The link of vertex v: its vertices are the "corners" = pairs (t, j) of a tetrahedron t and a local vertex j ≠ ? Hmm.
+
+Let me consider a different, elegant, fully decidable formulation: a 3-dimensional Δ-complex as a *finite set of tetrahedra with identified faces* is equivalent to specifying, for the manifold check, the link of each vertex as a 2-dimensional Δ-complex. Instead of heavy machinery, I can define the link complex as a `FiniteAbstractSimplicialComplex` on the vertex set of the link, where the link vertices correspond to *edges* of the complex incident to v, and link triangles to triangles of the complex containing v... but that only works if the complex is genuinely simplicial (no identifications).
+
+Given the small examples: 
+- 3-ball: single tetrahedron — simplicial, easy.
+- S³ as boundary of 4-simplex: simplicial, easy.
+- S³ as two-tetrahedron gluing: this is a Δ-complex (each tetrahedron glued to itself along faces? The standard 2-tetrahedron S³: two tetrahedra glued along all 4 faces pairwise, boundaryless. Actually there's the standard 2-tetrahedron triangulation of S³? Let me recall: The boundary of the 4-simplex has 5 tetrahedra. There's a well-known 2-tetrahedron triangulation of S³? The minimal triangulation of S³ has 2 tetrahedra (due to the 2-3 move; e.g. the "standard" 2-tetrahedron sphere uses identifications). Yes: S³ has a triangulation with 2 tetrahedra (minimal), with face identifications giving vertex links that are spheres. This is a Δ-complex, not a simplicial complex (only 2 tetrahedra but 5 vertices? With 2 tetrahedra and identifications, need 5 distinct global vertices? Hmm: S³ has a 2-tetrahedron triangulation with 4 vertices? Wait, if it had 4 vertices it would be a simplicial complex on 4 vertices and the only 3-complex is the 3-simplex whose boundary is S². So the 2-tetrahedron S³ must be a Δ-complex with identifications, i.e., each tetrahedron has vertices mapped to global vertex classes with identifications. The minimal S³ triangulation: 2 tetrahedra, 4 vertices? Hmm, let me think: In the 2-tetrahedron triangulation of S³, the vertex links are 2-spheres made of 2 triangles... The standard example: take two tetrahedra and identify faces via maps. The resulting complex has f-vector... If it's a closed 3-manifold, χ = 0, so f0 - f1 + f2 - f3 = 0. With f3 = 2, we need f0 - f1 + f2 = 2. Hmm. Known: minimal S³ triangulation has 2 tetrahedra, 4 vertices, 7 edges, 5 triangles? Let me compute: f3=2, χ=0. If f0=4: 4 - f1 + f2 - 2 = 0 ⇒ f2 = f1 - 2. Hmm. Let's just recall: the "2-tetrahedron sphere" — take two tetrahedra T1, T2. Glue face 0 of T1 to face 0 of T2, face 1 to face 1, face 2 to face 2, face 3 to face 3 with a twist. The vertex identifications then collapse things. Actually the known minimal S³ triangulation by 2 tetrahedra has 4 vertices? There's a classical fact: S³ has a triangulation with 2 tetrahedra where the vertex links are 2-spheres with 3 vertices? No—vertex links of a 3-manifold triangulation are triangulated 2-spheres; with 2 tetrahedra, links would need at least 2 triangles; a 2-triangle sphere is degenerate (two triangles glued along all 3 edges is a sphere: yes! Two triangles glued along all three edges = S², the "banana" — that's a valid 2-sphere triangulation with 3 vertices, 3 edges, 2 triangles, χ=2). So the minimal S³ triangulation has vertex links = banana spheres with 3 vertices. This is the "2-tetrahedron S³".
+
+Hmm wait — is that right? With 2 tetrahedra and links being 2 triangles, each tetrahedron contributes 2 triangles to the link of each vertex? A tetrahedron has 3 faces at a vertex? Actually a tetrahedron contributes to the link of vertex v the triangle formed by the other three vertices; if v appears in the tetrahedron once, the link contribution is 1 triangle. With 2 tetrahedra, each vertex's link has at most 2 triangles ⇒ banana sphere. That means each of the 4? vertices appears in both tetrahedra. Hmm, but also vertices may be identified across tetrahedra. Let me just construct it computationally later and check. It's known that with 2 tetrahedra, the triangulation is the "2-tetrahedron sphere" with 5 vertices? Hmm, I recall the minimal S³ triangulation has f-vector (4, 7, 5, 2)? Hmm, that doesn't satisfy χ=0: 4-7+5-2 = 0. Yes! It does. So f0=4, f1=7, f2=5? But hold on, with 2 tetrahedra, f2 ≤ 8. And links: sum over vertices of (triangles in link) = sum over tetrahedra of 4 = 8 = sum of triangles in vertex links. If 4 vertices each with link = banana (2 triangles) = 8. ✓. Banana sphere has 3 vertices (edges in the link = 3), sum of vertices over links = 4·3 = 12 = 2·(edges counted)= each edge is in 4 tetrahedron-faces... Hmm, each edge of a 3-manifold triangulation is in ≥3 triangles (glued faces). 12 = 2·f1? No: sum over vertex links of #edges in link = sum over vertices of #edges incident... each edge incident to 2 vertices counts once per each vertex link? An edge {u,v} appears as a vertex of link(u) and a vertex of link(v), so counted twice. So 2·f1 = 12 ⇒ f1 = 6. Then χ: 4 - 6 + f2 - 2 = 0 ⇒ f2 = 4. Hmm, but with banana links: link of each vertex has 3 edges and 2 triangles; each triangle in the link of v corresponds to a triangle of the complex containing v. Sum over v of #link triangles = 8 = 3·f2 (each triangle has 3 vertices) ⇒ f2 = 8/3 not integer. Contradiction. So the "banana" link picture is inconsistent? Let me recompute: each tetrahedron contributes 4 link-triangles total (one per vertex). With 2 tetrahedra: 8. Each triangle of the complex contributes 3 (one per vertex). So 3 f2 = 8 impossible. So the 2-tetrahedron triangulation does not have all links being bananas. Hmm, but with 2 tetrahedra, a vertex link is a 2-dimensional complex whose maximal faces are triangles; if v appears in t tetrahedra, the link has ≤ t triangles. For a closed 3-manifold with 2 tetrahedra, the link of a vertex must be a 2-sphere, requiring ≥ 2 triangles (banana), so every vertex appears in exactly 2 tetrahedra ⇒ every vertex is a vertex of both tetrahedra ⇒ there are ≤ 4 vertex classes? Wait, but identifications: a tetrahedron has 4 vertices; local vertices can be identified with each other within the same tetrahedron! In a Δ-complex, the boundary identifications can identify vertices of the same tetrahedron. Indeed, in the standard 2-tetrahedron S³, vertices of a single tetrahedron are identified: if the tetrahedron has vertices a,b,c,d and we glue face (b,c,d) to face (a,c,d) etc., then a~b.
+
+OK. This shows the need for a proper Δ-complex formalization where the vertex set is the quotient of local vertex occurrences by the identifications. Let me now think carefully about the design, because this is the core of the task.
+
+**Design: Δ-complex (simplicial identifications) of dimension 3.**
+
+Standard definition (Hatcher): A Δ-complex is a quotient of a disjoint union of simplices by face identifications given by simplicial maps that are injective on each face. For 3D with only tetrahedra (all top cells 3-simplices), the data is:
+- For each `i : Fin n` (tetrahedron index), a set of 4 vertices of a standard 3-simplex, local labels `Fin 4`.
+- For each pair `(i, j)` with `j : Fin 4` — the face opposite local vertex j (i.e. local vertices `≠ j`) — an identification with a face of another (or same) tetrahedron: a pair `(i', j')` plus a bijection `f : Fin 4 ≃ Fin 4` with `f j = j'` mapping the face opposite j onto the face opposite j'; the map is a simplicial bijection. Actually the bijection between the two faces of size 3 can be described by a bijection of `Fin 4` fixing j and mapping `{vertices ≠ j}` onto `{vertices ≠ j'}`. A `Fin 4` permutation that fixes j.
+
+Data requirements for a valid Δ-complex structure (well-formedness, checkable):
+1. `glue` is a fixed-point-free involution: `glue (glue x) = x` and `glue x ≠ x`.
+2. For each x = (t,j), the face map `φ x : Fin 4 ≃ Fin 4` satisfies `φ x j = (glue x).2`, and maps the face complement of j onto the complement of `(glue x).2`, and `glue (glue x) = x` with `φ (glue x) = (φ x).symm`. Also each local vertex occurrence `(t, k)` maps to the global vertex class in the quotient.
+
+Then the geometric realization: quotient of ⊔ tetrahedra by the identifications. The global vertex set is the quotient of `{(t,k)}` by the equivalence relation generated by `(t,k) ~ (glue(t,j), φ (t,j) k)` for `k ≠ j` (and all such). For computations, we need this quotient to be a fintype; it's finite as `Fin n × Fin 4` is finite. Deciding the equivalence relation requires a union-find / closure computation. We could define the vertex set as a quotient type `Quot` and use `Fintype` + `DecidableEq`... but `decide` on quotient types is not straightforward.
+
+Better approach for computation: define the *global vertex index* explicitly: provide a function `vtx : Fin n × Fin 4 → Fin N` (a labeling by a finite type `Fin N`) which is compatible with gluings, i.e. `vtx (t,k) = vtx (glue (t,j), φ (t,j) k)` for all k ≠ j. Then the quotient's vertex set is `Fin N` (all labels used — or we can just use the image). Then every check becomes a finite computation over `Fin n × Fin 4` and `Fin N`.
+
+This mirrors the "vert : Fin n → Fin 4 → V" approach but the key is that the *gluing* map must be *compatible* with the vertex labels — that's a checkable well-formedness condition (`compat`), and the effectiveness condition for the complex being a genuine Δ-complex is that the identifications are exactly by these gluings. Since we check compatibility, we can define everything on the quotient labeled by V.
+
+Now define the cells of the quotient Δ-complex:
+- Vertices: V (labels actually used).
+- Edges: equivalence classes of pairs {t, {k,l}} under the gluing maps. To make it decidable, define a canonical representative function: for a local edge `(t, {k,l})`, the edge's canonical form = min over all images under sequences of gluings. Since gluings form an involutive pairing on faces, an edge occurrence gets mapped whenever the edge lies in a glued face. Computing the closure requires iteration until stabilization (finite: ≤ n·6 edge occurrences). We can implement a simple "closure" function: `edgeOrbit (e : Fin n × Sym2 (Fin 4)) : Finset (Fin n × Sym2 (Fin 4))` computed by iterating a step function until fixed point. That's decidable computable by `Finset.iterate`? Implementing fixed-point iteration in a computable way requires `Nat.rec` with a fuel bound (e.g. `n*6+1` steps) — this is doable but tedious to prove correct. Alternatively, since gluings are involutions, the equivalence relation generated has a nice structure? Hmm.
+
+Alternative cleaner approach: define the quotient complex using `Quot` and prove the needed combinatorial facts via general lemmas, then use `decide` on a *presentation* that avoids computing quotients... but `decide` can't decide propositions about Quot.
+
+Hmm. Let me reconsider. There is a much simpler approach used commonly: For *specific small examples*, we can compute the quotient by hand and present the resulting complex explicitly. I.e., for each example, define:
+- the face-pairing data (`DeltaComplex3` structure with all well-formedness fields, checked by `decide` since they are equations between concrete values — finite computation),
+- and separately define the resulting quotient complex's cells explicitly as concrete `Finset`s (computed by hand/by a Python script that I run to generate the Lean data), with the vertex-link checks `decide`-checked on those explicit finsets.
+
+But then the link checks wouldn't be connected to the face-pairing data definitionally; there'd be a "consistency" proof obligation linking the two. The task says "face-pairing consistency (every face glued exactly once, orientation-reversing), Euler characteristic (0 for closed 3-manifolds), and vertex-link sphere checks for the small examples". It would be ideal if Euler characteristic and vertex links are *computed from the face-pairing data* by a checker. 
+
+A middle path that is fully rigorous and computational: represent the Δ-complex explicitly as a *finite set of "corners"* with a computable quotient via canonical representatives (using an explicit equivalence closure computed with fuel), and prove the checker's soundness for the *manifold condition* by relating it to the quotient. That's a lot of work but doable.
+
+Simpler rigorous route: define the quotient combinatorics directly with a *labeled* presentation where identifications are given by an explicit equivalence relation on local vertex occurrences, with the property that the "gluing" is realized on labels. Hmm.
+
+Let me step back and think about what's actually needed mathematically and what's achievable in a few hours.
+
+Goal deliverables:
+1. D10 infrastructure reuse — import D10 `Complex`.
+2. Δ-complex/gluing descriptions: face-pairing data + checker (consistency + orientation-reversing).
+3. Constructions & verification: 3-ball (single tetrahedron), S³ (boundary of 4-simplex; two-tetrahedron gluing), solid torus (3-tetrahedron), L(p,q) via bipyramid for (2,1), (3,1).
+4. Computations: face-pairing consistency, Euler characteristic (0 closed), vertex-link sphere checks for small examples.
+5. `#print axioms` only the three standard axioms; no sorry/axiom/unsafe/native_decide/proof_wanted.
+6. Compile each file, write result card.
+
+The vertex-link sphere check can be done on the *explicit simplicial models* where possible:
+- 3-ball: single tetrahedron — simplicial; boundary is S²; vertex links are triangles/2-simplices (the link of a vertex of a tetrahedron is a triangle = S² triangulated by one triangle... a single triangle is a disk with boundary, not a closed surface). So the "vertex-link sphere check" only applies to *closed* 3-manifolds (interior vertices with full links). For the ball, boundary vertex links are disks; the check is: the link is a disk (or "closed surface or disk with boundary circle").
+- S³ (boundary of 4-simplex): simplicial, 5 tetrahedra; links = 2-spheres (boundary of a tetrahedron... wait, link of vertex i in ∂Δ⁴ = boundary of the 4-simplex = the 3-sphere; link of vertex i is the boundary of the tetrahedron spanned by the other 4 vertices = S² with 4 vertices, 6 edges, 4 triangles, χ=2 ✓. Great.
+- Lens spaces via bipyramid: Δ-complex with identifications (top/bottom identified). Vertex links: link of N and S and equator vertices. Could be handled by explicit quotient computation.
+- Solid torus: Δ-complex with boundary (prism glued ends), links: boundary vertices have disk links, interior vertex has sphere link.
+
+To handle the quotient computation honestly, I think the cleanest is to define the link of a vertex *of the Δ-complex* as a Δ-complex (2-dimensional) in its own right, whose vertices are the "edge-corners" incident to v, and whose triangles come from tetrahedra containing v, with the induced face identifications. Then "is a sphere" check on the 2-dimensional Δ-complex requires the same quotient machinery.
+
+OK here's another thought. Perhaps the most robust approach within the time budget: **represent the quotient complex as an explicit "identified face complex" via a canonical-representative function defined with a fuel-based transitive closure, then verify its properties computationally for the small examples.** The fuel-based closure is straightforward to implement in Lean:
+
+```lean
+def step (S : Finset α) : Finset α := S ∪ S.biUnion (fun x => ...)
+def closure (S : Finset α) : Finset α := (step^[bound]) S
+```
+
+And then define `edgeClass e := (closure {e}).min' ...`. Then the checks (`edgeClass` is a complete invariant: e ~ e' iff classes equal) are decidable by computation. To keep the *proofs* honest without proving the closure correct in general, we can define the checks using the closure and *state* the lemmas that connect them (e.g. "the number of edge classes = ...") by computation. The risk: a fuel-based closure could be wrong if fuel is too small — but for the small examples we can compute with generous fuel and additionally verify a posteriori (e.g. check that the closure is stable). Actually, we can make it *provably correct* by proving that after stabilization the set is closed under step (which is decidable), and that the closure contains the seed. Hmm, but correctness of the quotient computation ("the classes are exactly the equivalence classes") requires more: that anything reachable is in the closure (true by induction on the number of steps: closure with fuel k contains all elements reachable within k steps) and that the closure is step-closed (checked). If we verify `step (closure S) = closure S` (or ⊆), then closure S is an equivalence-closed set containing S. Then we can *prove* that for our concrete examples the classes are exactly the connected components. For the universal property ("e ~ e' iff same class"), we need the relation generated; if closure is step-closed and contains the seeds, then closure ⊇ reachable; and closure ⊆ reachable if we prove by induction that each iterate ⊆ reachable (with fuel). That's a general lemma: `iterate_step_subset_reachable`. So classes are exactly the equivalence classes. 
+
+But hold on: is the "reachable" relation the right equivalence? The identification relation on local cells: an edge occurrence (t, {k,l}) is identified with edge occurrence (t, φ(t,j)({k,l})) whenever {k,l} ⊆ face j... Also within a single tetrahedron, two local edges that span the same global vertices are NOT identified (in a Δ-complex, identifications only come from the gluing maps). But the geometric realization also identifies cells that map to the same subset of the quotient... For a Δ-complex where the gluing maps are injective on faces and the only identifications are those specified, the quotient cells are exactly orbits. But careful: if within one tetrahedron two local vertices have the same label (vtx t k = vtx t k'), then that tetrahedron's interior isn't embedded injectively — this is allowed in Δ-complexes? In Hatcher's Δ-complex definition, the face maps are injective, but within a single simplex, the "characteristic map" is injective on the interior, so vertices of one simplex are distinct... but identifications can identify vertices of the same simplex only via gluings (which are only defined on faces). Hmm, in the standard 2-tetrahedron S³, the vertex identifications a~b occur via gluing a face containing a to a face containing b.
+
+This is getting deep. Let me look at how much time I have: 4 hours. The formalization must compile. I need a pragmatic scope that still satisfies the task meaningfully.
+
+**Pragmatic scope decision**: Build two layers:
+
+**Layer A: Δ-complex gluing data + checker (structural, decidable).**
+Define `DeltaComplex3Data` (or `FacePairing3`) over a vertex type:
+- `n : ℕ`
+- `verts : Fin n → Fin 4 → V` (global vertex labels)
+- `glue : Fin n × Fin 4 → Fin n × Fin 4` (face partner; face index j means the face opposite local vertex j)
+- `faceMap : (x : Fin n × Fin 4) → Fin 4 ≃ Fin 4` (local vertex matching fixing the opposite vertex)
+- `glue_involutive`, `glue_fixed_free`
+- `faceMap_compat : verts t k = verts t' (faceMap x k)` for k ≠ j — i.e., the labels agree on the glued faces. (This is what makes the quotient well-defined with vertex set V.)
+- `faceMap_inverse` coherence, `faceMap_face`: faceMap x j = (glue x).2.
+- `simplicial`: within each tetrahedron, the 4 labels are distinct (this ensures each tetrahedron realizes as a genuine 3-simplex, edges/faces determined by label subsets).
+
+Then define the combinatorial checks on the quotient using *explicit closure on local cell occurrences*:
+- `numTets := n`
+- Face consistency: every face slot is glued exactly once and orientation-reversing — this is: `glue` is a fixed-point-free involution (every face in exactly one pair) plus `orientation reversed`: the matching permutation on the face is *odd* relative to the face's orientation induced by the tetrahedron's orientation. For a 3-simplex with vertices ordered 0<1<2<3, the face opposite j with its induced boundary orientation: For gluing face j of t to face j' of t', the matching map φ (a bijection of the 3 vertex set) is orientation-reversing if the sign of the induced permutation is -1.
+
+Hmm wait. In the combinatorial setting with *global labels*, orientation-reversing can be defined as: the permutation of the 3-element face induced by the identification has sign −1, where the face's vertex ordering is inherited. Let me define this concretely with a clean computation.
+
+Simplest approach: each tetrahedron t has an *ordered* list of 4 vertices `verts t : Fin 4 → V` and this ordering induces an orientation. For face j (opposite vertex j), the boundary orientation of the face is given by the ordered triple of the other three vertices in increasing order of local index, e.g. for j=0: (1,2,3); j=1: (0,2,3) with a sign? Standard: the boundary of the ordered simplex (v0,v1,v2,v3) is ∑ (-1)^j (v0..v̂j..v3). The induced orientation on face j is (-1)^j times the ordering (v_0,...,v̂_j,...,v_3). So the *oriented* face boundary is the ordered triple `(v_0,...,v̂_j,...,v_3)` with sign (-1)^j. When gluing face `(t,j)` to `(t',j')` via a bijection φ on the 3 vertices, the gluing map sends the ordered triple of face (t,j) (in increasing local order, with intrinsic sign (-1)^j) to the corresponding triple in (t',j'). For the quotient to be an oriented 3-manifold, the gluing must reverse orientation: i.e. the composite of "identity map from ordered triple of (t,j)" to "ordered triple of (t',j') via φ" must have sign −1 · (sign from the intrinsic orientations). More precisely: define for face (t,j) the ordered triple L(t,j) = the local indices ≠ j in increasing order, i.e. (L0, L1, L2). The identification φ maps local vertices; the induced map on the ordered triple of (t,j) to the ordered triple of (t',j') is measured by the permutation π where (φ L0, φ L1, φ L2) is a permutation of L(t',j'); its sign s(π). The orientation-reversing condition is: (-1)^j · (-1)^{j'} · s(π) = -1.
+
+Let me double check: think of each tetrahedron as an oriented 3-manifold with orientation given by the ordering (0,1,2,3). The boundary orientation on face j is given by (-1)^j times the ordered triple of the remaining vertices in increasing order. Gluing two oriented copies along faces requires the gluing map to be orientation-reversing w.r.t. the boundary orientations. The map ψ: face(t,j) → face(t',j') is determined by φ. In terms of the *intrinsic* triples with their intrinsic signs: we need sign(det) of the map to be -1 when computed in the boundary orientations, i.e. (boundary orientation on target) ∘ ψ = − (boundary orientation on source). Writing ε_j = (-1)^j for source, ε_{j'} for target: sign(ψ) w.r.t. the increasing-order triples = s(π); then w.r.t. boundary orientations: sign = ε_{j'} · s(π) · ε_j^{-1} = ε_j ε_{j'} s(π) (since signs are ±1). Require = -1. So condition: ε_j · ε_{j'} · s(π) = -1. ✓.
+
+Note: if the tetrahedron ordering is a labeling by `Fin 4`, that's fine.
+
+But: for the *unoriented* manifold condition (being a closed 3-manifold), orientation-reversing is automatic if we can choose orientations; but the task explicitly wants "orientation-reversing" as a check, so I'll require it in the `IsOrientedGluing` predicate (checkable), and state that all our examples satisfy it.
+
+Now, the harder part: computing Euler characteristic and vertex links from the gluing data.
+
+**Observation**: With global vertex labels and the compatibility field, the quotient complex's cells *can* be enumerated concretely:
+- 3-cells: the n tetrahedra.
+- Faces: orbits of face slots under glue (which is an involution ⇒ just pairs) — f2 = n/2 if n even... wait, n tetrahedra have 4n faces, paired into 2n pairs, so f2 = 2n for a closed complex. For a complex with boundary, there are unpaired faces... Hmm, but our structure requires `glue` total (every face has a partner). Then all complexes are closed. But the 3-ball and solid torus have boundary! 
+
+So I need a structure allowing boundary faces: `glue : Fin n × Fin 4 → Option (Fin n × Fin 4)` with `none` = boundary face. Then the checker: `glue` is an involution with no fixed points (where `glue none = none`), and paired faces have compatible labels and orientation. For boundary faces, nothing else. Hmm, but then the *quotient* as a simplicial set: unpaired faces are on the boundary.
+
+For the closed manifold condition: all faces paired + the vertex links are spheres (a 3-ball's vertex links are disks, etc.). So define:
+- `IsBoundaryless` := all faces paired.
+- For vertex links: need to compute link of each vertex as a 2-dimensional Δ-complex and check it's a closed surface with χ = 2.
+
+To compute vertex links from the data: the link of vertex class `v : V` should be built from "corners": for each tetrahedron t and each local vertex k with `verts t k = v`, the link contribution is the triangle on the *opposite* face's three vertices (local indices ≠ k) — those are the link's triangles. The link's vertices are edges of the complex incident to v: each edge from v to u. In the quotient, an edge is an orbit of local edges. Two local edges are identified when a gluing maps one to the other.
+
+So I need to compute edge orbits of the 3-complex. Since `glue` is an involution, and each local edge (t,{k,l}) belongs to two local faces (opposite m where m ∉ {k,l}), each face may be glued. The orbit of a local edge under the identification relation: local edge e in tetra t; for each of the 2 local faces containing e (namely face j for j ∉ e's vertices? wait an edge {k,l} is contained in the faces opposite m for m ∈ {0,1,2,3}\{k,l}, that's 2 faces), if that face is glued (t,j) ↦ (t',j'), then e maps to the edge φ(t,j)({k,l}) in t'. Then continue.
+
+Since the relation is generated by involutions, the orbit is computed by a BFS/fixed-point iteration with fuel = total number of local edges (6n) — since each step adds new elements, fuel 6n+1 suffices... Actually a step function that maps a set S to S ∪ images(S): after k iterations, all elements reachable within k steps are included; the orbit has ≤ 6n elements, so diameter ≤ 6n, so fuel 6n+1 is enough. Good. But I need `n` concretely. Since `n` is a field, `Finset` iteration with fuel `6*n+1` is fine.
+
+Then define the link complex as a finite abstract simplicial complex? The link is a 2-dimensional Δ-complex with identifications, not necessarily simplicial. Hmm. Its vertices = edge orbits incident to v; its "triangles" = for each tetrahedron t containing v (local k) and each pair of local vertices {a,b} ⊆ complement of k: the triangle on edge orbits of {k,a}, {k,b}, {a,b}? Wait, in the link of v in a 3-simplex: the link is a triangle whose vertices are the three edges at v within the tetrahedron, and the triangle face corresponds to the opposite 2-face {a,b,c}. Hmm, the link's triangles correspond to the *faces* of the tetrahedron opposite to v (i.e., the 2-simplex on the other 3 vertices), but a triangle in the link is a set of 3 link-vertices, which are edges. So the link triangle for tetra t at local vertex k is on link-vertices = edge orbits of {k,a}, {k,b}, {k,c} where {a,b,c} = complement of k. And the link's own edges: pairs of these. But identifications in the link come from gluings of faces *containing v*: a local face (t, m) with m ≠ k and v ∈ that face... Let's think: a face F of t containing local vertex k (so F = complement of m for some m ≠ k). This face may be glued to (t', m'), and the gluing maps the link-triangle at k to a link-triangle at the image local vertex k'' in t'. So the link triangles get identified.
+
+So the link complex is naturally a 2-dimensional Δ-complex (with vertices = edge orbits at v, edges = "corners" pairs, triangles = tetrahedra at v). To check "the link is a closed surface with χ=2", we need:
+- its vertices: edge orbits incident to v (computable via closure on local edges),
+- its edges: pairs of incident link vertices (edge orbits {k,a}, {k,b}) coming from a *face* of the complex that contains both... Hmm, actually the link's edges correspond to 2-faces of the 3-complex containing v; the link's triangles correspond to 3-faces (tetrahedra) containing v.
+
+Given the complexity of a fully general quotient computation for the link, maybe a different tactic: **use a "strict"/simplicial presentation for the links where possible, and handle the identified cases with a specialized but still decidable check.**
+
+Alternative tactic that's simpler and arguably stronger: **Define the "link" combinatorics on local occurrences directly**, using the closure-computed canonical classes of corners, and define `IsClosedSurfaceLink v` as a decidable predicate on the *local* data:
+- Vertices of the link: local "corner" edges at v, grouped into orbits; each orbit = edge of the complex at v.
+- Link edges: local faces containing v (i.e. pairs (t, m) with local face F = complement of m, and v ∈ F ⟺ m ≠ the local index k with verts t k = v... careful with repeated labels). Each such local face gives a link edge between the two vertex-orbits of the two edges of F at v. 
+- Link triangles: tetrahedra t containing v: gives a link triangle on the 3 edge-orbits of edges at v in t.
+- Checks: every link edge is in exactly 2 link triangles; every link vertex (edge orbit) is in exactly 2 link edges (2-regular link); and χ(link) = 2.
+
+All these can be expressed as decidable computations on local occurrences with orbit canonical forms. This directly mirrors the simplicial definition but in the quotient setting. To keep the development manageable and honest, I'll define the orbit map with the fuel-based closure and *prove* the key general lemma that the closure is the equivalence closure (or at least prove soundness: `mem_closure_step` etc.), then define the checks.
+
+Hmm, this is a big chunk of work. Let me estimate: ~600-900 lines of Lean with careful decidability. Risky but feasible within 4 hours if I'm efficient. But I should also consider a leaner alternative:
+
+**Leaner alternative**: Verify vertex links only for the *simplicial* examples (3-ball, ∂Δ⁴ = S³) using D10's existing `IsClosedSurface` on explicitly defined vertex-link complexes computed by hand (as finite abstract simplicial complexes). For Δ-complex examples (2-tetra S³, solid torus, lens spaces), provide the face-pairing checker (consistency + orientation) and Euler characteristic computed from the *quotient cell orbits*, which are easy to compute for edges? Hmm, actually Euler characteristic for the quotient needs face orbits (easy: n/2 pairs for closed, or count pairs + boundary faces) and edge orbits and vertex classes — the hard parts are edges and vertices, which need orbit computations. But maybe for specific small examples I can compute these by hand via an explicit Python script, then *state* them as `rfl`-checkable equalities (i.e., `decide` computes the orbit-based formula and I assert the numeric result). Wait, that's exactly what the checker does — `decide` on the concrete data. So I still need the orbit function to be executable in Lean.
+
+Hmm, actually here's a thought: the closure computation can be done in Lean with `List`/`Finset` recursion; it's executable. The proof burden is: (a) the definition compiles and computes; (b) any lemmas I state about it. For the *checks* I can state the checks as `def`s returning `Bool`/`Prop` with decidable instances, and then establish the example lemmas by `decide` or `native_decide`—no, `native_decide` is forbidden. `decide` uses the kernel's reduction; for computations on `Fin n` with small n it should be fine but `decide` on Finset-based computations can be slow. `decide` requires Decidable instances and the kernel evaluates them; `Finset` operations are reasonably efficient in the kernel but products of finsets can blow up. With n ≤ 6 tetrahedra and 6n = 36 edges, closure iterations 37 times over sets of size ≤36 — that's fine.
+
+But caution: `decide` on statements involving `Finset` with functions may produce big terms; but it should work.
+
+Actually, let me reconsider the whole approach once more, seeking the *minimum rigorous* formalization that satisfies the task:
+
+The task's core: "explicit triangulations of 3-manifolds with checkable constructions". The checks: face-pairing consistency, Euler characteristic, vertex-link sphere checks. A defensible formalization:
+
+(1) **Simplicial layer (reuse D10)**: For each example, give an explicit finite abstract simplicial complex where applicable:
+   - `ball3`: single tetrahedron (facets {0,1,2,3}), χ = 1, boundary is the 2-sphere complex (link checks for boundary vertices = disks).
+   - `sphere3Boundary4Simplex`: ∂Δ⁴, χ = 0, links are S²'s (checked as closed surface with χ=2 via D10's `IsClosedSurface`), a genuine simplicial complex.
+   - `solidTorus` simplicial? A 3-tetrahedron simplicial triangulation of the solid torus with 3 vertices would be a valid simplicial complex on ≤3 vertices? A 3-simplex needs 4 distinct vertices. If the whole complex has 3 vertices, no tetrahedron exists. So the solid torus triangulation with 3 tetrahedra must have identifications (Δ-complex) with maybe 3 vertices total? Hmm: solid torus has χ = 0 (homotopy equivalent to S¹). With 3 tetrahedra, χ = f0 - f1 + f2 - 3 = 0. Known minimal triangulation of the solid torus: 2 tetrahedra? Let me think about the standard "3-tetrahedron solid torus": it's the prism Δ²×I cut into 3 tetrahedra with two boundary triangles glued with a rotation. Boundary: the side faces form a cylinder? Let's construct: vertices top {a,b,c}, bottom {a',b',c'}; prism = 3 tetrahedra. In the quotient, glue top triangle {a,b,c} to bottom {a',b',c'} with a rotation by 120°? Then the boundary side faces become a torus? Let's see: the side faces: 3 quads, each split into 2 triangles = 6 triangles + top + bottom = 8 triangles; gluing top to bottom leaves 6 boundary triangles forming the boundary torus. For it to be the solid torus, the side faces must glue up to a torus: the side of the prism is a 3-gon × I; identifying the top triangle to the bottom by a rotation by 120° (a cyclic shift) gives mapping torus of rotation ⇒ solid torus. With shift 0 it'd be S¹×S¹×I? no, with identity shift we get T²×I... no: prism with top and bottom identified by identity gives T² ×? Hmm, the prism with ends identified by a rotation gives a mapping torus of a disk? Let me think again: the prism Δ²×I with the top and bottom triangles identified by a rotation gives a solid torus, yes (it's the mapping torus of a rotation of the disk; rotation by 2π/3 is periodic so the mapping torus is a Seifert fibered solid torus).
+
+   Vertices: a ~ a' (depending on rotation). With rotation taking a↦b, b↦c, c↦a: a~b~c all one class? Then only 1 vertex total for the whole solid torus! Then the complex has 1 vertex, and the tetrahedra have repeated vertex labels — which is why it's a Δ-complex with identifications, and the "global vertex labels" approach with `Fin n → Fin 4 → V` works: all labels are the same vertex. But then my `simplicial` field requiring distinct labels within a tetrahedron fails. Hmm! Is such a quotient complex legitimate as a Δ-complex? Yes — Δ-complexes only require each *simplex* to be embedded... hmm, actually in Hatcher's Δ-complex, the map from the standard simplex to the quotient is injective on the interior, but vertices of one simplex can indeed be identified if the face identifications force it (as in the 3-tetrahedron solid torus / "1-vertex triangulation"). Formally, the quotient of a disjoint union of simplices by face identifications *is* the Δ-complex; the individual simplices need not inject. Right: the standard "one-vertex triangulation of the solid torus with 3 tetrahedra" has all 3 tetrahedra with vertices identified, so each tetrahedron's vertex labels repeat.
+
+   But wait: if a tetrahedron has two vertices identified, then its image in the quotient is not a 3-ball anymore... The *open* cell is embedded (the interior of the tetrahedron injects), but faces can be weird. Δ-complex still fine as a CW-ish structure (but cells might not be embedded — degeneracies). Hmm, for the *link* computation, if tetrahedron t has local vertices k≠k' with the same global label v, then at vertex v the tetrahedron contributes a link triangle whose vertices are ... the link at v is still defined via the star.
+
+This is getting complicated, but the point is: the *face-pairing data* approach handles all of this uniformly. So all examples become Δ-complexes:
+
+Let me now design concretely and carefully.
+
+### Concrete design
+
+```lean
+structure TetrahedralGluing (V : Type) [DecidableEq V] where
+  n : ℕ                      -- number of tetrahedra
+  vert : Fin n → Fin 4 → V   -- local→global vertex labelling
+  glue : Fin n × Fin 4 → Option (Fin n × Fin 4)   -- face index j = face opposite local vertex j
+  faceMap : (t : Fin n) → (j : Fin 4) → Fin 4 ≃ Fin 4
+  -- gluing is an involution, fixed-point-free on paired faces
+  glue_none : ∀ x, glue x = none → True -- (trivial)
+  glue_some_invol : ∀ x y, glue x = some y → glue y = some x
+  glue_ne_self : ∀ x y, glue x = some y → x ≠ y
+  -- faceMap sends face j to the target face and is inverse-compatible
+  faceMap_apply_opp : ∀ t j, (faceMap t j) j = (glue (t,j)).map Prod.snd |>.getD j  -- hmm
+  ...
+```
+
+Getting the coherence fields exactly right is fiddly. Let me simplify by encoding the gluings more computationally:
+
+Simpler encoding: `glue : Fin n × Fin 4 → Fin n × Fin 4` *total*, with a distinguished "boundary" marking? Or use `Option` and define a "boundary face" as `none`.
+
+Alternative cleaner encoding of the gluing: store for each face slot `(t,j)` a `Gluing` = `Option (Fin n × Fin 4 × (Fin 4 ≃ Fin 4))` where the pair is the target and the vertex bijection. Then conditions:
+1. If `glue (t,j) = some (t',j',φ)` then `φ j = j'`, and `glue (t',j') = some (t,j,φ.symm)`.
+2. Vertex label compatibility: `∀ k, vert t k = vert t' (φ k)` for all k with k ≠ j? Actually for all k in face: k ≠ j. Note φ j = j' but φ might not send k≠j to k'≠j' unless we require it; require `∀ k, k ≠ j → φ k ≠ j'` (equivalently φ maps the complement of j onto complement of j', given φ j = j' and φ bijective — so it's automatic!). Since φ is a bijection with φ j = j', it maps the complement of {j} bijectively onto complement of {j'}. ✓ So compatibility: `∀ k, k ≠ j → vert t k = vert t' (φ k)`.
+3. Orientation: the induced permutation on the face is orientation-reversing (formula above).
+4. Fixed-point-free/involution gives "every face glued exactly once": `IsBoundaryless` = ∀ x, glue x ≠ none; consistency = condition 1.
+
+Then everything is decidable with `decide` on concrete data (Fin n small, Fin 4). 
+
+Wait, but a subtlety: for a *valid Δ-complex*, the face identification must be *consistent* on overlaps (Hatcher requires that the quotient is a Δ-complex: the identification maps must be simplicial and the resulting structure is a quotient). The conditions 1–3 essentially give a well-defined gluing. Additional condition: no face is glued to itself in a way that creates issues? If `glue (t,j) = some (t,j,φ)` with φ: face→face a nontrivial permutation, that's a self-gluing of a boundary face. For the quotient to be a Δ-complex this is fine as long as φ is well-defined... but our `glue_ne_self` forbids x = y. Actually gluing a face to itself is allowed in Δ-complexes (e.g., the minimal triangulations of RP² etc.), but let's not need it; forbid for simplicity? No wait, in our examples: 2-tetrahedron S³ glues faces of T1 to faces of T2 (possibly T1=T2 if n=1). For the lens space bipyramid, faces of T_i to faces of T_j with i≠j generally. OK, forbidding self-gluing is fine for our examples. Actually take care: could the 2-tetrahedron S³ require gluing a face of T1 to another face of T1? Possibly. Let's construct it later and see. It's safer to NOT forbid self-gluing but require that a face is not glued to itself unless the vertex labeling/permutation is such that... Hmm, gluing face (t,j) to (t,j') with j ≠ j' is fine and common. Gluing (t,j) to itself (φ: face→face) is also fine. Identity gluing (t,j)↦(t,j) with φ=id would be degenerate (collapsing). Let me just allow any involution and handle boundary via `none`.
+
+Now, the key computations:
+
+**Euler characteristic**: χ = #vertex classes − #edge orbits + #face orbits − n, where face orbits = #paired faces/2 + #boundary faces... wait, careful: faces of the quotient = orbits of face slots: each glued pair {x, glue x} contributes 1 face; each boundary face (glue = none) contributes 1 face. But if a face slot is glued to itself (x = glue x)? Forbidden (fixed-point-free). So f2 = #(pairs) + #(unpaired) computed by: count over all 4n slots: if glue x = some y with x ≠ y, count half. Implement as: `(Finset.univ.filter fun x => (glue x).isNone).card + ((Finset.univ.filter fun x => (glue x).isSome).card) / 2`. Hmm, division by 2 in ℕ; better define via a canonical representative: `x` is a "face representative" if `glue x = none` or (`glue x = some y` and `x < y` in some linear order). For `Fin n × Fin 4` there's a linear order. So `faceReps := univ.filter (fun x => match glue x with | none => true | some y => x < y)`. Then f2 = faceReps.card. ✓ 
+
+Actually, hmm, careful: the *quotient* face set for a self-gluing with φ ≠ id (identifying the face with itself by a nontrivial involution) is still one face, but the quotient's geometric realization of that face is a quotient of a triangle — not a triangle! That breaks the "cell" structure. To avoid these pathologies, require that the "gluing" is a valid Δ-complex structure: for a self-glued face, φ must be... In Hatcher's Δ-complex, a face is identified with another face or itself, and the resulting cells are still simplices because the identifications are by simplicial bijections *of the whole simplex*... Hmm, actually no: in a Δ-complex, each simplex is a cell in the quotient (its interior injects). The face identifications only happen on the boundary of the simplices. So the 3-cells are the n open tetrahedra, 2-cells are orbits of open faces, and these are honest open simplices as long as each identification is a bijection on the face. So χ counts orbits of *open* cells: vertices are orbits of local vertex occurrences **that appear**... but wait, for the Euler characteristic of a Δ-complex, we count cells: 3-cells = n, 2-cells = orbits of faces, 1-cells = orbits of edges, 0-cells = orbits of vertices. And the *vertex classes* = orbits of local vertices. ✓ This is all fine and independent of whether the gluing maps are weird, as long as the quotient is a Δ-complex in Hatcher's sense — which requires: each face identification is a simplicial bijection, and the equivalence relation generated is well-behaved (i.e., the quotient of each skeleton is obtained by attaching cells). Hatcher's definition requires that no simplex is identified with itself in a way that... Let me recall Hatcher's Δ-complex: "identify certain faces of the Δ-simplices with each other by the canonical linear homeomorphisms... each face of a Δ-complex is contained in exactly two or one Δ-simplex" — for a Δ-complex structure you need well-definedness: each face of each simplex is identified with at most one other face, and the identification is a simplicial homeomorphism. Self-identifications are allowed? In Δ-complexes, typically the identification of a face with itself is used (e.g., RP² has a 2-simplex with edges identified, but face identification of the single face with itself isn't the mechanism). I'll simply *require* `glue x ≠ some x` (no trivial self-gluing) and that's it; a nontrivial self-gluing (t,j)↦(t,j',φ) with j≠j' is fine (it identifies two different faces of the same simplex, e.g. S³ 2-tetrahedron?). Hmm, even simpler: require all gluings to be between distinct face slots (x ≠ y) — we'll see if examples need self-gluing. The 2-tetrahedron RP³/S³ may glue T1's face to T1's other face. Distinct slots, fine.
+
+But hold on: what if glue (t,j) = some (t,j) (same slot)? Then fixed-point-free fails. We can require `glue_some_ne_self : glue x = some y → y ≠ x`. OK.
+
+**Edge orbits and vertex classes**: Need a general orbit computation. Since `glue` is an involution on face slots, the identification relation on local vertices: (t,k) ~ (t',k'') if there's a face slot (t,j) with k ≠ j, glue(t,j) = some (t',j',φ), and φ k = k''. Similarly for edges: (t, {k,l}) ~ (t', {φk, φl}) when {k,l} ∩ {j} = ∅ i.e. k,l ≠ j.
+
+Implement a generic closure:
+
+```lean
+def reach (step : α → Finset α) (S : Finset α) : Finset α :=
+  (Finset.iterate (fun S => S ∪ S.biUnion step) (fuel) S)
+```
+
+Hmm, `Finset.iterate`? The function `Finset α → Finset α` iteration via `Function.iterate`. Fuel needs a bound. For vertices: `4n` occurrences; for edges: `6n` occurrences; use `4*n+1` and `6*n+1` respectively. Since each step adds at least... no, iterate k times means reachable within k steps, so diameter ≤ card of the orbit ≤ 4n (resp 6n). ✓ So closure with fuel (4n+1) contains the full orbit. But wait—the diameter of the equivalence relation generated by a step relation could be up to the number of elements, so yes fuel = card + 1 works since the orbit contains the seed and each step adds ≥1 element or stabilizes.
+
+Then define:
+```lean
+def vertexClass (g : TetrahedralGluing V) (x : Fin g.n × Fin 4) : Finset (Fin g.n × Fin 4) :=
+  reach (vertexStep g) {x} 
+def edgeClass (g) (e : Fin g.n × Finset (Fin 4)) (h : e.2.card = 2) : Finset ... := reach (edgeStep g) {e}
+```
+And canonical representatives for counting: use `Finset.min'` with a linear order on the finite type `Fin n × Fin 4` (and for edges, on `Fin n × Finset (Fin 4)`? Finset has a linear order if V does: `Finset.instLinearOrder`? For `Finset (Fin 4)` there's a `LinearOrder`? There is `Finset.instSemilatticeInf` etc. Hmm, `Finset` has `LinearOrder` instance? I believe `Finset α` has a `LinearOrder` when α is a `LinearOrder`? Not sure. Alternatively use `Sym2 (Fin 4)` for edges? Or encode local edges as `Fin n × Fin 6` with an explicit list of the 6 unordered pairs. That's cleaner: `edgeSlot : Fin 6 → Finset (Fin 4)` explicit enumeration, e.g. pairs [0,1],[0,2],[0,3],[1,2],[1,3],[2,3]. Then local edge = `Fin n × Fin 6`, and a linear order is automatic (Fin has LinearOrder, product too).
+
+Then:
+- `edgeStep : Fin n × Fin 6 → Finset (Fin n × Fin 6)`: for local edge e=(t,i) with vertices pair P = edgeSlot i, for each j ∈ {0..3} \ P (2 choices), if glue (t,j) = some (t',j',φ) then the image edge is (t', index of φ(P)). Need a function `edgeIndex : Finset (Fin 4) → Fin 6` for 2-element subsets. Define by cases on the six possibilities, or use `Fin.find`? Simplest: define `edgeIndex (i j : Fin 4) : Fin 6` computable by a match. Then `edgeSlot (edgeIndex a b) = {a,b}` proved by `decide` (fin_cases). Good.
+- `vertexStep`: (t,k) ↦ for each j ≠ k with glue(t,j) = some(t',j',φ): (t', φ k). Though note the image of face j under φ includes vertex k only if k ≠ j. ✓
+- `faceOrbit`: trivial, face slots with glue pairing.
+- `vertexClasses`: orbits of local vertices: count canonical reps. But careful: *all* local vertex occurrences count as cells? In the quotient complex, the 0-cells are orbits of *all* local vertices (since every vertex occurrence is a vertex of the quotient cell structure, even if the labels coincide with another occurrence in the same tetrahedron). Hmm! Here's a subtlety: in a Δ-complex, the vertices are orbits of local vertices under the identification relation. But if two local vertices in the *same* simplex have the same global label, are they the same 0-cell? In the quotient topology, yes: the two vertices of the same simplex map to the same point if... no! In the quotient of the disjoint union by face identifications, two local vertices of the same simplex that are not related by the equivalence relation are different points (the simplex's characteristic map is injective on the interior, and its vertices are distinct points in the standard simplex). So the quotient's 0-cells are the equivalence classes of local vertices. That's why we have the `glue`-generated equivalence, not just global labels. Then why do we need global labels at all? For the *geometric realization* and for the "simplicial" quotient to be well defined. Actually if we define the quotient purely by the gluings as a Δ-complex, we don't need global labels; the vertices are orbits of local vertices under the gluing relation. The global labels matter for matching up faces geometrically and for orientation checking. Since the task wants a "checker" for consistency, the global labels + compatibility check is a nice way to present it (a "gluing description").
+
+Hmm, but wait. There's a mathematical subtlety: the identification relation generated by gluing maps on *vertices* is what defines the 0-cells, but the geometric realization of the Δ-complex also identifies points in the interiors via the gluing homeomorphisms. The gluings are determined by the face maps; the *vertices* identified are exactly those related by the face maps (since gluing a face to another face by a simplicial bijection identifies corresponding vertices). So vertex classes = orbits of local vertices under face maps. ✓
+
+And edges: an edge of the quotient = orbit of local edges under face maps (since a face map sends edges in the face to edges in the target face). ✓
+
+For the *validity* of the "Δ-complex" claim, we need the equivalence relation to be such that the quotient is a Δ-complex — the standard requirement is that the identifications are "simplicial" and the resulting quotient has cells well-defined; the potential issue is when a local cell maps to another local cell *partially*? Not with bijections. I think we're fine.
+
+However! There's a subtlety with the *global labels*: I want to use them for the "orientation-reversing" check and for describing examples. But the vertex labels don't affect the cell counts. And the "vertex-link is a sphere" check should use the quotient structure (orbit computations). I could also *derive* the labels from the orbits (each orbit gets a label = min representative). Actually the cleanest: **vertices = orbits of local vertices**, and "global labels" are just a *presentation* convenience (e.g., labeling the orbits by names, with compatibility checks). Hmm, do I even need the labels? For examples, it's nice to say "the 3-ball = one tetrahedron with vertices a,b,c,d". The face-pairing data for boundaries: no gluing needed.
+
+For the lens space construction, describing the gluing requires the vertex correspondences anyway — which is the `faceMap` permutation. Vertex *names* help identify which permutation is intended (e.g. "N ↦ S, v_i ↦ v_{i+q+1}, v_{i+1} ↦ v_{i+q}"), but we can express that purely in terms of local indices + a labeling function for readability. I think including a labeling `vert : Fin n → Fin 4 → V` is good for readability and for orientation checks tied to an "orientation" of the manifold. But strictly, orientations can also be defined locally (each tetrahedron ordered by local indices 0<1<2<3). Hmm, and the gluing orientation check only needs local indices + the sign formula. So the labels are optional. 
+
+Let me decide: include `vert` as a field but only use it for (a) presenting examples, (b) an optional `VertexLabelsDistinct`/`IsSimplicial` predicate to distinguish simplicial triangulations from Δ-complexes (nice-to-have: "the 3-ball and ∂Δ⁴ are genuine simplicial complexes, where vertex classes are singletons"). Not required by the task, so use if cheap.
+
+Hmm, hold on. Let me reconsider: maybe simplify by making the *labeling* the primary data and the identifications derived? For a Δ-complex given by face pairings of a *simplicial* complex (each tetrahedron has 4 distinct vertex labels, and all gluings are label-preserving), the quotient is determined: vertex classes = label classes... no wait, if gluings are label-preserving (compatibility requires label agreement), then two local vertices with the same label might still be different quotient vertices unless related by a gluing! E.g., a "pinched" complex. But for manifold-like examples, if all gluing maps are label-preserving and each label class is connected through gluings, then vertex classes ↔ labels. Hmm, e.g. ∂Δ⁴: labels 0..4, gluings identify faces with matching labels, all vertex occurrences with the same label are connected via gluings (since the complex is connected). So vertex classes = labels for connected examples. Nice but not automatic.
+
+For the solid torus 3-tetrahedron with a single vertex: labels are all the same ⇒ the labeling is degenerate. Then "vertex classes" via orbits might be just 1 class (nice). So orbits are the robust notion.
+
+**Decision**: Primary structure = face-pairing data without labels:
+
+```lean
+structure DeltaComplex3 where
+  n : ℕ
+  glue : Fin n × Fin 4 → Option (Fin n × Fin 4 × (Fin 4 ≃ Fin 4))   -- face j of t glued to face j' of t' via φ
+  glue_face : ∀ t j t' j' φ, glue (t,j) = some (t',j',φ) → φ j = j'
+  glue_invol : ∀ t j t' j' φ, glue (t,j) = some (t',j',φ) → glue (t',j') = some (t,j,φ.symm)
+  glue_ne_self : ∀ t j t' j' φ, glue (t,j) = some (t',j',φ) → (t,j) ≠ (t',j')
+```
+
+Hmm, wait: `glue_face` + `glue_invol` make `φ.symm` typecheck. Fine.
+
+Then define:
+- `vertexStep`, `vertexClass`, `numVertexClasses`
+- `edgeStep`, `edgeClass`, `numEdgeClasses`
+- `faceClass` (easy), `numFaceClasses`
+- `eulerChar := V - E + F - n` as ℤ
+- `IsBoundaryless := ∀ x, (glue x).isSome`
+- `IsOrientedGluing`: for each glued pair, the orientation check.
+- `IsClosedThreeManifold := IsBoundaryless ∧ IsOrientedGluing ∧ ∀ vertex class, IsSphereLink class` etc.
+
+But hmm, using `Fin n × Fin 4 × (Fin 4 ≃ Fin 4)` inside `Option`: the `DecidableEq` for `Fin 4 ≃ Fin 4`? Equiv has DecidableEq if the types are finite and decidable? `Equiv` instances: there is `Equiv.instDecidableEq`? I'm not sure there's a DecidableEq instance for function types like `Fin 4 ≃ Fin 4` — functions `Fin 4 → Fin 4` have decidable equality if the codomain does (Fintype + DecidableEq gives DecidableEq for Pi types: `Fintype.decidablePiFintype`?). Actually there's an instance `instDecidableEqPiFintype`? In Mathlib, `Fintype` + `DecidableEq` for the codomain does give `DecidableEq (α → β)`? Hmm, I believe there is an instance: `Pi.instDecidableEq`? Let me check: in Lean core/Mathlib, for functions from a Fintype, `DecidableEq (∀ a, β a)` requires `[Fintype α] [DecidableEq (β a)]`—yes, `Fintype.decidableForallFintype`? There's `instDecidableEqForallFintype`. I recall `example : DecidableEq (Fin 3 → Fin 3) := inferInstance` works in Mathlib. For `Equiv`, there's an instance `Equiv.instDecidableEq`? Since Equiv is a subtype of functions... Actually `Equiv α β` is a structure with two function fields; DecidableEq should be derivable automatically via `deriving` on Equiv? In Mathlib, `Equiv` doesn't have a global DecidableEq instance I think (it's `Equiv.instDecidableEqEquiv`? Hmm). To be safe, avoid `Option (Fin n × Fin 4 × (Fin 4 ≃ Fin 4))` with equality tests? We do need `glue` values compared in `glue_invol` etc. Actually we don't need to *decide* those; they're Prop fields. But `IsBoundaryless` uses `.isSome`, fine. Members of the structure are fine without DecidableEq on the value.
+
+However, `decide` on the structure's fields: `glue_invol : ∀ ..., glue (t,j) = some (t',j',φ) → ...` — this is a Prop over a finite domain; to `decide` it, we need Decidable for the Prop; equality of `Option (Fin n × Fin 4 × Equiv ...)` values requires DecidableEq. Hmm. But maybe we don't `decide` the structure fields — those are given as proofs by the user when constructing a concrete instance (`where` clauses with `by decide` or `by intro; ...`). We DO want to `decide` them for examples. So we need decidability.
+
+Simplification: **store only the data that is finitely checkable and avoid `Equiv` in the data**: store `faceMap : Fin n → Fin 4 → Fin 4 → Fin 4` (a function, not an Equiv), plus proofs that it's a bijection on the face. Equality of functions from `Fin 4` is decidable (Fintype pi). Function equality on `Fin n → Fin 4 → Fin 4 → Fin 4` needs DecidableEq on `Fin n` and function types — decidable. And `Option (Fin n × Fin 4 × (Fin 4 → Fin 4))` has DecidableEq if `Fin 4 → Fin 4` does. I'm fairly confident Mathlib has `Fintype.decidableEqPiFintype`. Yes: `instance (priority := 100) Fintype.decidableEqPiFintype ...`. Actually in Lean 4 core, `DecidableEq (α → β)` for Fintype α exists as `Fintype.decidablePiFintype`? Let me just test in the environment.
+
+Alternatively, avoid Option-of-tuples entirely: encode gluing as separate functions:
+```lean
+glueTet : Fin n × Fin 4 → Fin n
+glueFace : Fin n × Fin 4 → Fin 4
+gluePerm : Fin n × Fin 4 → Fin 4 → Fin 4
+isBoundary : Fin n × Fin 4 → Bool  -- or use `Option` marker via a special value
+```
+Hmm, using a "sentinel" for boundary is ugly. Use `Option`:
+
+```lean
+structure DeltaComplex3 where
+  n : ℕ
+  partner : Fin n × Fin 4 → Option (Fin n × Fin 4)
+  perm : (x : Fin n × Fin 4) → Fin 4 → Fin 4
+  -- well-formedness
+  partner_invol : ∀ x y, partner x = some y → partner y = some x
+  partner_ne_self : ∀ x y, partner x = some y → x ≠ y
+  perm_maps_face : ∀ x y, partner x = some y → perm x x.2 = y.2
+  perm_bij_on_face : ∀ x y, partner x = some y → (∀ k, k ≠ x.2 → perm x k ≠ y.2)  -- maybe implied
+  ...
+```
+Hmm, simpler: keep `Option (Fin n × Fin 4 × (Fin 4 → Fin 4))` if decidable equality works. Let me test environment first.
+
+Actually, hmm, wait. Let me reconsider using `Equiv` vs function: for the orientation check I need the sign of the induced permutation on 3 elements. With `φ : Fin 4 → Fin 4` and proofs, sign computation is a concrete function on `Fin 4` values (I can just compute the permutation of the 3-element face and its sign by explicit case analysis).
+
+OK before designing further, let me check the environment: does `lake env lean` work? Are there build artifacts for D10? Let me test compile a small file importing the D10 Complex.
+
+Also, time budget: 4 hours. Let me get moving: first verify environment + D10 import, then write files incrementally.
+
+Plan of files:
+1. `release/Poincare/D11/Triangulation3D/DeltaComplex.lean` — the gluing structure, checker, orbit computations, Euler characteristic, link checks.
+2. `release/Poincare/D11/Triangulation3D/Models.lean` — examples: ball, ∂Δ⁴ S³, 2-tetra S³, solid torus, lens spaces (2,1), (3,1).
+3. `release/Poincare/D11/Triangulation3D/Audit.lean` — `#print axioms` + no-forbidden scan.
+
+Also maybe `release/Poincare/D11/Triangulation3D/Simplicial3D.lean` for the simplicial-complex layer (3D predicates reusing D10: vertex links as explicit complexes for ∂Δ⁴ and the ball). This gives the "unconditional simplicial" content and the "Δ-complex" content.
+
+Let me first check environment.
+
+Actually one important consideration: `lake env lean` at the worktree root vs `release/`. The D10 files are in `release/Poincare/D10/...` and the Lake package is `release/lakefile.toml`. So compilation should be run from `release/` with `lake env lean Poincare/D11/Triangulation3D/DeltaComplex.lean`. Let me check the D10 result card for the exact command used.
+
+Let me check log files from D10 to see how they compiled. Let me check if there's a D10 worktree with logs: `/data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D10-triangulation-low-dim/logs/`.
+
+Let me first test the environment quickly.
+dsh: reasoning:
+The logs in the current worktree include d10 subdirectory. Let me look at those and also check whether lake build works at release/.
+dsh: reasoning:
+Environment works. Now let me check how D10 built its oleans — presumably `lake env lean` per file works. Let me look at the D10 worktree's d10 logs to see the build procedure.
+
+Wait, the current worktree's logs/d10 dir may exist but empty listing returned nothing. Let me check with ls -la logs/ | grep d10.
+
+Let me now focus. First, quick test of decidability of the structures I plan to use.
+
+Let me write a scratch test file to check:
+1. `DecidableEq (Fin 4 → Fin 4)` and `DecidableEq (Equiv (Fin 4) (Fin 4))`.
+2. `Finset.iterate`? Actually use `Function.iterate`.
+
+Let me test.
+dsh: reasoning:
+Both `DecidableEq (Fin 4 → Fin 4)` and `DecidableEq (Equiv (Fin 4) (Fin 4))` work. 
+
+Now let me design the core formalization more concretely and write it.
+
+### Core: `DeltaComplex.lean`
+
+I'll design a structure for a 3-dimensional Δ-complex presentation via face pairings, with all the checks decidable and computed.
+
+Actually, let me reconsider an important simplification. Instead of `Option (Fin n × Fin 4 × (Fin 4 → Fin 4))`, storing the permutation, maybe a more elegant design: The data of a Δ-complex with *labeled vertices* is:
+
+```lean
+structure DeltaComplex3 where
+  n : ℕ
+  vert : Fin n → Fin 4 → V          -- global vertex labels
+  glue : Fin n × Fin 4 → Option (Fin n × Fin 4)   -- face partner
+  vmap : (x : Fin n × Fin 4) → Fin 4 → Fin 4       -- vertex maps on glued faces
+  ...
+```
+
+Then vertex classes are orbits of local vertices. But hold on — do I even want the global labels? Let's keep it simple: I'll use the structure with local indices only plus an optional label function for presentation. Let me define:
+
+```lean
+structure DeltaComplex3 where
+  n : ℕ
+  glue : Fin n × Fin 4 → Option (Fin n × Fin 4)
+  fm : (t : Fin n) → (j : Fin 4) → Fin 4 → Fin 4
+  -- j = the vertex opposite the face being glued
+  glue_face   : ∀ t j t' j', glue (t,j) = some (t',j') → fm t j j = j'
+  fm_bij      : ∀ t j t' j', glue (t,j) = some (t',j') → ∀ k, k ≠ j → fm t j k ≠ j'
+  -- ^ ensures fm maps the face's vertices into the target face
+  glue_invol  : ∀ t j t' j', glue (t,j) = some (t',j') → glue (t',j') = some (t,j)
+  fm_inv      : ∀ t j t' j' (h : glue (t,j) = some (t',j')), ∀ k, k ≠ j → fm t' j' (fm t j k) = k
+  glue_ne_self : ∀ t j t' j', glue (t,j) = some (t',j') → (t,j) ≠ (t',j')
+```
+
+Wait, composition: if (t,j) glued to (t',j') with map fm t j, then the inverse gluing (t',j') → (t,j) uses fm t' j', and these must be mutually inverse on faces. With `glue_invol` and `fm_inv`, the gluing is coherent.
+
+Note: `fm_bij` (fm maps complement of j into complement of j', together with bijectivity via fm_inv) — actually since fm t j is a function Fin 4 → Fin 4 with fm t j j = j' and fm t' j' ∘ fm t j = id on the complement of j... Let me simplify: require `fm_inv` which gives that on the face, fm t' j' is a left inverse of fm t j. Combined with the same for the other direction (from glm_invol applied twice), we get bijections.
+
+Hmm, do I even need `fm_bij`? For orbit computations, I need: given local vertex k ≠ j, the image vertex is fm t j k, and it should be in the target face (i.e. ≠ j'). If k≠j and fm t j k = j', that would mean a vertex of the face maps to the opposite vertex of the target — geometrically wrong (the gluing would not be a face-to-face map). So requiring `fm_bij` is the well-formedness condition. ✓
+
+For computations, define:
+- `vertexStep (x : Fin n × Fin 4) : Finset (Fin n × Fin 4) := Finset.univ.filter fun y => ∃ j : Fin 4, j ≠ x.2 ∧ glue (x.1, j) = some y.1'... ` hmm need to be careful.
+
+Let me define step for vertices:
+```lean
+def vertexStep (x : Fin n × Fin 4) : Finset (Fin n × Fin 4) :=
+  (Finset.univ : Finset (Fin 4)).biUnion fun j =>
+    if h : j ≠ x.2 then
+      match glue (x.1, j) with
+      | some y => {(y.1, fm x.1 j x.2)}   -- note: fm x.1 j x.2 where x.2 ≠ j ✓
+      | none => ∅
+    else ∅
+```
+This uses `if h : j ≠ x.2` for decidability. Good.
+
+- `edgeSlotVal : Fin 6 → Finset (Fin 4)` explicit list: `![{0,1},{0,2},{0,3},{1,2},{1,3},{2,3}]` as a function. But `Fin 6 → Finset (Fin 4)` needs a computable def. I can write:
+```lean
+def edgeSlot : Fin 6 → Finset (Fin 4)
+  | ⟨0, _⟩ => {0,1}
+  | ⟨1, _⟩ => {0,2}
+  ...
+```
+Pattern matching on Fin with numerals works? Usually `fin_cases` etc. Let me write it via `match` on the value: 
+```lean
+def edgeSlot (i : Fin 6) : Finset (Fin 4) :=
+  match i with
+  | 0 => {0,1} | 1 => {0,2} | 2 => {0,3} | 3 => {1,2} | 4 => {1,3} | 5 => {2,3}
+```
+In Lean 4, matching on `Fin` numerals works if we use `match i with | ⟨0, _⟩ => ...`? There's `Fin` literal patterns supported: `match i with | 0 => ... | 1 => ...` I believe works for `Fin n` since Lean supports numeric literal patterns for `Fin`. Yes, Lean 4 supports `match i with | 0 => ...` for `Fin n` (it elaborates via OfNat and noConfusion). Let me test.
+
+- `edgeIndex (a b : Fin 4) : Fin 6` — index of the unordered pair {a,b} (assuming a≠b). Define via a match on (a,b) with 12 cases... or define from `min`/`max`? Since `Fin 4` has `min`/`max` (linear order), define `edgeIndex a b := match (min a b, max a b) with | (0,1) => 0 | (0,2) => 1 | (0,3) => 2 | (1,2) => 3 | (1,3)=>4 | (2,3)=>5 | _ => 0`. That's a bit hacky but works with a proof that `edgeSlot (edgeIndex a b) = {a,b}` for a≠b — provable by `decide`/`fin_cases`. Alternatively parametrize the 6 slots by pairs via a bijection from `{(a,b) : Fin 4 × Fin 4 // a < b}`. Cleaner: define `edgeSlot` and `edgeIndex` mutually via a structure with proofs.
+
+Simplest robust approach: avoid `edgeIndex`; instead define edge orbits on *ordered* pairs? Define local edge as `Fin n × Fin 4 × Fin 4` with a≠b, i.e., a subtype `{p : Fin n × Fin 4 × Fin 4 // p.2.1 ≠ p.2.2}`. Then orbit counting needs dedup. Hmm.
+
+Better: use `Sym2 (Fin 4)`? `Sym2` has a `Fintype` instance and DecidableEq. Local edges = `Fin n × Sym2 (Fin 4)`; there's a Finset of all "real" edges: those `s` with `s ≠ s(a,a)`; can filter by `¬ s.IsDiag`. Sym2 API: `Sym2.IsDiag`, `Sym2.mk`, `Sym2.fromRel`? Hmm, might be more painful than the Fin 6 encoding.
+
+I'll go with explicit `edgeSlot`/`edgeIndex` using a `List (Fin 4 × Fin 4)` table. Actually here's a clean way:
+
+```lean
+/-- The six 2-element subsets of `Fin 4`, listed. -/
+def edgeSlot : Fin 6 → Finset (Fin 4) :=
+  ![ {0,1}, {0,2}, {0,3}, {1,2}, {1,3}, {2,3} ]
+```
+With `![...]` vector notation, `edgeSlot i = ...` is computable and `decide`-friendly. Hmm, `Vector` notation `![a,b,c]` produces `Fin 3 → α` via `Matrix.cons`? It's `Fin.cons`-based; evaluation is fine. And for `edgeIndex`, use `Finset.univ.find?` over Fin 6:
+
+```lean
+def edgeIndex (a b : Fin 4) : Fin 6 :=
+  (Finset.univ.find? (fun i => edgeSlot i = {a,b})).getD 0
+```
+Computation: `find?` on Finset requires DecidablePred; returns Option; getD 0. Then lemma `edgeSlot_edgeIndex (h : a ≠ b) : edgeSlot (edgeIndex a b) = {a,b}` — provable by `decide`? `decide` would evaluate `find?` over univ... `Finset.univ` for Fin 6 with decide should work; the statement `∀ a b : Fin 4, a ≠ b → edgeSlot (edgeIndex a b) = {a,b}` is decidable and can be proved by `decide`. Good, that's the easy path. But `decide` on such statements involving `Finset.find?`... should be OK for tiny types. Alternatively, prove by `fin_cases` on a and b (12 cases) after `simp [edgeIndex, edgeSlot]`. Let me just try `decide` and fall back.
+
+- `edgeStep (e : Fin n × Fin 6) : Finset (Fin n × Fin 6)`: for each vertex j of the tetrahedron not in `edgeSlot e.2` (there are 2), if glue (e.1, j) = some (t', j'), the edge maps to (t', edgeIndex (fm e.1 j a) (fm e.1 j b)) where a,b are the two vertices of the edge in increasing order. Since fm is injective on the face (which contains a,b), the images are distinct. ✓ 
+
+- `faceStep`/`faceClass`: simpler; faces are just paired: canonical rep = if glue x = none then x else min' of {x, y}. For counting `numFaces`.
+
+- `vertexClass`, `edgeClass` via `reach`:
+```lean
+def reach {α} [DecidableEq α] [Fintype α] (step : α → Finset α) (fuel : ℕ) (S : Finset α) : Finset α :=
+  (fun S => S ∪ S.biUnion step)^[fuel] S
+```
+Using `Function.iterate`: `((fun S => S ∪ S.biUnion step)^[fuel]) S`. 
+
+Then define `vertexClass (x) := reach vertexStep (4*n+1) {x}` and `canonicalVertex x := (vertexClass x).min' (by simp)`. For counting classes: `Finset.univ.filter (fun x => canonicalVertex x = x)`.card — this counts one per class (the min of each class is a fixed point of canonicalization... need `canonicalVertex (canonicalVertex x) = canonicalVertex x`, true if the class of the min is the same class. This can be proved generally, but for concrete examples `decide` handles it; to make the definition computable and the *count* correct without proving, I'd rather define the count in a way that's clearly correct-by-construction: count the number of distinct classes = number of distinct canonical representatives. I can define:
+
+```lean
+def classes (step) (fuel) : Finset (Finset α) :=
+  Finset.univ.image (fun x => reach step fuel {x})
+```
+Then `numClasses = (classes ...).card`. This counts distinct orbits, no need for min. ✓ Cleaner. Size: for vertices, α = Fin n × Fin 4 (4n elements), computing the image of 4n closures each with fuel 4n+1 and each step iterating over Finset.univ of 4n elements... Complexity: 4n × 4n × 4n = for n=6: 24^3 ≈ 14k Finset ops — fine in kernel. For edges: α = Fin n × Fin 6 (6n elements), fuel 6n+1: 6n × 6n × 6n ≈ 36^3 = 46k — fine.
+
+Hmm wait, but there's a subtlety: is fuel = card(α)+1 enough? The orbit of x is a subset of α. The reachable set after k steps contains everything reachable within k steps. Diameter ≤ |orbit| ≤ |α|, so after |α| steps we've included everything reachable (any path in the orbit has length ≤ |orbit| - 1 ≤ |α| - 1). So fuel |α| is enough; use |α|+1 for safety. For vertices: 4n+1. For edges: 6n+1. But careful: `reach` iterates the step function which maps sets to sets, so `reach` after k iterations = all elements reachable in ≤ k steps. ✓
+
+Now, the *correctness* concern: is "orbit closure under the step relation" the right notion for the cells of the quotient Δ-complex? Yes, given the gluing data defines the equivalence relation generated by the identifications on faces. One caveat: when a face is glued to *itself*... we forbid x ↔ x. Another caveat: the gluing maps as given by `fm` and the partner function must be consistent: if two different face slots both map onto the same target face, the identifications must agree. Since `glue_invol` and the bijection conditions ensure each face has exactly one partner, this is fine.
+
+But there's yet another subtlety: the identification relation on the *quotient space* is generated by the face identifications, and I'm modeling it by the orbit relation on local cells. The equivalence classes of local vertices under the *relation generated by* the gluing maps: since gluing maps are bijections on faces, an equivalence class of local vertices is exactly an orbit. ✓ Similarly for edges (a local edge in a glued face maps to its image edge). ✓ 
+
+One more: the quotiented complex might identify cells that are not related by the gluing maps but map to the same subset of the quotient (e.g., two different edges in the same tetrahedron with the same endpoints after vertex identification). In the Δ-complex cell structure (Hatcher), edges are still distinct cells even if they have the same endpoints — the quotient is not a simplicial complex but a Δ-complex, and its cells are the orbits. That's exactly what we compute. ✓
+
+**Euler characteristic**: χ = V − E + F − T where V = #vertex orbits, E = #edge orbits, F = #face orbits, T = n. 
+
+Interesting: for the *geometric realization* of a Δ-complex, χ (as the Euler characteristic of the CW complex) = alternating sum of cell counts = the above. ✓ And for a closed oriented 3-manifold, χ=0. Note: the check that our computed χ equals 0 is a computation.
+
+**Orientation check**: For each glued pair (t,j) ↔ (t',j') via φ = fm t j:
+- Let `L j : Fin 3 → Fin 4` = the three local vertices ≠ j in increasing order. Define as a function `faceVert j m` for m : Fin 3: e.g. `faceVert j := ![ ... ]`? It's a function of j too. Define:
+```lean
+def faceTriple (j : Fin 4) : Fin 3 → Fin 4 :=
+  match j with
+  | 0 => ![1,2,3]
+  | 1 => ![0,2,3]
+  | 2 => ![0,1,3]
+  | 3 => ![0,1,2]
+```
+- The target triple `faceTriple j'`. The map φ takes `faceTriple j m ↦ fm t j (faceTriple j m)`, which is a permutation of the target triple. Define `permSign t j : ℤ := sign of the permutation σ where σ m = index of fm t j (faceTriple j m) in faceTriple j'`. Compute as a product/sign via explicit formula, or use `Equiv.Perm.sign`? Simplest: define sign of a 3-cycle permutation via a concrete formula using the parity of the number of inversions. Define:
+```lean
+def sign3 (σ : Fin 3 → Fin 3) : ℤ := 
+  -- product over pairs i<j of sign(σ j - σ i)
+  ∏ i : Fin 3, ∏ j : Fin 3, if i < j then (if σ i < σ j then 1 else -1) else 1
+```
+Then the orientation condition: `(-1)^j * (-1)^j' * sign3 σ = -1` i.e. `sign3 σ = (-1)^(j + j' + 1)`. Since (-1)^j * (-1)^j' = (-1)^(j+j'), and we need product = -1, so sign3 = -(-1)^(j+j') = (-1)^(j+j'+1). ✓ (as ℤ or as a Bool `IsOrientationReversing`).
+
+To get σ : Fin 3 → Fin 3, define:
+```lean
+def faceIndexOf (j' : Fin 4) (k : Fin 4) (h : k ≠ j') : Fin 3 := 
+  (Finset.univ.filter (fun m : Fin 3 => faceTriple j' m = k)).min' ...
+```
+Hmm, or use `Fin.find`: `(Finset.univ.find? (fun m => faceTriple j' m = k)).getD 0` plus a lemma that it's correct. Or use `Equiv` between `{k // k ≠ j'}` and `Fin 3` via `finCongr`-like. 
+
+Cleanest: use a `Finset`-free approach: define an explicit inverse-index function `tripleIndex (j : Fin 4) (k : Fin 4) : Fin 3` by a full case analysis (16 cases) — ugly.
+
+Alternative: since `faceTriple j` is an embedding with image = complement of j, we can use `Fin.cast`/`Fin.predAbove`:
+```lean
+def faceIndex (j : Fin 4) (k : Fin 4) (h : k ≠ j) : Fin 3 :=
+  if hk : k < j then ⟨k.val, by omega⟩ else ⟨k.val - 1, by omega⟩
+```
+This is the standard "remove j" index computation. Then lemmas: `faceTriple j (faceIndex j k h) = k` and `faceIndex j (faceTriple j m) _ = m` — provable by `fin_cases` and `simp`/`omega`. Using `omega` may be slow but fine. Actually since I only need these for `decide` on concrete data, maybe I can just state the sign function directly in terms of `faceIndex` and let `decide` verify examples; general lemmas only where needed.
+
+Hmm, but actually the orientation sign can be computed directly without `faceIndex`:
+The composite φ restricted to the face: as a map from the ordered triple `faceTriple j` to the ordered triple `faceTriple j'`. σ m = faceIndex j' (fm t j (faceTriple j m)). Then `sign3 σ`.
+
+Since I want `IsOrientedGluing` to be a `Prop` with a `Decidable` instance, everything must be computable. Let me define:
+
+```lean
+def orientationSign (t j) : ℤ := sign3 (fun m => faceIndex (fm t j j) (fm t j (faceTriple j m)) ...)
+```
+with the proof obligation `fm t j (faceTriple j m) ≠ fm t j j`. From `glue_face` we know `fm t j j = j'`; and for `k ≠ j`, `fm_bij` gives `fm t j k ≠ j'`. And `faceTriple j m ≠ j`. So we can construct the proof inside the definition:
+```lean
+def faceIndexOfMap (d : DeltaComplex3) (t : Fin d.n) (j : Fin 4) (m : Fin 3) : Fin 3 :=
+  faceIndex (d.fm t j j) (d.fm t j (faceTriple j m)) (by ...)   -- need proof
+```
+The proof requires knowing `faceTriple j m ≠ j` — a general lemma `faceTriple_ne (j) (m) : faceTriple j m ≠ j` (by fin_cases). And `d.fm t j k ≠ d.fm t j j` for k≠j — from `fm_bij` applied with `j' := d.fm t j j`... but `fm_bij` requires the hypothesis `glue (t,j) = some (t', j')` with `j' = fm t j j` and `t'` such that `glue (t,j) = some (t', fm t j j)`. Given `glue (t,j) = some y`, `glue_face` says `fm t j j = y.2`. So:
+```lean
+theorem fm_ne_opp (d) (h : d.glue (t,j) = some y) {k} (hk : k ≠ j) : d.fm t j k ≠ y.2
+```
+via `fm_bij t j y.1 y.2 h k hk` and `glue_face h`. ✓ Then define `faceIndexOfMap` using `by rw [...]; exact fm_ne_opp ...`. But the definition needs the proof inline. Since `t, j` are parameters, we can use:
+```lean
+def faceIndexOfMap (d) (t j) (m : Fin 3) : Fin 3 :=
+  faceIndex (d.fm t j j) (d.fm t j (faceTriple j m))
+    (by
+      intro h
+      -- h : d.fm t j (faceTriple j m) = d.fm t j j
+      exact d.fm_ne_opp (t := t) (j := j) (k := faceTriple j m) (faceTriple_ne j m) ?_)
+```
+Hmm, need the equation `glue (t,j) = some y` and `y.2 = fm t j j`. In the case `glue (t,j) = none` (boundary face), there's no partner and the orientation sign is irrelevant (no gluing). But the definition would be stuck. We can define it anyway: for boundary faces, we can still define `faceIndexOfMap` using... the proof that `fm t j k ≠ fm t j j` is unavailable. Hmm.
+
+Options: define `orientationSign` only for glued faces by taking the partner as an argument:
+```lean
+def gluingSign (d) (t j t' j') (h : d.glue (t,j) = some (t',j')) : ℤ :=
+  sign3 (fun m => faceIndex j' (d.fm t j (faceTriple j m)) (by
+      -- from h: fm t j j = j' and fm_bij ... 
+      ))
+```
+With h in scope, we can prove the side condition. Since `h` is a proof argument used in a `def`, the result is not computable in the kernel unless h is a concrete proof... `decide` on `IsOrientedGluing` would need to evaluate `gluingSign` at concrete proofs. Hmm, proofs by `decide` in a Prop-valued definition may block kernel reduction. That's a problem: I want the checks to be *computable*.
+
+Trick: avoid the side-condition by defining `faceIndex` as a *total* function that returns a default (e.g. 0) when k = j:
+```lean
+def faceIndexTotal (j k : Fin 4) : Fin 3 := if h : k < j then ... else ...
+```
+and prove the needed lemmas for the case k≠j. Then `orientationSign (d) (t j) : ℤ := sign3 (fun m => faceIndexTotal (d.fm t j j) (d.fm t j (faceTriple j m)))` — total, computable, no proof arguments. ✓ And `IsOrientedGluing := ∀ (t j t' j') (h : glue (t,j) = some (t',j')), ...` — quantification over the proof h is a Prop; deciding it requires deciding the body for each h... Hmm, `Decidable (∀ h : a = b, P h)` is tricky.
+
+Better: formulate `IsOrientedGluing` without quantifying over proofs:
+```lean
+def IsOrientedGluing (d) : Prop :=
+  ∀ t j, match d.glue (t,j) with
+    | none => True
+    | some (t',j') => orientationSign d t j = (-1 : ℤ) ^ (j.val + j'.val + 1)
+```
+This is a `match` in Prop position — decidable and computable ✓. `(-1 : ℤ) ^ (j.val + j'.val + 1)`.
+
+Similarly all the well-formedness conditions should be stated in a match form so `decide` works:
+- `glue_face : ∀ t j, match glue (t,j) with | none => True | some (t',j') => fm t j j = j'`
+- `fm_on_face : ∀ t j, match glue (t,j) with | none => True | some (t',j') => ∀ k, k ≠ j → fm t j k ≠ j'`
+- `glue_invol : ∀ t j, match glue (t,j) with | none => True | some (t',j') => glue (t',j') = some (t,j)`
+- `fm_inv : ∀ t j, match glue (t,j) with | none => True | some (t',j') => ∀ k, k ≠ j → fm t' j' (fm t j k) = k`
+- `glue_ne_self : ∀ t j, match glue (t,j) with | none => True | some (t',j') => (t,j) ≠ (t',j')`
+
+Hmm, `Decidable (∀ t j, match ...)` — the match returns a Prop, decidable per case. Fine.
+
+Then a concrete instance can provide these fields with `by decide` (if the concrete `glue`, `fm` are computable closed terms). 
+
+However, `decide` on `∀ t j, match glue (t,j) with ...` with `glue` a concrete function built from `if`s/matches should work.
+
+Now, one concern: if `DeltaComplex3` has `n : ℕ` as a field and functions `Fin n → ...`, concrete instances are terms like `{ n := 3, glue := fun x => ... }`. Writing those `glue` functions in Lean is verbose but doable. To make life easier, I'll provide a *smart constructor* from a list of face identifications:
+
+```lean
+def ofPairings (n : ℕ) (pairs : List (Fin n × Fin 4 × Fin n × Fin 4 × (Fin 4 → Fin 4))) : DeltaComplex3
+```
+Hmm, building the `glue` function from a list with `List.lookup`? This gets complicated. 
+
+Alternative approach for examples: build the gluing function via `match`/`if` chains on concrete `Fin n` values, e.g.:
+
+```lean
+def twoTetSphereGlue : Fin 2 × Fin 4 → Option (Fin 2 × Fin 4) :=
+  fun x => match x with
+    | (0, 0) => some (1, 0)
+    | (1, 0) => some (0, 0)
+    ...
+```
+That's 8 cases for n=2. For lens spaces with n = 2p (p=2: n=4, p=3: n=6), we'd need 4n = 16 or 24 cases — tedious but scriptable via a Python generator! I can write a Python script to generate the Lean code for the gluing tables. Good idea: generate `glue`/`fm` tables by a Python script that also computes expected counts, and then the Lean file `decide`s the properties. Even better: I could have Python emit the entire "table" as a `List` and write a Lean function that converts a list of gluing instructions into a `DeltaComplex3` (with a `by decide`-checked well-formedness proof). Hmm, but building `DeltaComplex3` from a list requires the well-formedness proofs, which are then `decide`-checked — that's the "checker"! That's elegant: 
+
+```lean
+def DeltaComplex3.fromTable (n : ℕ) (tab : List (ℕ × ℕ × ℕ × ℕ × List ℕ)) : DeltaComplex3
+```
+with `glue` defined via lookups into `tab`, `fm` defined via lookups, and the well-formedness fields proved by `decide`. But the *decision procedure* on a `List.lookup`-based function may be expensive but OK for small tables. However `decide` on `∀ t j, ...` with `glue` built from list lookups: the kernel will evaluate everything; fine.
+
+Hmm, but `fromTable` would need `Fin n` and `Fin 4` conversions with `Fin.ofNat` (modular), plus proving totality. It's doable but adds risk. Let me instead simply generate direct match-based definitions with Python. Direct definitions are the most computational and avoid lookup overhead. For n=6, 24 match cases × 4 functions — fine. And I can generate the Lean source with Python.
+
+Actually, let me reconsider the design once more to reduce complexity. Is there a way to define all examples via the *simplicial complex + pairing of boundary faces* presentation, which might be more natural and less error-prone?
+
+Observation: All our examples except the one-vertex solid torus are actually **simplicial complexes modulo boundary face identifications**. For those, the gluing data is: an underlying finite abstract simplicial complex (from D10) plus a pairing of boundary facets. But the solid torus standard 3-tetrahedron triangulation is a Δ-complex with 1 vertex (not simplicial), and the 2-tetrahedron S³ is a Δ-complex. Hmm. Do I need the one-vertex solid torus? The task says "the solid torus (standard 3-tetrahedron triangulation)". Let me figure out what the standard 3-tetrahedron triangulation of the solid torus is. 
+
+Known: the minimal triangulation of the solid torus has 2 tetrahedra? Let me think... A solid torus can be triangulated by 2 tetrahedra with identifications: e.g., take a tetrahedron and identify two faces with a twist (giving a solid torus?). Known minimal numbers for 3-manifolds with boundary: the solid torus has a 2-tetrahedron triangulation (I recall "the solid torus has a triangulation with two tetrahedra" from the theory of minimal triangulations of 3-manifolds). The 3-tetrahedron one is the prism Δ²×I with ends identified (a mapping torus) — this is the "standard" one from the Burnside/Seifert fibration viewpoint.
+
+Since the task explicitly says 3-tetrahedron, I'll construct the prism: vertices top {0,1,2}, bottom {3,4,5}? With identification a rotation. Let's define it concretely and compute.
+
+Prism triangulation: T0 = (0,1,2,4), T1 = (0,1,4,5), T2 = (0,3,4,5)? Let me set it up properly. Prism over triangle (a,b,c) with top triangle (a,b,c) and bottom (a',b',c'). Triangulation into 3 tetrahedra: {a,b,c,c'}, {a,b,c',b'}, {a,b',c',a'}. Yes that's the standard 3-tetrahedron prism.
+
+Let me use vertices a=0,b=1,c=2 (top), a'=3,b'=4,c'=5 (bottom). Tetrahedra:
+- T0 = (0,1,2,5)  [a,b,c,c']
+- T1 = (0,1,5,4)  [a,b,c',b']
+- T2 = (0,4,5,3)  [a,b',c',a']
+Faces (as vertex sets):
+- T0: {0,1,2} (top), {0,1,5}, {0,2,5}, {1,2,5}
+- T1: {0,1,4}, {0,1,5}, {0,4,5}, {1,4,5}
+- T2: {0,4,5}, {0,3,4}, {0,3,5}, {3,4,5} (bottom)
+Gluings (interior faces of the prism): {0,1,5} = T0∩T1, {0,4,5} = T1∩T2. Boundary: T0:{0,1,2},{0,2,5},{1,2,5}; T1:{0,1,4},{1,4,5}; T2:{0,3,4},{0,3,5},{3,4,5}. That's 8 boundary triangles = the boundary of the prism: two triangles (top/bottom) + 6 side triangles (3 quads split). ✓
+
+Now glue top {0,1,2} to bottom {3,4,5} by a rotation. Rotation r: a=0 ↦ b'=4? For the mapping torus to be a solid torus we use a rotation by 120°: (a↦b, b↦c, c↦a) between top and bottom, i.e., 0↦4, 1↦5, 2↦3. Then after identification, vertices: 0~4, 1~5, 2~3. But also bottom 3~? and top? Let's compute classes: top vertices 0,1,2 and bottom 3,4,5 with 0~4, 1~5, 2~3. Then classes: {0,4}, {1,5}, {2,3}? Also, the tetrahedra themselves have vertices in both top and bottom, so e.g. T2 = (0,4,5,3): 0 ~ 4 (from the gluing), 1 ~ 5, 2 ~ 3. So within T2: 0 and 4 are identified! So T2 = (0,4,5,3) becomes (v0, v0, v1, v2) with v0={0,4}, v1={1,5}, v2={2,3}. So each tetrahedron has repeated vertices: T0 = (0,1,2,5) → (v0,v1,v2,v1), T1 = (0,1,5,4) → (v0,v1,v1,v0), T2 = (0,4,5,3) → (v0,v0,v1,v2). So indeed a 3-vertex Δ-complex with heavy degeneracies. Its vertex links: each vertex appears in all 3 tetrahedra; link of v0: triangles from T0 (opposite 0: {1,2,5}), T1 (opposite 0: {1,5,4} ~ {1,5,0}), T2 (opposite 0: {4,5,3} ~ {0,1,2})... The link should be a disk (solid torus boundary). This is getting intricate; the orbit computations will handle it, but I need to make sure my "link" definition handles repeated labels properly.
+
+Hmm, wait. Is the resulting complex actually a valid Δ-complex whose realization is the solid torus? The prism with the two triangles glued by a rotation: yes, the mapping torus of a rotation of the disk is a solid torus (the rotation by 2π/3 of the disk; the mapping torus is Seifert fibered over the disk with... it's a solid torus). And the triangulation is the standard 3-tetrahedron (1-vertex? 3-vertex) one.
+
+Hmm, alternatively maybe the "standard 3-tetrahedron triangulation of the solid torus" refers to the *layered* triangulation: solid torus = S¹ × D², take a triangle (2-simplex) × S¹: the product of a triangle with a circle triangulated by 1 edge with ends identified... that's a Δ-complex. The prism description is the same thing.
+
+OK so we need the full Δ-complex machinery. Let me now also think about the **vertex link** definition in the Δ-complex setting.
+
+**Link of a vertex** (for a 3-dimensional Δ-complex): For each local vertex occurrence x = (t,k), the link of x within the tetrahedron t is the triangle on the 3 opposite local vertices. But in the quotient, the link of a *vertex class* [x] is the union over all x in the class of the images of these triangles, glued along the faces identified by the gluings. 
+
+Formally: define the 2-dimensional Δ-complex `linkAt v` (v a vertex class) as:
+- 2-cells (triangles): for each local vertex occurrence x with class [x] = v: one triangle, indexed by (t,k) with canonical class v. But careful: multiple occurrences x in the same class give multiple triangles. Also, if a tetrahedron has two local vertices k≠k' in the same class v, then two triangles from the same tetrahedron.
+- The vertices of the link triangle for x=(t,k) are the three *edges* of t at k: i.e. the pairs {k,a} for a ≠ k. These are local edges; their classes are the link's vertices.
+- The edges of the link triangle: pairs of these three edge-classes; each corresponds to a local face of t containing k.
+- Identifications: gluings of faces containing k map the link triangle at x to the link triangle at the image vertex occurrence y = (t', fm t j k) for each face j ≠ k with glue(t,j) = some(t',j'). This identifies link triangles, link edges, and link vertices.
+
+So the link is a 2-dimensional Δ-complex with:
+- vertex set: orbits of local edges at v (where "
+I'll start by inspecting the existing worktree state and checkpoint.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

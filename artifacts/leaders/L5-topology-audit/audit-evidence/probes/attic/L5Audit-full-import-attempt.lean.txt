@@ -1,0 +1,262 @@
+/-
+L5-topology-audit — independent fail-closed audit probe (authored by L5, not copied).
+
+Elaborated with `lake env lean ../audit-evidence/probes/L5Audit.lean` from `release/`.
+It does NOT modify the package: it is a probe outside the `Poincare.+` globs.
+
+Sections
+  * L5MOD      — imported-module inventory for the topology lane
+  * L5PKG*     — package-wide fail-closed kernel audit (axioms/unsafe/sorry/native/proof_wanted)
+  * L5DECL     — per-declaration axiom cone for every topology-lane declaration
+  * L5NEG      — explicit registry + detection of the intentional negative-control axioms
+  * L5TYPE     — expanded type of every topology-lane declaration
+  * L5EQUIV    — statement-shape scan: hypotheses syntactically equal to the conclusion
+  * L5USE      — retained downstream consumers of every topology-lane declaration
+-/
+import Poincare.D7.Recognition.All
+import Poincare.D12.SurgeryRecognition.All
+import Poincare.D7.SurgeryFlow.All
+import Poincare.D10.TriangulationLowDim.Audit
+import Poincare.D12.TriangulationTopology.Downstream
+import Poincare.Longrun.Topology.AxiomAudit
+import Poincare.Longrun.Surgery.Axioms
+import Poincare.Longrun.Evolution
+import Poincare.D8.Fidelity.AxiomAudit
+import Poincare.VKPort.HatcherLib.Ch1.VanKampen
+import Poincare.D9.AncientKappa.Basic
+import Poincare.D12.SemanticLedger.AxiomAudit
+import Poincare.D13.CriticalPathReview.UsageProbe
+import Poincare.D13.IntegratedAudit.SnapshotRoot
+import Poincare.D12.TriangulationTopology.NegControl.NegControl
+import Poincare.D12.VolumeIBP.Audit
+import Poincare.D13.CriticalPathReview.NegControl
+import Lean.Util.CollectAxioms
+import Lean.Elab.Command
+
+set_option autoImplicit false
+
+open Lean Elab Command Meta
+
+namespace L5Audit
+
+/-- The only axioms accepted in a released dependency cone. -/
+def approvedAxioms : List Name :=
+  ["propext".toName, "Classical.choice".toName, "Quot.sound".toName]
+
+/-- Intentional negative controls known to live inside the release tree.  They are
+detected, reported by name, and excluded from the clean-lane verdict; they are NOT
+silently ignored. -/
+def knownNegControls : List Name :=
+  ["Poincare.D12.TriangulationTopology.NegControl.d12NegControlBadAxiom".toName,
+   "Poincare.D12.VolumeIBP.negativeControl".toName,
+   "Poincare.D13.CriticalPathReview.negControlBadAxiom".toName]
+
+/-- Topology-lane module roots (recognition, triangulation, surgery, end game, and the
+audited interface layers that feed them). -/
+def laneRoots : List Name :=
+  ["Poincare.D7.Recognition".toName,
+   "Poincare.D12.SurgeryRecognition".toName,
+   "Poincare.D7.SurgeryFlow".toName,
+   "Poincare.Longrun.Surgery".toName,
+   "Poincare.Longrun.Topology".toName,
+   "Poincare.D10.TriangulationLowDim".toName,
+   "Poincare.D12.TriangulationTopology".toName,
+   "Poincare.Stage6".toName,
+   "Poincare.D8.Fidelity".toName,
+   "Poincare.VKPort".toName,
+   "Poincare.D13.CriticalPathReview".toName,
+   "Poincare.D12.SemanticLedger".toName]
+
+/-- Package top-level namespaces (used to scope the package-wide audit). -/
+def packageRoots : List Name :=
+  ["Poincare".toName, "Probe".toName, "Ledger".toName, "Audit".toName,
+   "ReleaseCheck".toName, "ReleaseAudit".toName, "D6AuditReport".toName]
+
+def isUnder (roots : List Name) (m : Name) : Bool :=
+  roots.any (fun r => r.isPrefixOf m)
+
+def kindOf : ConstantInfo → String
+  | .axiomInfo _ => "axiom"
+  | .defnInfo v => match v.safety with
+    | .«unsafe» => "unsafe_def"
+    | .«partial» => "partial_def"
+    | .safe => "def"
+  | .thmInfo _ => "theorem"
+  | .opaqueInfo _ => "opaque"
+  | .quotInfo _ => "quot"
+  | .inductInfo _ => "induct"
+  | .ctorInfo _ => "ctor"
+  | .recInfo _ => "rec"
+
+/-- The audit.  Emits the sections and throws (nonzero exit) on any package-wide
+violation that is not a registered negative control. -/
+def runAudit : CommandElabM Unit := do
+  let env ← getEnv
+  let imported := env.header.moduleNames
+  let moduleOf (n : Name) : Name :=
+    match env.getModuleIdxFor? n with
+    | some i => imported.getD i .anonymous
+    | none => .anonymous
+  -- ---------------- module inventory ----------------
+  let laneModules := imported.filter (isUnder laneRoots)
+  IO.println s!"L5MOD\timported_modules\t{imported.size}"
+  IO.println s!"L5MOD\tlane_modules\t{laneModules.size}"
+  for m in laneModules do IO.println s!"L5MOD\tlane\t{m}"
+  -- ---------------- declaration rows ----------------
+  let rows : Array (Name × ConstantInfo × Name) :=
+    env.constants.fold (fun acc n ci => acc.push (n, ci, moduleOf n)) #[]
+  let rows := rows.qsort (fun a b => a.1.toString < b.1.toString)
+  -- ---------------- package-wide fail-closed audit ----------------
+  let mut pkgAxioms : Array Name := #[]
+  let mut pkgUnsafe : Array Name := #[]
+  let mut pkgSorry : Array Name := #[]
+  let mut pkgNative : Array Name := #[]
+  let mut pkgUnapproved : Array (Name × Name) := #[]
+  let mut pkgProofWanted : Array Name := #[]
+  let mut pkgCollectFail : Array (Name × String) := #[]
+  let mut pkgDecls := 0
+  let mut pkgTheorems := 0
+  for (n, ci, m) in rows do
+    if isUnder packageRoots m then
+      pkgDecls := pkgDecls + 1
+      if n.toString.contains "proof_wanted" then pkgProofWanted := pkgProofWanted.push n
+      match ci with
+      | .axiomInfo _ =>
+          if !knownNegControls.contains n then pkgAxioms := pkgAxioms.push n
+      | .defnInfo v =>
+          match v.safety with
+          | .«unsafe» => pkgUnsafe := pkgUnsafe.push n
+          | _ => pure ()
+      | .thmInfo _ => pkgTheorems := pkgTheorems + 1
+      | _ => pure ()
+      if !knownNegControls.contains n then
+        let axs ←
+          try Lean.collectAxioms n
+          catch _ =>
+            pkgCollectFail := pkgCollectFail.push (n, "collectAxioms raised")
+            pure #[]
+        for a in axs do
+          if a == "sorryAx".toName then pkgSorry := pkgSorry.push n
+          else if a == "ofReduceBool".toName || a == "Lean.ofReduceBool".toName then
+            pkgNative := pkgNative.push n
+          else if !approvedAxioms.contains a then pkgUnapproved := pkgUnapproved.push (n, a)
+  IO.println s!"L5PKG\tdeclarations\t{pkgDecls}"
+  IO.println s!"L5PKG\ttheorems\t{pkgTheorems}"
+  IO.println s!"L5PKG\tproject_axioms_excluding_known_negcontrols\t{pkgAxioms.size}"
+  IO.println s!"L5PKG\tunsafe\t{pkgUnsafe.size}"
+  IO.println s!"L5PKG\tsorryAx_cones\t{pkgSorry.size}"
+  IO.println s!"L5PKG\tnative_decide_cones\t{pkgNative.size}"
+  IO.println s!"L5PKG\tunapproved_axiom_cones\t{pkgUnapproved.size}"
+  IO.println s!"L5PKG\tproof_wanted\t{pkgProofWanted.size}"
+  IO.println s!"L5PKG\tcollect_failures\t{pkgCollectFail.size}"
+  for n in pkgAxioms do IO.println s!"L5PKGFAIL\tproject_axiom\t{n}"
+  for n in pkgUnsafe do IO.println s!"L5PKGFAIL\tunsafe\t{n}"
+  for n in pkgSorry do IO.println s!"L5PKGFAIL\tsorryAx\t{n}"
+  for n in pkgNative do IO.println s!"L5PKGFAIL\tnative_decide\t{n}"
+  for (n, a) in pkgUnapproved do IO.println s!"L5PKGFAIL\tunapproved_axiom\t{n}\t{a}"
+  for n in pkgProofWanted do IO.println s!"L5PKGFAIL\tproof_wanted\t{n}"
+  for (n, e) in pkgCollectFail do IO.println s!"L5PKGFAIL\tcollect_exception\t{n}\t{e}"
+  -- ---------------- negative-control registry ----------------
+  IO.println s!"L5NEG\tregistered\t{knownNegControls.length}"
+  for n in knownNegControls do
+    let present := env.constants.contains n
+    let kind := match env.find? n with
+      | some ci => kindOf ci
+      | none => "ABSENT"
+    IO.println s!"L5NEG\t{n}\tpresent={present}\tkind={kind}"
+  -- ---------------- lane audit ----------------
+  let laneRows := rows.filter (fun (_, _, m) => isUnder laneRoots m)
+  let mut laneTheorems := 0
+  let mut laneUnapproved : Array (Name × Name) := #[]
+  let mut laneSorry : Array Name := #[]
+  let mut laneNative : Array Name := #[]
+  let mut laneAxioms : Array Name := #[]
+  let mut laneUnsafe : Array Name := #[]
+  let mut laneCollectFail : Array (Name × String) := #[]
+  for (n, ci, _) in laneRows do
+    match ci with
+    | .thmInfo _ => laneTheorems := laneTheorems + 1
+    | .axiomInfo _ => laneAxioms := laneAxioms.push n
+    | .defnInfo v => if v.safety == .«unsafe» then laneUnsafe := laneUnsafe.push n
+    | _ => pure ()
+    let axs ←
+      try Lean.collectAxioms n
+      catch _ =>
+        laneCollectFail := laneCollectFail.push (n, "collectAxioms raised")
+        pure #[]
+    if !knownNegControls.contains n then
+      for a in axs do
+        if a == "sorryAx".toName then laneSorry := laneSorry.push n
+        else if a == "ofReduceBool".toName || a == "Lean.ofReduceBool".toName then
+          laneNative := laneNative.push n
+        else if !approvedAxioms.contains a then laneUnapproved := laneUnapproved.push (n, a)
+    IO.println s!"L5DECL\t{n}\t{kindOf ci}\t{";".intercalate (axs.toList.map Name.toString)}"
+  IO.println s!"L5LANE\tdeclarations\t{laneRows.size}"
+  IO.println s!"L5LANE\ttheorems\t{laneTheorems}"
+  IO.println s!"L5LANE\tproject_axioms\t{laneAxioms.size}"
+  IO.println s!"L5LANE\tunsafe\t{laneUnsafe.size}"
+  IO.println s!"L5LANE\tsorryAx_cones\t{laneSorry.size}"
+  IO.println s!"L5LANE\tnative_decide_cones\t{laneNative.size}"
+  IO.println s!"L5LANE\tunapproved_axiom_cones\t{laneUnapproved.size}"
+  IO.println s!"L5LANE\tcollect_failures\t{laneCollectFail.size}"
+  for (n, a) in laneUnapproved do IO.println s!"L5LANEFAIL\tunapproved_axiom\t{n}\t{a}"
+  for n in laneSorry do IO.println s!"L5LANEFAIL\tsorryAx\t{n}"
+  for n in laneNative do IO.println s!"L5LANEFAIL\tnative_decide\t{n}"
+  for n in laneUnsafe do IO.println s!"L5LANEFAIL\tunsafe\t{n}"
+  for (n, e) in laneCollectFail do IO.println s!"L5LANEFAIL\tcollect_exception\t{n}\t{e}"
+  -- ---------------- expanded types ----------------
+  for (n, ci, _) in laneRows do
+    let ty ← liftTermElabM (Meta.ppExpr ci.type)
+    IO.println s!"L5TYPE\t{n}\t{kindOf ci}\t{" ".intercalate ty.pretty.splitOn "\n"}"
+  -- ---------------- statement-shape scan ----------------
+  let mut equivFindings : Array (Name × String) := #[]
+  let mut scanned := 0
+  for (n, ci, _) in laneRows do
+    if let .thmInfo _ := ci then
+      scanned := scanned + 1
+      try
+        liftTermElabM do
+          forallTelescopeReducing ci.type fun _ body => do
+            let mut found := false
+            for x in ← getLCtx do
+              if !x.isLet && !x.isImplementationDetail then
+                let hty := x.type
+                if Expr.equal hty body then
+                  found := true
+            if found then
+              let s ← Meta.ppExpr ci.type
+              equivFindings := equivFindings.push (n, " ".intercalate s.pretty.splitOn "\n")
+      catch _ => pure ()
+  IO.println s!"L5EQUIV\ttheorems_scanned\t{scanned}"
+  IO.println s!"L5EQUIV\tfindings\t{equivFindings.size}"
+  for (n, s) in equivFindings do IO.println s!"L5EQUIV\tFINDING\t{n}\t{s}"
+  -- ---------------- retained downstream consumers ----------------
+  let mut laneSet : NameMap Unit := {}
+  for (n, _, _) in laneRows do laneSet := laneSet.insert n ()
+  let mut consumers : NameMap (Array Name) := {}
+  for (n, ci, _) in rows do
+    let used := ci.type.getUsedConstants
+    let used := match ci.value? with
+      | some v => used ++ v.getUsedConstants
+      | none => used
+    for u in used do
+      if laneSet.contains u then
+        consumers := consumers.insert u ((consumers.findD u #[]).push n)
+  let mut zeroUse := 0
+  for (n, ci, _) in laneRows do
+    let cs := consumers.findD n #[]
+    if cs.isEmpty then zeroUse := zeroUse + 1
+    IO.println s!"L5USE\t{n}\t{kindOf ci}\t{cs.size}\t{";".intercalate (cs.toList.take 6 |>.map Name.toString)}"
+  IO.println s!"L5USE\tlane_declarations_with_zero_retained_consumers\t{zeroUse}"
+  -- ---------------- verdict gate ----------------
+  if !pkgUnsafe.isEmpty || !pkgSorry.isEmpty || !pkgNative.isEmpty ||
+      !pkgUnapproved.isEmpty || !pkgProofWanted.isEmpty || !pkgCollectFail.isEmpty ||
+      !pkgAxioms.isEmpty then
+    IO.println "L5VERDICT\tFAIL"
+    throwError "L5Audit: package-wide forbidden kernel dependency detected"
+  else
+    IO.println "L5VERDICT\tPASS — imported package declarations depend only on {propext, Classical.choice, Quot.sound} (known negative controls registered and excluded)"
+
+end L5Audit
+
+#eval L5Audit.runAudit

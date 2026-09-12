@@ -1,0 +1,2 @@
+import Poincare.L4.GeodesicComparison.ConjugatePointEndpoint
+#print Poincare.L4.GeodesicComparison.conjugate_point_bound_strict

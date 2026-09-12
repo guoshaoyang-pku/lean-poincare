@@ -1,0 +1,993 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree. I need to:
+1. Read the checkpoint.json and existing files
+2. Read LONG_PLAN.json, D7/D10/D11 sources, result cards
+3. Understand the existing structure
+4. Continue from where the previous work left off
+
+Let me first explore the worktree structure.
+dsh: reasoning:
+Let me understand the current state. The task is D12-tensor-maximum-bochner. The previous invocation (invocation 3) made progress:
+- Track A: BochnerIdentity.lean with many proved lemmas
+- Remaining: W-half (weitzenboeck_half), bochner_identity, downstream so(3) model
+
+Let me look at the current state of the files:
+1. Read the BochnerIdentity.lean file
+2. Read the checkpoint details
+3. Check the scratch files
+4. Plan the continuation
+
+Let me first check the current state of files and what's pending.
+dsh: reasoning:
+The state is clear. Invocation 3 was working on:
+1. Remaining W-half: K def (with delta-terms) + K_antisym, D_comm_u, w_du_coeff_fixed_j, w_du_pair_fixed_j (2D = sum K*c*u via pairing), weitz_coefficient (5 pairings), weitzenboeck_expand, weitzenboeck_half, bochner_identity.
+2. Downstream so(3) model: cross-product LieBracketData, meanConnection LeviCivitaData via metric-skew brackets, MvPolynomial DerivationData via x -> x cross X, Ric = 1/2 g, non-flatness witness.
+
+There's also a So3Model.lean file that was created at 07:40 (most recent). Let me check the state of that and the BochnerIdentity.lean file to see what's currently there.
+
+Let me read the current BochnerIdentity.lean to see the current state — specifically the last ~200 lines and check what declarations exist.
+dsh: reasoning:
+Interesting! The BochnerIdentity.lean file now has 2193 lines and includes:
+- `bochner_metric_half` (line 610) ✓
+- `weitzenboeck_half` (line 1902) ✓
+- `bochner_identity` (line 2131) ✓
+
+And So3Model.lean has one `sorry` remaining in `ricci_eq_half_metric` (line with `sorry`).
+
+So the main remaining work:
+1. Fix the `sorry` in So3Model.lean (`ricci_eq_half_metric`).
+2. Verify everything compiles and the axiom audit passes.
+3. Maybe check that there's a downstream application in So3Model (e.g., applying the Bochner identity to the so(3) model — a concrete downstream use).
+4. Update checkpoint.json and result cards.
+
+Let me first verify the current build state. The last update to BochnerIdentity.lean was 07:37 and So3Model.lean at 07:40, so it's likely the current session (or the tail end of the last session) was just finishing `bochner_identity`. Let me check the build.
+dsh: reasoning:
+The BochnerIdentity.lean now has the full Bochner identity, including weitzenboeck_half and bochner_identity. The build is running in the background.
+
+The remaining work:
+1. Fix the `sorry` in So3Model.lean (`ricci_eq_half_metric`).
+2. Maybe add a downstream application: applying `bochner_identity` to the so(3) model (concrete downstream use) — e.g., compute `Ric(∇u,∇u)` for a specific polynomial u.
+3. Check that So3Model.lean compiles.
+4. Run the axiom audit on all files.
+5. Update checkpoint.json and result cards.
+
+Let me wait for the build to finish first, and meanwhile look at the So3Model.lean `ricci_eq_half_metric` target. I need to understand `CurvatureOperator.ricci_eq_sum_basis` — let me look at the CurvatureAlgebra module (in the Geometry package?) to see the statement.
+dsh: reasoning:
+The build completed with exit code 0. Let me check its output, and continue looking for the CurvatureOperator API.
+dsh: reasoning:
+Interesting — the build shows:
+1. BochnerIdentity.lean compiles with only propext/Classical.choice/Quot.sound axioms — good.
+2. `Mathlib.Data.MvPolynomial.PDeriv` and `Poincare.D12.TensorMaximumBochner.So3Model` fail to build.
+
+The So3Model failure is expected (the `sorry`), but the `Mathlib.Data.MvPolynomial.PDeriv` failure is concerning. Let me look at the build errors in more detail. The lake build output was piped through tail -20, so I lost the details. Let me rebuild those targets specifically.
+dsh: reasoning:
+The CurvatureAlgebra has `ricci` and `ricci_eq_ricciSum` where `ricciSum e K X Y = ∑ i, e.repr (K (e i) X Y) i`. Note this ricci is different from what So3Model.lean uses: the So3Model has `ricci_eq_half_metric` with `CurvatureOperator.ricci crossLeviCivita.toCurvatureOperator X Y = (1 / 2 : ℝ) * (X ⬝ᵥ Y)`.
+
+So `ricci K X Y = trace (Z ↦ R(Z,X)Y)`. With the mean connection curvature R(X,Y)Z = -1/4 [[X,Y],Z], we get:
+
+Ric(X,Y) = trace(Z ↦ R(Z,X)Y) = trace(Z ↦ -1/4 [[Z,X],Y]).
+
+Using the basis e_0,e_1,e_2, Ric(X,Y) = ∑_i ⟨R(e_i,X)Y, e_i⟩ ... wait no, `ricciSum e K X Y = ∑ i, e.repr (K (e i) X Y) i`, i.e., ∑ᵢ ⟨R(eᵢ,X)Y, eᵢ⟩ under the coordinate basis.
+
+We need to compute: ∑ᵢ ⟨R(eᵢ,X)Y, eᵢ⟩ = ∑ᵢ ⟨-¼[[eᵢ,X],Y], eᵢ⟩.
+
+By the cyclic property of the triple product: ⟨[eᵢ,X],Y],eᵢ⟩ = ... Let me compute.
+
+⟨[[eᵢ,X],Y],eᵢ⟩. Hmm, let me think in terms of the standard identities.
+
+Actually let me just compute. Triple products: ⟨a×b, c⟩ = det(a,b,c) cyclic.
+
+We want T = ∑ᵢ ⟨(eᵢ×X)×Y, eᵢ⟩. Note (eᵢ×X)×Y = -Y×(eᵢ×X). Using the triple product expansion Y×(eᵢ×X) = eᵢ⟨Y,X⟩ - X⟨Y,eᵢ⟩ (vector triple product: A×(B×C) = B(A·C) - C(A·B)).
+
+So (eᵢ×X)×Y = -(eᵢ⟨Y,X⟩ - X⟨Y,eᵢ⟩) = X⟨Y,eᵢ⟩ - eᵢ⟨Y,X⟩.
+
+Then ⟨(eᵢ×X)×Y, eᵢ⟩ = ⟨X,eᵢ⟩⟨Y,eᵢ⟩ - ⟨eᵢ,eᵢ⟩⟨Y,X⟩.
+
+Sum over i: ∑ᵢ ⟨X,eᵢ⟩⟨Y,eᵢ⟩ - ∑ᵢ ⟨Y,X⟩ = ⟨X,Y⟩ - 3⟨Y,X⟩ = ⟨X,Y⟩ - 3⟨X,Y⟩ = -2⟨X,Y⟩.
+
+So ∑ᵢ ⟨(eᵢ×X)×Y, eᵢ⟩ = -2⟨X,Y⟩, hence Ric(X,Y) = -¼·(-2⟨X,Y⟩) = ½⟨X,Y⟩. 
+
+So `ricci_eq_half_metric` should hold. In Lean, I can prove this via:
+1. `ricci_eq_ricciSum` with the basis.
+2. Use `curvature_eq_quarter_doubleBracket` to rewrite each term.
+3. Use the vector triple product identity `(X ⨯ Y) ⨯ Z = Y * (X ⬝ᵥ Z) - X * (Y ⬝ᵥ Z)` — mathlib has this as... let me check. In mathlib, `Mathlib.LinearAlgebra.CrossProduct` has `cross_eq_crossCross` or `triple_product_eq_det` etc. There's `cross_cross` or `vecmul`... Let me look.
+
+Actually there is `cross_cross_cross` or something. Let me check the mathlib CrossProduct file for the identity (a × b) × c = b(a·c) − a(b·c).
+
+Also the e.repr — the basis is Pi.basisFun, so `(Pi.basisFun ℝ (Fin 3)).repr v i = v i`. Need to check.
+
+Also important: `ricciSum` needs `Module.Basis ι R V`. The `stdMetric.basis` is a `Module.Basis`? Let me check the MetricData structure. In So3Model, `basis := Pi.basisFun ℝ (Fin 3)`.
+
+Also `toCurvatureOperator` is a field of LeviCivitaData? Let me check MetricData.lean and the Geometry module to understand `LeviCivitaData.toCurvatureOperator` and its definition.
+
+Also there's the MvPolynomial.PDeriv build failure — let me check that first. It's likely that the import `Mathlib.Data.MvPolynomial.PDeriv` failed for some reason... Actually wait, the So3Model imports PDerv but the failure is in building Mathlib.Data.MvPolynomial.PDeriv itself. Let me check the output of the job.
+dsh: reasoning:
+The issue: `Mathlib.Data.MvPolynomial.PDeriv` doesn't exist in this pinned mathlib. It's trying to resolve against a *different* worktree's lake packages (D6_weekly_release) — wait, that's odd. The error says the file is `/data/home/guoshaoyang/workdir/lean_poincare/longrun/worktrees/D6_weekly_release/release/.lake/packages/mathlib/Mathlib/Data/MvPolynomial/PDeriv.lean` — that's the D6 worktree path, not this one! Hmm, that suggests the mathlib in this worktree is a symlink to the D6 worktree's mathlib? Let me check.
+
+Actually wait — perhaps the `release/.lake/packages/mathlib` in this worktree is a symlink or was copied. Let me check what exists in this worktree's mathlib.
+dsh: reasoning:
+Hmm — the mathlib directory listing of Mathlib/Data/MvPolynomial seems empty. Let me check what's there.
+dsh: reasoning:
+The pinned mathlib in this worktree doesn't have `Mathlib.Data.MvPolynomial.PDeriv` (it's in `Mathlib/Algebra/MvPolynomial` here; PDeriv may exist in a different form, or in this revision the derivations are in `Mathlib/RingTheory/Derivation/`). The import `Mathlib.Data.MvPolynomial.PDeriv` in So3Model.lean fails.
+
+Let me check what derivation APIs exist in this mathlib:
+- `Mathlib/RingTheory/Derivation/` — derivations on algebras, including `Derivation.mkDerivation` and polynomial derivations. For MvPolynomial, there's `MvPolynomial.derivation` or partial derivatives `pderiv` in `Mathlib/Algebra/MvPolynomial/...`.
+
+Let me check.
+dsh: reasoning:
+The correct import path in this pinned mathlib is `Mathlib.Algebra.MvPolynomial.PDeriv` (not `Mathlib.Data.MvPolynomial.PDeriv`). The PDeriv file defines `MvPolynomial.pderiv i p` as a bundled `Derivation R (MvPolynomial σ R) (MvPolynomial σ R)`.
+
+Let me check the content of PDeriv.lean and Derivation.lean in this mathlib to understand the API for building the crossDerivation.
+
+Actually, first, let me plan the rest of the invocation:
+
+1. Fix So3Model.lean:
+   a. Change import `Mathlib.Data.MvPolynomial.PDeriv` → `Mathlib.Algebra.MvPolynomial.PDeriv`.
+   b. Fix `ricci_eq_half_metric` proof (the `sorry`).
+   c. Implement `crossDerivation` — the polynomial derivation datum `D_X f = ∑ᵢ (x×X)ᵢ ∂ᵢf`.
+   d. Add a downstream application: apply `bochner_identity` concretely to so(3) — e.g. for a specific polynomial u, evaluate the Bochner identity at a point, or better: prove the Bochner identity for the so(3) model as a corollary with `Ric(∇u,∇u) = ½|∇u|²`, giving a concrete closed-form: `Δ|∇u|² = 2|∇∇u|² + 2⟨∇u,∇Δu⟩ + |∇u|²` for the so(3) mean connection. That's a genuinely concrete downstream application that can be evaluated at a specific point with a specific polynomial to double check numerically... maybe overkill. But at least a symbolic check in Python is feasible.
+
+2. Run axiom audit over all D12 files.
+
+3. Update checkpoint.json, results .md/.json.
+
+The downstream application — "prove a downstream application not obtained solely by projection from an assumed conclusion" — the so(3) model with Ric = ½g IS the downstream application: the Bochner identity is instantiated on the mean connection of the cross-product bracket, and the Ricci term is concretely computed as ½|∇u|². Then a concrete corollary: `lap(gradSq u) = 2*hessSq u + 2⟨∇u, ∇lap u⟩ + gradSq u` for the so(3) model.
+
+Let me now look at what `LeviCivitaData` is (in Poincare.Longrun.Geometry.MetricData) to understand the fields, in particular `toCurvatureOperator` and `nabl`.
+dsh: reasoning:
+Good. The API is `MvPolynomial.pderiv i p` as a `Derivation`. Now let me look at the LeviCivitaData structure and the Geometry modules to see what's available for the So3 model — particularly `LeviCivitaData.toCurvatureOperator` and its `ricci`. Also, I should check `ConnectionAdapter.lean` for `meanConnection_curvature` and possibly `meanConnection_ricci`.
+dsh: reasoning:
+Now let me look at the ConnectionAdapter for `meanConnection_curvature` and `meanConnection_ricci` — there may already be a `meanConnection_ricci` lemma I can reuse:
+dsh: reasoning:
+Now I have a clear picture of the API. Let me plan the So3Model.lean completion:
+
+1. Fix the import: `Mathlib.Data.MvPolynomial.PDeriv` → `Mathlib.Algebra.MvPolynomial.PDeriv`.
+
+2. `ricci_eq_half_metric`: 
+   - `ricci K X Y` via `CurvatureOperator.ricci_eq_ricciSum (Pi.basisFun ℝ (Fin 3)) K X Y`: `ricci K X Y = ∑ i, e.repr (K (e i) X Y) i`.
+   - For `Pi.basisFun ℝ (Fin 3)`, `e.repr v i = v i` (need `Module.Basis.repr` — actually for Pi.basisFun, `(Pi.basisFun ℝ ι).repr` is `LinearEquiv.refl`? Let me check: `Pi.basisFun R ι : Module.Basis ι R (ι → R)` and its repr is basically the identity. There's `basisFun_repr` or similar. Let me search.)
+   - K = crossLeviCivita.toCurvatureOperator, K (e i) X Y = -1/4 • ((e_i × X) × Y).
+   - So ricci = ∑ᵢ ⟨-¼((eᵢ×X)×Y), eᵢ⟩... wait, `e.repr v i` is the i-th coordinate of v. So ricciSum = ∑ᵢ coordᵢ(-¼((eᵢ×X)×Y)).
+   - Use `cross_cross` identity: `(A ⨯ B) ⨯ C = B * (A ⬝ᵥ C) - A * (B ⬝ᵥ C)`. Need to check mathlib's name. Let me search for it.
+
+3. `sectional_nonflat` is already proved (no sorry).
+
+4. `crossDerivation`: D_X f = ∑ᵢ (x×X)ᵢ ∂ᵢf — this uses pderiv. Also bracket compatibility: D_X D_Y f - D_Y D_X f = D_{X×Y} f. This is the key identity: [x×X, x×Y] as vector fields = x×(X×Y) (since the map X ↦ x×X is a Lie algebra homomorphism into polynomial vector fields). 
+
+   In mathlib, there's likely `cross_apply` and vector triple product lemmas. The identity needed: (x × X) × (x × Y)... hmm no. For derivations: D_X D_Y f - D_Y D_X f = D_{[X,Y]} f where [X,Y] here is the commutator of vector fields v_X = x×X and v_Y = x×Y: [v_X, v_Y](x) = (Dv_Y)(x)·v_X(x) - (Dv_X)(x)·v_Y(x) = v_Y(X) ... wait let me compute properly. For linear vector fields v_X(x) = x×X, v_Y(x) = x×Y (linear maps), the Lie bracket of vector fields is [v_X,v_Y](x) = (Dv_Y)·v_X(x) − (Dv_X)·v_Y(x) = (x×X)×Y − (x×Y)×X. By the Jacobi identity: (x×X)×Y − (x×Y)×X = (x×X)×Y + (Y×x)×X + ... let me use the standard identity: (a×b)×c + (b×c)×a + (c×a)×b = 0 for the cross product? That's a vector version of Jacobi: a×(b×c) + b×(c×a) + c×(a×b) = 0. We want (x×X)×Y − (x×Y)×X = x×(X×Y)?
+
+   From Jacobi: x×(X×Y) + X×(Y×x) + Y×(x×X) = 0, i.e. x×(X×Y) = −X×(Y×x) − Y×(x×X) = X×(x×Y) − Y×(x×X). Since X×(x×Y) = −(x×Y)×X, we get x×(X×Y) = −(x×Y)×X − Y×(x×X) = −(x×Y)×X + (x×X)×Y. Yes! So (x×X)×Y − (x×Y)×X = x×(X×Y). 
+
+   So the Lie bracket of the vector fields v_X, v_Y is v_{X×Y}, confirming D_XD_Y − D_YD_X = D_{X×Y}.
+
+   Implementing this in Lean requires working with MvPolynomial. D_X f = ∑ᵢ (x×X)ᵢ · pderiv i f. The composition D_X(D_Y f) involves the product rule and second partials. This is a fair amount of work but doable. The commutator computation: D_X D_Y f − D_Y D_X f = ∑ᵢⱼ (x×X)ᵢ·pderiv i ((x×Y)ⱼ)·pderiv j f + second-order terms; second-order terms cancel by symmetry of mixed partials (pderiv i (pderiv j f) = pderiv j (pderiv i f) — is that in mathlib? `pderiv_comm` probably exists). Then ∑ⱼ (∑ᵢ (x×X)ᵢ ∂ᵢ(x×Y)ⱼ) ∂ⱼf = ∑ⱼ ((x×X)×Y)ⱼ ∂ⱼf, so commutator = ∑ⱼ ((x×X)×Y − (x×Y)×X)ⱼ ∂ⱼf = ∑ⱼ (x×(X×Y))ⱼ ∂ⱼf = D_{X×Y}f.
+
+   Alternatively — simpler: there might be a mathlib statement that the map X ↦ pderiv-based vector field is a Lie algebra homomorphism. Hmm, but we need `x×X` where x is the variable. `X j` are the variables; `x × X` is a polynomial vector field. In mathlib, cross product of vectors of polynomials? There's `crossProduct` on `Fin 3 → α` for α a ring? Let me check: mathlib's CrossProduct is over `Fin 3 → R` with `[CommRing R]`? Actually in mathlib, `crossProduct : Fin 3 → R → Fin 3 → R → Fin 3 → R` requires `[CommRing R]`. Yes, I believe crossProduct works over any commutative ring, so `(X : Fin 3 → MvPolynomial (Fin 3) ℝ)` cross `(C Xᵥ : Fin 3 → MvPolynomial (Fin 3) ℝ)` is fine.
+
+   Let me check the exact signature of crossProduct and related lemmas in this mathlib revision. Also `triple_product_eq_det`, `cross_anticomm`, `jacobi_cross`, `cross_cross`, `cross_eq_crossCross`... Let me search.
+
+5. Downstream application: the concrete so(3) Bochner identity:
+   `bochner_identity` instantiated at `crossLeviCivita` and `crossDerivation`, plus `ricciContraction` simplification: since Ric = ½g, `ricciContraction dd d u = ∑_{j,p} u_j * ricciForm d j p * u_p` where ricciForm relates to the abstract `ricciForm` def in BochnerIdentity... Wait, BochnerIdentity's `ricciForm` is the coordinate form of the curvature-based Ricci. For the so(3) model, `ricciContraction = ½ gradSq`. Then the concrete identity: `lap(gradSq u) = 2·hessSq u + 2⟨∇u,∇lap u⟩ + gradSq u`.
+
+   To prove `ricciContraction dd crossLeviCivita u = ½ gradSq dd u` I'd need to connect `ricciForm d j p` (in A) with the abstract `CurvatureOperator.ricci` — that's `ricciForm_eq_sum_gamma`-based; there's a lemma `ricciForm_eq_sum_gamma` relating ricciForm to gamma. Hmm, but to connect to the geometric ricci = ½g I need `ricciForm d j p = ½·(form e_j e_p)` in the A-model. There might be an existing bridge lemma? Let me check what's in BochnerIdentity around ricciForm (lines 1015-1030) and see if there's a connection between `ricciForm` and `CurvatureOperator.ricci`.
+
+Let me read those parts of BochnerIdentity.lean. Also check the top of the file (lines 1-100) to see imports and the MetricData API.
+dsh: reasoning:
+The mathlib CrossProduct API has everything I need:
+- `cross_apply`, `cross_anticomm`, `jacobi_cross`, `cross_cross`, `triple_product_permutation`
+- `cross_cross_eq_smul_sub_smul`: `(u ⨯₃ v) ⨯₃ w = v * (u ⬝ᵥ w) - u * (v ⬝ᵥ w)` presumably. Let me check line 176.
+
+Let me now check the exact statements of `cross_cross_eq_smul_sub_smul` and also what `ricciForm` is in BochnerIdentity (lines 1015-1065).
+dsh: reasoning:
+Now I understand the structure. `ricciForm d j p = gA (CurvatureOperator.ricci d.toCurvatureOperator (m.basis j) (m.basis p))`.
+
+For the so(3) model, I need to show `ricciContraction crossDerivation crossLeviCivita u = ½ gradSq crossDerivation u`.
+
+That requires `ricciForm crossLeviCivita j p = gA (½·(basis j ⬝ᵥ basis p))` i.e. `gA ((1/2) * (basis j ⬝ᵥ basis p))`. Then `∑ⱼₚ uⱼuₚ · ½δⱼₚ = ½∑ⱼ uⱼ²`.
+
+OK. Now the plan for this invocation (4 hours):
+
+1. Fix So3Model.lean:
+   a. Fix import to `Mathlib.Algebra.MvPolynomial.PDeriv`.
+   b. Prove `ricci_eq_half_metric` via `ricci_eq_ricciSum` + `mean_curvature_apply` (or via `ricciForm_eq_sum_gamma`... simpler: ricciSum path).
+   c. Build `crossDerivation : DerivationData stdMetric crossBracket (MvPolynomial (Fin 3) ℝ)`:
+      - D_X f = ∑ i, ((X : Fin 3 → MvPolynomial (Fin 3) ℝ) ⨯₃ (gA-coefficient vector of X)) i * pderiv i f. Note: X : Vec3 = Fin 3 → ℝ; coefficients in MvPolynomial via `MvPolynomial.C`. Let me define `polyVec (X : Vec3) : Fin 3 → A := fun i => MvPolynomial.C (X i)`. And the position vector `xVec : Fin 3 → A := fun i => MvPolynomial.X i`. Then D_X f = ∑ i, (xVec ⨯₃ polyVec X) i * pderiv i f.
+      - Leibniz: D_X(fg) = ∑ᵢ vᵢ·(pderiv i f · g + f · pderiv i g) = D_X f · g + f · D_X g (commutativity of A needed — MvPolynomial is commutative ✓).
+      - bracket_deriv: D_X D_Y f − D_Y D_X f = D_{X×Y} f. This needs:
+        * pderiv commutes: pderiv i (pderiv j f) = pderiv j (pderiv i f). Check mathlib: `pderiv_comm`? Let me search.
+        * ∑ᵢ (x×X)ᵢ ∂ᵢ((x×Y)ⱼ) = ((x×X) × Y)ⱼ? Actually ∂ᵢ(x×Y)ⱼ = coefficient: (x×Y)ⱼ is a linear combination of x₀,x₁,x₂ with coefficients ±Y_k. ∂ᵢ(x×Y)ⱼ = (eᵢ×Y)ⱼ. And ∑ᵢ (x×X)ᵢ (eᵢ×Y)ⱼ = ((x×X)×Y)ⱼ. This is the identity: ∑ᵢ (u)ᵢ (eᵢ×Y)ⱼ where u = x×X... in general ∑ᵢ uᵢ(eᵢ×Y) = u×Y. Prove via fin_cases and ring.
+        * Then the commutator = ∑ⱼ ((x×X)×Y − (x×Y)×X)ⱼ ∂ⱼf = ∑ⱼ (x×(X×Y))ⱼ ∂ⱼf using the derived identity from Jacobi: (a×b)×c − (a×c)×b = a×(b×c).
+      This is genuinely nontrivial but tractable with fin_cases on Fin 3 + ring over MvPolynomial. The pderiv on MvPolynomial is a Derivation so `pderiv i f` lemmas: `map_add`, `leibniz` (via Derivation.leibniz), `map_smul` (ℝ-linearity!). Since `Derivation R A A` is R-linear, pderiv i is ℝ-linear: `map_smul`. Good — that helps a lot with the coefficients: pderiv i (C c * f) = C c * pderiv i f.
+      
+      Actually, the commutator calculation needs D_X D_Y f where D_Y f = ∑ⱼ (x×Y)ⱼ ∂ⱼf. Then D_X(D_Y f) = ∑ᵢ (x×X)ᵢ ∂ᵢ(∑ⱼ (x×Y)ⱼ ∂ⱼf) = ∑ᵢⱼ (x×X)ᵢ (∂ᵢ(x×Y)ⱼ ∂ⱼf + (x×Y)ⱼ ∂ᵢ∂ⱼf). The second-order part is symmetric in X,Y (since ∂ᵢ∂ⱼ = ∂ⱼ∂ᵢ and ∑ᵢⱼ (x×X)ᵢ(x×Y)ⱼ∂ᵢ∂ⱼf is symmetric under swapping i↔j, X↔Y), so it cancels. First-order part: ∑ᵢⱼ (x×X)ᵢ ∂ᵢ(x×Y)ⱼ ∂ⱼf = ∑ⱼ ((x×X)×Y)ⱼ ∂ⱼf. Commutator = ∑ⱼ (((x×X)×Y) − ((x×Y)×X))ⱼ ∂ⱼf = ∑ⱼ (x×(X×Y))ⱼ ∂ⱼf = D_{X×Y}f. ✓.
+
+      In Lean this is a lot of index manipulation but feasible. Note: pderiv commutes? For smooth commutativity of mixed partials on MvPolynomial: `pderiv_comm`? Let me check. Also `pderiv` is a Derivation which is additive and ℝ-linear — mixed partials commute on polynomials since ∂ᵢ∂ⱼ is symmetric by definition (monomial calculus). mathlib probably has `pderiv_comm`. I'll check.
+
+   d. Downstream application: `so3_bochner_identity`: instantiate `bochner_identity` for crossDerivation + crossLeviCivita, and combine with `ricciContraction_cross = ½ gradSq` to get the closed form: `lap(gradSq u) = 2·hessSq u + 2·gradInner u (lap u) + gradSq u` (in the so(3) model). And then also a **numeric evaluation** at a point: evaluate everything at 0 for u = X_0² + X_1·X_2 or something, verifying the identity numerically with a Python cross-check. Actually evaluation at a point maps MvPolynomial to ℝ via `MvPolynomial.eval`. We could evaluate the identity at some point and check both sides with norm_num... but that's just an instance of the identity. Better: prove the closed form and then evaluate at a specific point to get an explicit numeric check as a "non-vacuous example" — the eval gives a concrete ℝ equality which norm_num can verify? That would require computing pderiv evaluations — `eval` maps pderiv to... hmm, eval commutes with pderiv? Not directly; but we could compute it: the identity after eval is a specific ℝ equation; the LHS/RHS involve the polynomial evaluated after derivation. There are lemmas: `MvPolynomial.eval_pderiv`? Hmm, might exist in `Mathlib/Data/MvPolynomial/PDeriv`... Let me check. Actually maybe simpler: choose u = X_0 (linear): gradSq = 1, lap = 0, hessSq = 0, gradInner = 0, Ric term = ½. Then identity: Δ(1) = 0 = 0 + 0 + ½·1? Wait: Bochner identity gives Δ|∇u|² = 2|∇∇u|² + 2⟨∇u,∇Δu⟩ + 2Ric(∇u,∇u). For linear u: |∇u|² = ∑ⱼ uⱼ² = ∑ⱼ δ... wait u = X_0, uⱼ = ∂ⱼ X_0 = δ_{j0}. gradSq = 1 (constant). lap u = 0. hessSq = 0. gradInner = 0. Ric = ½·gradSq = ½. So RHS = 0 + 0 + 2·½·1 = 1, LHS = Δ(1) = 0. 0 ≠ 1?! 
+
+      Wait — that contradicts! Let me recheck. Δ|∇u|² with u = X_0: |∇u|² = 1, Δ(1) = 0. RHS: 2|∇∇u|² = 0, 2⟨∇u,∇Δu⟩ = 0, 2Ric(∇u,∇u) = 2·½·|∇u|² = 1. So identity would say 0 = 1. That means... the Bochner identity CANNOT hold for the so(3) model as I naively instantiate it!
+
+      Hmm wait. Let me recheck the standard Bochner identity on a general (non-Levi-Civita... no wait, the mean connection IS metric-compatible and torsion-free with respect to the cross bracket, but it's NOT the Levi-Civita connection of the round metric on S³! On the round 3-sphere, ∇_X Y = ½[X,Y] is the standard metric connection. Hmm, but there's a subtlety: the standard Bochner identity Δ|∇u|² = 2|∇∇u|² + 2⟨∇u,∇Δu⟩ + 2Ric(∇u,∇u) holds for the Levi-Civita connection on a Riemannian manifold. Here, is the frame eᵢ a *global parallel-ish* orthonormal frame? The problem: the "functions" A = polynomials in coordinates x; the derivation D_X = ∑(x×X)ᵢ∂ᵢ are the *left-invariant* vector fields on S³ restricted... hmm, but they act on ℝ³? The vector field x↦x×X is the vector field generating the rotation group action. These are *not* complete commuting... they don't commute (bracket compatibility). The "gradient" uⱼ = D_{eⱼ}u is the derivative along the *frame field* vⱼ(x) = x×eⱼ.
+
+      The point: with the Levi-Civita connection of the round sphere and left-invariant vector fields, the Bochner identity holds. But is the mean connection + this DerivationData consistent with the abstract Bochner theorem's hypotheses? Let me recheck the abstract theorem's use of the DerivationData: it requires bracket_deriv: D_XD_Yf − D_YD_Xf = D_{[X,Y]}f. For v_X(x)=x×X: [v_X,v_Y](x) = (Dv_Y)v_X − (Dv_X)v_Y = (x×X)×Y − (x×Y)×X = x×(X×Y) = v_{X×Y}(x). ✓ consistent.
+
+      Hmm, so why does my computation of the concrete case contradict? Let me recompute the abstract theorem's statement carefully: bochner_identity says:
+
+      (∑ i, D_{eᵢ}D_{eᵢ}(gradSq u) − D_{∇_{eᵢ}eᵢ}(gradSq u)) = 2 hessSq + 2 ⟨∇u,∇lap u⟩ + 2 ricciContraction.
+
+      With u = X_0 in the so(3) model: gradSq u = ∑ⱼ uⱼ² where uⱼ = D_{eⱼ}X_0 = (x×eⱼ)₀... wait! uⱼ = D_{eⱼ} X_0 = ∑ᵢ (x×eⱼ)ᵢ ∂ᵢX_0 = (x×eⱼ)₀. So uⱼ = (x×eⱼ)₀. gradSq u = ∑ⱼ (x×eⱼ)₀².
+
+      (x×e₀) = 0. (x×e₁)₀: x×e₁ = (x₁e₂−x₂e₁)? Let me compute: x ⨯ e₁ = ![x 1 * 0 - x 2 * 0, ...] hmm wait cross_apply: a ⨯₃ b = ![a 1 * b 2 - a 2 * b 1, a 2 * b 0 - a 0 * b 2, a 0 * b 1 - a 1 * b 0]. With a = x, b = e₁ = (0,1,0): (x×e₁) = (x₁·0 − x₂·1, x₂·0 − x₀·0, x₀·1 − x₁·0) = (−x₂, 0, x₀). So (x×e₁)₀ = −x₂. (x×e₂) = (x₁·1−x₂·0, x₂·0−x₀·1, x₀·0−x₁·0) = (x₁, −x₀, 0), so (x×e₂)₀ = x₁.
+
+      So uⱼ: u₀ = 0, u₁ = −x₂, u₂ = x₁. gradSq u = x₂² + x₁². 
+
+      lap u = ∑ᵢ Hᵢᵢ where Hᵢⱼ = D_{eᵢ}uⱼ − D_{∇_{eᵢ}eⱼ}u. ∇_{eᵢ}eⱼ = ½eᵢ×eⱼ. Let me compute. Actually this is the Laplacian of the round sphere acting on the coordinate-restricted function u = X_0 (the first coordinate on the sphere). On S³ with the round metric, the first coordinate function has Δx₀ = −3x₀ (eigenfunction with eigenvalue 3). But our "lap" here is DᵢDᵢ − D_{∇_{eᵢ}eᵢ} = ∑ᵢ (vᵢvᵢ − ½v_{eᵢ×eᵢ}) = ∑ᵢ vᵢvᵢ acting on the polynomial ring in ℝ³. This is the Casimir/Laplacian of the rotation action: Δ = ∑ᵢ (x×eᵢ)·∇)².
+
+      So the "Laplacian" here is the action of the Casimir of so(3) on polynomials, which equals the spherical Laplacian restricted... The spherical Laplacian on functions on S³ (unit sphere) expressed via the ambient ℝ³ vector fields (x×eᵢ)·∇. Yes, this is the standard construction: the spherical Laplacian = ∑ᵢ Lᵢ² where Lᵢ = (x×eᵢ)·∇, acting on ambient functions restricted to the sphere.
+
+      Now the Bochner identity for the sphere: Δ|x₀-gradient|²... on the unit sphere S³: |∇x₀|² = 1 − x₀² (since gradient of coordinate function on unit sphere has norm squared 1−x₀²... on S² it's 1−z²). Here u = x₀|S³, |∇u|² = ∑ⱼuⱼ² = x₁²+x₂² = 1 − x₀² on the unit sphere. ✓.
+
+      Δ(1−x₀²) = −Δx₀² = −(2x₀Δx₀ + 2|∇x₀|²) = −(2x₀(−3x₀) + 2(1−x₀²)) = −(−6x₀²+2−2x₀²) = −(2−8x₀²) = 8x₀²−2.
+
+      hessSq u = ∑ᵢⱼ Hᵢⱼ². Hᵢⱼ = Dᵢuⱼ − D_{½eᵢ×eⱼ}u. Let me compute for u = x₀... uⱼ = (x×eⱼ)₀. Hmm this is getting complicated but here's the key: Ric(∇u,∇u) = ½|∇u|² = ½(1−x₀²).
+
+      ⟨∇u,∇Δu⟩ = ∑ⱼ uⱼ Dⱼ(Δu) = ∑ⱼ uⱼ Dⱼ(−3x₀) = ∑ⱼ uⱼ(−3uⱼ) = −3∑ⱼuⱼ² = −3(1−x₀²).
+
+      So identity: Δ|∇u|² = 2|∇∇u|² + 2⟨∇u,∇Δu⟩ + 2Ric(∇u,∇u) → 8x₀²−2 = 2|∇∇u|² − 6(1−x₀²) + (1−x₀²) = 2|∇∇u|² − 5 + 5x₀². So 2|∇∇u|² = 3x₀²+3 → |∇∇u|² = (3/2)(x₀²+1). Plausible! OK so the identity is consistent — my earlier "contradiction" was wrong because I assumed u = X_0 gives uⱼ = δⱼ₀, but actually uⱼ = (x×eⱼ)₀ ≠ δⱼ₀ (the vector fields are position-dependent!). The gradient of x₀ is NOT the constant vector field. Phew.
+
+      So the so(3) instantiation is genuine and non-trivial. 
+
+      However — an important subtlety: the abstract Bochner theorem's `DerivationData.bracket_deriv` uses D_XD_Y − D_YD_X = D_{[X,Y]} where [X,Y] is the bracket of the *constant* vector fields X,Y — i.e., the Lie bracket of the vector fields v_X, v_Y should be v_{X×Y}. We computed [v_X,v_Y] = v_{X×Y} ✓. But wait — in the abstract theorem, does the proof use that D is ℝ-linear in X? Yes, `D : V →ₗ[ℝ] A →ₗ[ℝ] A`. Our D_X = ∑ᵢ(x×X)ᵢ∂ᵢ is ℝ-linear in X ✓.
+
+      Another subtlety: in the abstract theorem, Hᵢⱼ = DᵢDⱼu − D_{∇_{eᵢ}eⱼ}u and hessian_symm used bracket_deriv + torsion-free. ✓ consistent.
+
+      But hold on — there's a deeper consistency question: is the *abstract* Bochner identity actually correct for this model? The symbolic verification said yes, and my hand computation above also confirms consistency (the identity as an abstract polynomial identity in x₀,x₁,x₂ should hold). Great — this is a REAL test: the so(3) instantiation is a strong consistency check of the abstract theorem. We should also verify numerically with sympy: evaluate the abstract identity for the cross model with u = x₀, in the polynomial ring — doable in the verification script.
+
+      Actually, more importantly, for the *downstream application* milestone, the So3Model gives:
+      1. `crossLeviCivita` — a concrete LeviCivitaData (closing LeviCivitaExistenceStatement under metric-skew hypothesis).
+      2. `crossDerivation` — concrete DerivationData.
+      3. `ricci_eq_half_metric` — Ric = ½g.
+      4. `so3_bochner_identity` — the assembled identity instantiated: Δ|∇u|² = 2|∇∇u|² + 2⟨∇u,∇Δu⟩ + |∇u|² — wait, with Ric(∇u,∇u) = ½|∇u|², the last term is 2·½|∇u|² = |∇u|².
+      
+      Hmm, but to state `so3_bochner_identity` I need `ricciContraction crossDerivation crossLeviCivita u = (1/2) • gradSq crossDerivation u`. The ½ ∈ ℝ acts on A via Algebra. Note gradSq values are in A = MvPolynomial. `(1/2 : ℝ) • gradSq` — the smul is the ℝ-module action on MvPolynomial, i.e., multiplication by C(1/2). Fine.
+
+      Then the downstream: `bochner_identity crossDerivation crossLeviCivita u` gives the general form; combined with the ricciContraction lemma: the closed-form so(3) Bochner identity. That's a genuine downstream application: it uses the full Bochner machinery on the concrete so(3) model with a *computed* Ricci tensor, not a projection from an assumed conclusion.
+
+      Also the **non-vacuity**: sectional_nonflat proves the curvature is nonzero, so the so(3) model is not flat; and the crossDerivation is non-trivial (D_{e₀}x₁ = ... ≠ 0). Maybe prove a quick non-triviality: `crossDerivation.D (basis 0) (X 1) = - X 2`? D_{e₀}X₁ = ∑ᵢ(x×e₀)ᵢ∂ᵢX₁ = (x×e₀)₁ = ... x×e₀ = ![0, x₂, −x₁]. So D_{e₀}X₁ = x₂. Nice concrete check. Or the vector field bracket witness: D_{e₀}D_{e₁}X₀ − D_{e₁}D_{e₀}X₀ = D_{e₂}X₀ = (x×e₂)₀ = x₁. Could add as a sanity lemma.
+
+   e. Optionally verify numerically in sympy the full so(3) instantiation (evaluate the identity at random points with the cross model). I can extend scratch/verify_bochner.py or write a new script. This is good for the "independently reproducible" requirement.
+
+2. Run the axiom audit tool on all files (extend to So3Model).
+3. Check for remaining issues: `#print axioms` for every new declaration.
+4. Update checkpoint.json + result cards with source hashes.
+5. Check `Mathlib.Algebra.MvPolynomial.PDeriv` import compiles.
+
+Time budget: 4 hours. The crossDerivation bracket_deriv proof is the hard part. Let me get started.
+
+First, let me check what pderiv lemmas exist for commutativity and evaluation:
+dsh: reasoning:
+There's no explicit `pderiv_comm` lemma in PDeriv.lean. But it exists somewhere else maybe — let me search the whole mathlib for `pderiv_comm`. Also let me check `Derivation` API in RingTheory/Derivation/Basic.lean for commutativity. Actually there might be a lemma `Derivation.map_derivation`... Let me search.
+dsh: reasoning:
+No `pderiv_comm` lemma in this mathlib revision. I'll need to prove mixed-partial commutativity myself: `pderiv i (pderiv j f) = pderiv j (pderiv i f)`. This follows from the monomial formula: `pderiv_monomial`: pderiv i (monomial s a) = monomial (s − single i 1) (a·s i). Then applying twice: pderiv j (pderiv i (monomial s a)) = monomial (s − single i 1 − single j 1) (a·s i·(s − single i 1) j)... and the commutativity comes from `(s − single i 1) j = s j` when i ≠ j, and when i = j it's s i − 1 — the subtle case i = j is fine since the same i. Hmm, for i = j commutativity is trivial. For i ≠ j: (s − single i 1) j = s j and (s − single j 1) i = s i, and Finsupp subtraction commutes. So pderiv j (pderiv i (monomial s a)) = monomial (s − single i 1 − single j 1) (a·s i·s j) = monomial (s − single j 1 − single i 1) (a·s j·s i) = pderiv i (pderiv j (monomial s a)). Then extend by linearity using induction on the polynomial or using the induction principle `MvPolynomial.induction_on`. 
+
+Alternatively — a cleaner route for the entire crossDerivation construction: define D_X directly as `∑ i, (xVec ⨯₃ polyVec X) i * pderiv i` — wait, actually the multiplication `vᵢ * pderiv i f` — for a DerivationData, D X : A →ₗ[ℝ] A must be an ℝ-linear map. Define `derivField X : A →ₗ[ℝ] A := ∑ i, (vX i) • (pderiv i)` where vX i ∈ A acts on the target A... `pderiv i : A →ₗ[ℝ] A`, and multiplication by vX i: `(vX i) • (pderiv i)` — since A is an A-module over itself, `Algebra.lmul`... hmm, simpler: `LinearMap.mulLeft ℝ (vX i) ∘ₗ (pderiv i : A →ₗ[ℝ] A)`? Actually `(vX i) • (pderiv i : A →ₗ[ℝ] A)` uses the module structure of the codomain A over A — yes, `A →ₗ[ℝ] A` has an A-module structure (smul on codomain), so `(vX i) • (pderiv i : A →ₗ[ℝ] A)` is valid and equals f ↦ vX i * pderiv i f. 
+
+Then bracket_deriv needs: D_X(D_Y f) = ∑ᵢ vXᵢ ∂ᵢ(∑ⱼ vYⱼ ∂ⱼf). This needs pderiv linearity (map_add, map_smul) and leibniz. Then the mixed-partial cancellation needs pderiv_comm. All doable.
+
+But wait — there's an even cleaner mathlib route: mathlib has the *Lie algebra of derivations* and `MvPolynomial` derivations. There's `Mathlib/Algebra/Lie/OfAssociative` — derivations form a Lie algebra; and the vector fields x ↦ v form... Actually there might be a cleaner theorem: the map `X ↦ (x × X)·∇` is a Lie algebra homomorphism so(3) → Der(A). Proving it directly is what we need anyway. Let me just do the direct computation with fin_cases.
+
+Actually — I realize there might be an even smarter approach. Instead of building D_X from pderiv and proving bracket compatibility by brute force, note the general theory: for ANY Lie algebra g and any Lie algebra homomorphism φ: g → Der(A), we get bracket_deriv. The map X ↦ vector field (x×X)·∇: to show it's a homomorphism, we need the Lie bracket of linear vector fields: [(x×X)·∇, (x×Y)·∇] = ((x×X)×Y − (x×Y)×X)·∇ = (x×(X×Y))·∇. The last equality: (a×b)×c − (a×c)×b = a×(b×c) — provable from cross_cross_eq_smul_sub_smul + jacobi... Let me verify: (a×b)×c = (a·c)b − (b·c)a; (a×c)×b = (a·b)c − (c·b)a. Difference: (a·c)b − (b·c)a − (a·b)c + (b·c)a = (a·c)b − (a·b)c = a×(b×c) by cross_cross_eq_smul_sub_smul' with u=a, v=b, w=c: a×(b×c) = (a·c)b − (b·a)c. ✓. So the identity (a×b)×c − (a×c)×b = a×(b×c) is provable via cross_cross_eq_smul_sub_smul twice + ring.
+
+OK here's my plan for So3Model.lean completion:
+
+```
+A := MvPolynomial (Fin 3) ℝ
+xVec : Fin 3 → A := fun i => X i
+polyVec (Xv : Vec3) : Fin 3 → A := fun i => C (Xv i)
+vField (Xv : Vec3) : Fin 3 → A := xVec ⨯₃ polyVec Xv   -- (x × Xv) as a polynomial vector
+derivField (Xv : Vec3) : A →ₗ[ℝ] A := ∑ i, (vField Xv i) • (pderiv i : A →ₗ[ℝ] A)
+```
+
+Wait — careful with smul: `(vField Xv i) • (pderiv i)`: `pderiv i : Derivation ℝ A A`; to make it a linear map `A →ₗ[ℝ] A`, use the coercion `(pderiv i : A →ₗ[ℝ] A)` — does the coercion exist? Derivation has a coercion to... `Derivation R A M` extends `A →ₗ[R] M`? In mathlib, `Derivation` extends `A →ₗ[R] M` (where A is the algebra, seen as module over itself). So `(pderiv i : A →ₗ[ℝ] A)` should work via the parent coercion. Let me double check the structure: `structure Derivation (R : Type*) [CommSemiring R] (A : Type*) [Semiring A] [Algebra R A] (M : Type*) [AddCommMonoid M] [Module A M] [Module R M] [IsScalarTower R A M] extends A →ₗ[R] M where ...`. Yes.
+
+Then D Xv = derivField Xv as the `D` field. leibniz: by linearity over i and Derivation.leibniz of pderiv:
+D_X(fg) = ∑ᵢ vXᵢ (∂ᵢf·g + f·∂ᵢg) = (∑ᵢ vXᵢ∂ᵢf)·g + f·(∑ᵢ vXᵢ∂ᵢg). Since A commutative, f·(vXᵢ∂ᵢg) = vXᵢ·(f·∂ᵢg) ✓.
+
+bracket_deriv: D_X(D_Y f) − D_Y(D_X f) = D_{X×Y} f. 
+
+D_X(D_Y f) = ∑ᵢ vXᵢ · ∂ᵢ(∑ⱼ vYⱼ ∂ⱼf)
+= ∑ᵢ vXᵢ · ∑ⱼ (∂ᵢvYⱼ · ∂ⱼf + vYⱼ · ∂ᵢ∂ⱼf)
+= ∑ᵢⱼ vXᵢ∂ᵢvYⱼ∂ⱼf + ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf.
+
+Key sub-lemmas:
+(a) `∂ᵢ vYⱼ = (eᵢ×Y)ⱼ` as a constant polynomial: pderiv i (vField Y j) = C ((basis i × Y) j)... wait, need the cross with the *basis vector*. ∂ᵢ(x×Y)ⱼ where x is the variable vector. (x×Y)ⱼ = ∑ₖ sₖⱼ xₖ with coefficients sₖⱼ. ∂ᵢ = coefficient of xᵢ = sᵢⱼ = (eᵢ×Y)ⱼ. In mathlib, the crossProduct is ℝ-bilinear and x×Y as function of x is linear: (x×Y) = (crossProduct · Y) x. The coordinate (x×Y)ⱼ = ∑ₖ (crossProduct (eₖ) Y)ⱼ xₖ. This is the expansion lemma: for a polynomial that is a linear combination of variables: p = ∑ₖ cₖ Xₖ, pderiv i p = cᵢ. There's a general fact: pderiv i (∑ₖ C cₖ · X k) = C cᵢ — provable with pderiv_X, pderiv_C_mul, map_add. Fine with a small lemma.
+
+Actually even better: since pderiv i is a derivation and (x×Y) is a linear combination of variables with constant coefficients, I can prove:
+`pderivLinear {c : ι' → ℝ} : pderiv i (∑ k, C (c k) * X k) = C (c i)`. For the cross field: vField Y j = ∑ₖ (crossProduct (basis k) Y) j • X k? Let me define that directly: instead of `xVec ⨯₃ polyVec Y`, define `vField Y := ∑ k, (crossProduct (Pi.basisFun ℝ (Fin 3) k) Y) • xMonom k` hmm. Or simpler: use the crossProduct on A-valued vectors and prove the needed identities directly with fin_cases. Since Fin 3 is tiny, `fin_cases i` gives 3 cases and each cross coordinate is a small linear expression in variables. ring will handle the polynomial arithmetic.
+
+Simplest robust approach: prove the coordinate-wise identities by `fin_cases` and `ring`/`simp [cross_apply]`:
+
+- `vField_X_vec (Xv : Vec3) : vField Xv = ∑ k : Fin 3, C (crossProduct (Pi.basisFun ℝ (Fin 3) k) Xv) ... ` hmm, need the right form: for each j, vField Xv j = ∑ k, C ((crossProduct (basis k) Xv) j) * X k. This is the "linear combination of variables" form. Then pderiv i (vField Xv j) = C ((crossProduct (basis i) Xv) j). Prove with fin_cases or via the general pderiv of a linear form.
+
+Hmm — actually there's an even simpler trick: mathlib's `MvPolynomial.pderiv` on linear forms. Is there a lemma `pderiv_sum_C_mul_X`? Probably not. Let me write a generic helper lemma in So3Model:
+
+```
+lemma pderiv_of_linear_combo {c : Fin 3 → ℝ} {i : Fin 3} :
+    pderiv i (∑ k : Fin 3, (C (c k) : A) * X k) = C (c i) := by
+  rw [map_sum]  -- pderiv i is linear
+  -- ∑ k, pderiv i (C (c k) * X k) = ∑ k, C (c k) * pderiv i (X k)
+  ...
+  simp [pderiv_C_mul, pderiv_X]
+```
+
+`pderiv_X`: pderiv i (X j) = Pi.single i 1 j → for k: pderiv i (X k) = if k = i then 1 else 0 (as ℝ via single). Then ∑ₖ C(c k)·(if k=i then 1 else 0) = C(c i). With `Finset.sum_eq_single i`.
+
+Then `vField Xv j = ∑ k, C ((crossProduct (Pi.basisFun ℝ (Fin 3) k) Xv) j) * X k` — prove by fin_cases j; simp [cross_apply, ...]; each side is a linear combination of X 0, X 1, X 2. Actually the LHS (xVec ⨯₃ polyVec Xv) j expands via cross_apply to e.g. x₁·C(Xv₂) − x₂·C(Xv₁). And RHS: ∑ₖ C((eₖ×Xv)ⱼ) Xₖ. (e₀×Xv)ⱼ etc. This should simplify with `fin_cases j <;> simp [cross_apply] <;> ring`... maybe. The C's: `C (Xv 2) * X 1 − C (Xv 1) * X 2` = `C ((crossProduct (basis 0) Xv) 1) * X 0 + ...` — let me make sure the sum form matches. For j = 0: vField Xv 0 = x₁·C(Xv₂) − x₂·C(Xv₁). RHS = ∑ₖ C((eₖ×Xv)₀)Xₖ = C((e₀×Xv)₀)X₀ + C((e₁×Xv)₀)X₁ + C((e₂×Xv)₀)X₂. (e₀×Xv)₀ = 0; (e₁×Xv)₀ = (e₁×Xv) = (0,1,0)×Xv = ![1·Xv₂ − 0·Xv₁, 0·Xv₀ − 0·Xv₂, 0·Xv₁ − 1·Xv₀] = (Xv₂, 0, −Xv₀). So (e₁×Xv)₀ = Xv₂ ✓. (e₂×Xv)₀ = (0,0,1)×Xv = ![0·Xv₂ − 1·Xv₁, 1·Xv₀ − 0·Xv₂, 0·Xv₁−0·Xv₀] = (−Xv₁, Xv₀, 0). So (e₂×Xv)₀ = −Xv₁ ✓. So RHS = C(Xv₂)X₁ + C(−Xv₁)X₂ = x₁C(Xv₂) − x₂C(Xv₁) ✓ (C(−Xv₁) = −C(Xv₁)).
+
+So the identity holds. With fin_cases j and simp [cross_apply] + ring it should be provable. The ring step: the RHS sum over Fin 3 of C(...)·X k — after fin_cases j and simp, all cross products with basis vectors evaluate to explicit vectors; the sum becomes explicit. `norm_num`/`ring` can handle C-arithmetic? The C terms are opaque (C (Xv 2)) — ring treats them as atoms; the equality is up to associativity/commutativity of multiplication of atoms and the ℝ-linear combination. The coefficient (Xv 2) etc are ℝ values, C is a ring hom, so C(Xv 2)·X 1 = X 1·C(Xv 2) by comm. Fine for ring.
+
+(b) `∑ᵢ vXᵢ ∂ᵢvYⱼ = (vX × Y)ⱼ` — i.e., for each j: ∑ᵢ (x×X)ᵢ·C((eᵢ×Y)ⱼ) = ((x×X)×Y)ⱼ. This is: (u×Y)ⱼ = ∑ᵢ uᵢ(eᵢ×Y)ⱼ for ANY u (with u = x×X). The general identity: u×Y = ∑ᵢ uᵢ·(eᵢ×Y). In A-vector form: `cross_eq_sum_components (u : Fin 3 → A) (Y : Vec3) : (u ⨯₃ polyVec Y) j = ∑ i, u i * C ((crossProduct (basis i) Y) j)`. Provable by fin_cases j; simp [cross_apply]; the LHS: (u×Y)₀ = u₁C(Y₂) − u₂C(Y₁). RHS = ∑ᵢ uᵢC((eᵢ×Y)₀) = u₀·C(0) + u₁·C(Y₂) + u₂·C(−Y₁). ✓ ring.
+
+(c) The mixed-partial commutativity `pderiv_comm`: needed to cancel the second-order terms: ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf − ∑ᵢⱼ vYᵢvXⱼ∂ᵢ∂ⱼf = 0. With ∂ᵢ∂ⱼ = ∂ⱼ∂ᵢ: the second sum = ∑ᵢⱼ vYᵢvXⱼ∂ⱼ∂ᵢf = ∑ᵢⱼ (swap) vYⱼvXᵢ∂ᵢ∂ⱼf = ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf (commutativity of A) ✓. So I need `pderiv_comm (i j) (f : A) : pderiv i (pderiv j f) = pderiv j (pderiv i f)`. Prove via monomial computation + induction_on:
+
+```
+lemma pderiv_pderiv_monomial {i j : Fin 3} {s : Fin 3 →₀ ℕ} {r : ℝ} :
+    pderiv i (pderiv j (monomial s r)) = pderiv j (pderiv i (monomial s r)) := by
+  rw [pderiv_monomial, pderiv_monomial, pderiv_monomial, pderiv_monomial]
+  -- monomial (s - single j 1 - single i 1) (r * s j * (s - single j 1) i)
+  -- vs monomial (s - single i 1 - single j 1) (r * s i * (s - single i 1) j)
+  by_cases hij : i = j <;> ...
+```
+
+Hmm the general monomial form: pderiv_monomial: `pderiv i (monomial s a) = monomial (s − single i 1) (a * s i)`. Note `s i` is ℕ, coerced to R? `(a * s i)` — with a : R and s i : ℕ — there must be a coercion: `(a * s i)` where s i coerced via natCast... In the statement it says `monomial (s - single i 1) (a * s i)`; with variable `a : R` earlier. So it uses natCast of s i. OK.
+
+So pderiv j (pderiv i (monomial s r)) = pderiv j (monomial (s−single i 1) (r·s i)) = monomial ((s−single i 1) − single j 1) ((r·s i)·(s−single i 1) j).
+
+And pderiv i (pderiv j (monomial s r)) = monomial ((s−single j 1) − single i 1) ((r·s j)·(s−single j 1) i).
+
+If i = j: both are monomial (s − single i 1 − single i 1) (r·s i·(s−single i 1) i) — equal trivially.
+If i ≠ j: (s−single i 1) j = s j (since single i 1 vanishes at j when i ≠ j — need `Finsupp.single_eq_of_ne`); (s−single j 1) i = s i. And (s−single i 1)−single j 1 = (s−single j 1)−single i 1 by Finsupp sub associativity/commutativity: `Finsupp.sub_sub`, `Finsupp.sub_comm`? There's `sub_sub_assoc_swap` or use `Finsupp.ext` with `Finsupp.sub_apply`... These are in `Data/Finsupp/Defs` and order stuff. It's doable: `Finsupp.sub_apply`, `Finsupp.single_eq_of_ne`, and `sub_right_comm`.
+
+Then extend from monomials to general polynomials: `MvPolynomial.induction_on` — the version `MvPolynomial.induction_on'` or `induction_on_monomial`? The cleanest: `MvPolynomial.induction_on (p := f) ...`: for monomials use the monomial lemma, for addition use map_add + congr, for multiplication... hmm, induction_on's induction step is multiplication by a variable `f * X n`, which is painful for pderiv_comm. Better to use `induction_on_monomial`? Hmm. Actually there's a cleaner statement: pderiv i (pderiv j f) and pderiv j (pderiv i f) are both ℝ-linear maps in f... no wait, they're not linear in f (pderiv i (pderiv j f) is linear in f since both are linear maps: f ↦ (pderiv i ∘ pderiv j) f. Both sides are values of two ℝ-linear maps A →ₗ[ℝ] A. So it suffices to prove the maps agree: `(pderiv i : A →ₗ[ℝ] A).comp (pderiv j) = (pderiv j).comp (pderiv i)`. By `MvPolynomial.derivation_ext`... no, `derivation_ext` is for derivations. There's a standard lemma: two ℝ-linear maps on MvPolynomial agree iff they agree on monomials: `MvPolynomial.ext` or `MvPolynomial.linearMap_ext`? Hmm — there's `MvPolynomial.induction_on` and also the fact that monomials span: `MvPolynomial.linearMap_ext`? Let me think: `mkDerivationEquiv` exists (σ→A ≃ₗ Derivation). For linear maps in general: is there a lemma that a linear map on MvPolynomial is determined by its values on monomials? There's `MvPolynomial.ext` (extensionality by eval?) and `MvPolynomial.ringHom_ext`, `MvPolynomial.algHom_ext`, `MvPolynomial.linearMap_ext`? I'm not sure `linearMap_ext` exists. Hmm.
+
+Alternative: use `pderiv i` as Derivation — both pderiv i ∘ pderiv j as a map — actually there IS a standard lemma in mathlib: `Derivation` of derivations: in `RingTheory/Derivation/Basic.lean` there might be `comp` for derivations... For MvPolynomial specifically, hmm.
+
+Simplest robust path: prove `pderiv_comm` by `MvPolynomial.induction_on` with the multiplication step: suppose pderiv_comm holds for f and g (i.e. both maps agree on f and g), show it for f*g? No — pderiv_comm for a product does NOT follow from pderiv_comm on factors (the maps are not derivations in the product sense... pderiv i ∘ pderiv j applied to f·g = pderiv i(pderiv j f·g + f·pderiv j g) = ... involves mixed terms; induction on products doesn't preserve the property). Right — so induction_on with `mul` step won't work directly. Instead use the linearity: pderiv_comm holds on monomials (proved), and every polynomial is a ℝ-linear combination of monomials: use `MvPolynomial.as_sum`/`Finsupp.sum` representation: f = ∑ s in f.support, monomial s (coeff s f). Then both sides are sums over support of the monomial case → equal. 
+
+So:
+```
+lemma pderiv_comm (i j : Fin 3) (f : A) : pderiv i (pderiv j f) = pderiv j (pderiv i f) := by
+  classical
+  rw [← f.as_sum]  -- hmm, as_sum: f = ∑ s in f.support, monomial s (f.coeff s)? 
+  ...
+```
+`MvPolynomial.as_sum`: `f.as_sum : f = ∑ i in f.support, monomial i (f.coeff i)`? There's `as_sum` in `MvPolynomial/Basic` or `Finsupp`... Let me check: `MvPolynomial.as_sum` gives `f = f.sum (fun s a => monomial s a)` where sum is over support — actually `sum` on MvPolynomial: `f.sum g = ∑ s in f.support, g s (coeff s f)`. And lemma `as_sum f : f = f.sum monomial`? Something like that. Then:
+  pderiv i (pderiv j f) = pderiv i (pderiv j (f.sum monomial)) = f.sum (fun s a => pderiv i (pderiv j (monomial s a))) by rewriting with map_sum twice — need pderiv i (∑ ...) = ∑ pderiv i ... and pderiv i of monomial·scalar: monomial s a with a : ℝ — the sum is `∑ s, monomial s (coeff s f)` — pderiv is ℝ-linear and this is a finite ℝ-linear combination. rw [map_sum]? map_sum for pderiv i : A →ₗ[ℝ] A — `map_sum (pderiv i)` works if the sum is over the module A... `Finset.sum` of monomials. Then inside: pderiv i (pderiv j (monomial s (coeff s f))). Apply the monomial comm lemma. Then reverse. ✓.
+
+Alternatively define `M := (pderiv i : A →ₗ[ℝ] A).comp (pderiv j) − (pderiv j : A →ₗ[ℝ] A).comp (pderiv i)` and show M = 0 by showing M (monomial s a) = 0 for all monomials, using linearity + as_sum. Equivalent.
+
+Hmm wait, actually simpler: maybe I don't even need pderiv_comm as a global lemma! For the bracket_deriv proof I need ∂ᵢ∂ⱼf with symmetric coefficients vXᵢvYⱼ summed over i,j. I could instead apply pderiv i to D_Y f using the derivation property and collect:
+
+D_X(D_Y f) = ∑ᵢ vXᵢ·pderiv i (∑ⱼ vYⱼ·pderiv j f)
+= ∑ᵢ vXᵢ·(∑ⱼ (pderiv i vYⱼ·pderiv j f + vYⱼ·pderiv i (pderiv j f)))
+
+The second-order term: ∑ᵢⱼ vXᵢvYⱼ pderiv i (pderiv j f). In the commutator D_XD_Y − D_YD_X the second-order part is ∑ᵢⱼ vXᵢvYⱼ pderiv i (pderiv j f) − ∑ᵢⱼ vYᵢvXⱼ pderiv i (pderiv j f). Renaming i↔j in the second: = ∑ᵢⱼ vXᵢvYⱼ ∂ᵢ∂ⱼf − ∑ᵢⱼ vYⱼvXᵢ ∂ⱼ∂ᵢf. Need ∂ᵢ∂ⱼf = ∂ⱼ∂ᵢf pointwise anyway. So pderiv_comm is unavoidable in some form. OK.
+
+(d) `∑ᵢ vXᵢ C((eᵢ×Y)ⱼ) = ((x×X)×Y)ⱼ` — from (b) with u = vField X. ✓
+
+(e) Jacobi-derived vector identity: `(a×b)×c − (a×c)×b = a×(b×c)` for A-valued vectors — prove from cross_cross_eq_smul_sub_smul (twice) + ring. Since crossProduct on A-vectors: works over CommRing A. 
+
+Then: D_X(D_Y f) − D_Y(D_X f) = ∑ⱼ (((x×X)×Y)ⱼ − ((x×Y)×X)ⱼ)·∂ⱼf = ∑ⱼ (x×(X×Y))ⱼ ∂ⱼf = D_{X×Y} f ✓.
+
+So the bracket_deriv proof needs:
+1. `pderiv_comm` (mixed partials on A).
+2. `pderiv_vField_coeff`: pderiv i (vField Y j) = C ((crossProduct (basis i) Y) j).
+3. `cross_eq_sum_coord`: (u ⨯₃ polyVec Y) j = ∑ i, u i * C ((crossProduct (basis i) Y) j) — for u : Fin 3 → A.
+4. `crossJacobi_vec`: for A-valued vectors: (u ⨯₃ polyVec X) ⨯₃ polyVec Y − (u ⨯₃ polyVec Y) ⨯₃ polyVec X = u ⨯₃ polyVec (X ⨯₃ Y)... wait sign: (a×b)×c − (a×c)×b = a×(b×c). With a = u, b = polyVec X, c = polyVec Y: (u×X)×Y − (u×Y)×X = u×(X×Y) ✓ where RHS is u ⨯₃ polyVec (X ⨯₃ Y) (polyVec of the cross product).
+
+Then the assembled D:
+- `derivField_apply`: (derivField X) f = ∑ i, vField X i * pderiv i f.
+- `D_X_D_Y_expand`: (derivField X) ((derivField Y) f) = ∑ i j, vField X i * (pderiv i (vField Y j) * pderiv j f + vField Y j * pderiv i (pderiv j f)).
+
+The rest is sum manipulation — a lot of Finset work but standard. Let me also plan the structure for `D` as a linear map in X: `D : Vec3 →ₗ[ℝ] A →ₗ[ℝ] A`. Define `derivFieldLinear : Vec3 →ₗ[ℝ] A →ₗ[ℝ] A := LinearMap.mk₂ ℝ (fun X => derivField X) ...` — better: define `vFieldLinear : Vec3 →ₗ[ℝ] (Fin 3 → A) := crossProduct.comp (polyVecLinear)`? Hmm. Define `polyVecLinear : Vec3 →ₗ[ℝ] Fin 3 → A := Pi.LinearMap...` Let me think: `fun X i => C (X i)` is ℝ-linear in X: `polyVecLin : Vec3 →ₗ[ℝ] Fin 3 → A` with toFun X := fun i => C (X i). Then `vFieldLin : Vec3 →ₗ[ℝ] Fin 3 → A := crossProduct.comp polyVecLin`? crossProduct : (Fin 3 → A) →ₗ[A] (Fin 3 → A) →ₗ[A] Fin 3 → A. It's A-linear, hence ℝ-linear. So `xVec ⨯₃ ·` is an ℝ-linear map (Fin 3 → A) →ₗ[ℝ] (Fin 3 → A): `(crossProduct xVec)`. Then vFieldLin := (crossProduct xVec).comp polyVecLin... but careful: crossProduct xVec : (Fin 3 → A) →ₗ[A] Fin 3 → A. comp with polyVecLin : Vec3 →ₗ[ℝ] (Fin 3 → A) gives Vec3 →ₗ[ℝ] Fin 3 → A ✓ (restrict scalars automatically).
+
+Then `derivFieldLin : Vec3 →ₗ[ℝ] A →ₗ[ℝ] A` where `derivFieldLin X := ∑ i, (vField X i) • ((pderiv i : A →ₗ[ℝ] A))`. Hmm, `(vField X i) • (pderiv i : A →ₗ[ℝ] A)` — A-module action on A →ₗ[ℝ] A via codomain. That's `LinearMap.instModule`... The codomain A is an A-module, so A →ₗ[ℝ] A is an A-module with (a•L) f = a•(L f) = a * L f ✓. And X ↦ ∑ᵢ vField X i • pderiv i is ℝ-linear since vFieldLin is ℝ-linear. Define it with `LinearMap.mk₂` or as a composition? Cleanest: define as `(LinearMap.sum ... )`... Let me just define `Dlin : Vec3 →ₗ[ℝ] A →ₗ[ℝ] A := { toFun := fun X => ∑ i, ..., map_add' := ..., map_smul' := ... }` with proofs by simp using vFieldLin linearity. 
+
+For the leibniz: `(Dlin X) (f * g) = (Dlin X) f * g + f * (Dlin X) g`:
+∑ᵢ vXᵢ(pderiv i (f·g)) = ∑ᵢ vXᵢ(pderiv i f·g + f·pderiv i g) = ∑ᵢ (vXᵢ∂ᵢf·g + vXᵢ·f·∂ᵢg) = (∑ᵢ vXᵢ∂ᵢf)·g + f·(∑ᵢ vXᵢ∂ᵢg) — using mul_comm to move f: vXᵢ·f·∂ᵢg = f·vXᵢ·∂ᵢg ✓ (comm ring).
+`(pderiv i).leibniz f g` — Derivation.leibniz: `D (f * g) = D f * g + f * D g` ✓ (in the A-module A, smul = mul).
+
+For bracket_deriv: (Dlin X) ((Dlin Y) f) − (Dlin Y) ((Dlin X) f) = (Dlin (X ⨯₃ Y)) f — the computation sketched above.
+
+Note the smul: `vXᵢ • (pderiv i : A →ₗ[ℝ] A)` applied to f: `(vXᵢ • pderiv i) f = vXᵢ • (pderiv i f)` = vXᵢ * pderiv i f (module A action = multiplication). So `derivField_apply`: (Dlin X) f = ∑ i, vField X i * pderiv i f. ✓
+
+Then `crossDerivation : DerivationData stdMetric crossBracket A := { D := Dlin, leibniz := ..., bracket_deriv := ... }`.
+
+Then downstream application lemmas:
+- `so3_ricciContraction`: ricciContraction crossDerivation crossLeviCivita u = (1/2 : ℝ) • gradSq crossDerivation u. Needs ricciForm crossLeviCivita j p = gA ((1/2) * (basis j ⬝ᵥ basis p)). And basis j ⬝ᵥ basis p = if j = p then 1 else 0 (orthonormal). Then ∑ⱼₚ uⱼuₚ·C(½δⱼₚ) = ∑ⱼ uⱼuⱼ·C(½) = C(½)·gradSq = (1/2 : ℝ) • gradSq.
+
+  Note: ricciForm d j p = gA (CurvatureOperator.ricci crossLeviCivita.toCurvatureOperator (basis j) (basis p)). Need the A-lifted version of ricci_eq_half_metric: `ricciForm crossLeviCivita j p = gA ((1/2) * (basis j ⬝ᵥ basis p))` — via unfolding ricciForm and simpa [ricci_eq_half_metric].
+
+  Then the C(½): gA ((1/2) * (basis j ⬝ᵥ basis p)) where (basis j ⬝ᵥ basis p) = δⱼₚ (1 : ℝ)... In A: gA (½·δ) = (1/2 : ℝ) • gA δ? gA is algebraMap so gA(½·δ) = (C ½)·(gA δ). Fine.
+
+- `so3_bochner`: bochner_identity crossDerivation crossLeviCivita u + so3_ricciContraction → `(∑ i, DᵢDᵢ(gradSq u) − D_{∇_{eᵢ}eᵢ}(gradSq u)) = 2·hessSq + 2·fieldInner(gradField)(gradLapField) + gradSq u`. In the so(3) model, ∇_{eᵢ}eᵢ = ½(eᵢ×eᵢ) = 0! Nice simplification: D_{∇_{eᵢ}eᵢ} = D₀ = 0. So `lap crossDerivation crossLeviCivita u = ∑ᵢ DᵢDᵢu`... wait lap u = ∑ᵢ Hᵢᵢ = ∑ᵢ(DᵢDᵢu − D_{∇_{eᵢ}eᵢ}u) = ∑ᵢ DᵢDᵢu since ∇_{eᵢ}eᵢ = 0. But careful — the LHS of bochner_identity as stated: `∑ i, (Dᵢ(Dᵢ(gradSq u)) − D_{∇_{eᵢ}eᵢ}(gradSq u))` — this is lap(gradSq u) exactly. So the instantiated so(3) statement: `lap crossDerivation crossLeviCivita (gradSq crossDerivation u) = 2 * hessSq crossDerivation crossLeviCivita u + 2 * fieldInner (gradField crossDerivation u) (gradLapField crossDerivation crossLeviCivita u) + gradSq crossDerivation u`. Wait — LHS of bochner_identity uses the raw sum, so I can state via that or simplify. Let me keep the raw form matching bochner_identity, then a second corollary with lap.
+
+  Hmm wait, there's a subtlety with `lap`: lap u = ∑ᵢ Hᵢᵢ. The LHS sum `∑ i, DᵢDᵢ(gradSq u) − D_{∇_{eᵢ}eᵢ}(gradSq u)` = ∑ᵢ (H(gradSq u)ᵢᵢ) = lap(gradSq u). Good.
+
+- Non-vacuity: `sectional_nonflat` ✓ (already there). Maybe also `crossDerivation_nontrivial`: `Dlin (basis 1) (X 0) = -X 2`? Let me compute: vField e₁ = x×e₁ = (−x₂, 0, x₀). D_{e₁}X₀ = ∑ᵢ vᵢ∂ᵢX₀ = v₀·1 = −x₂. So `(Dlin (basis 1)) (X 0) = − X 2`. Concrete nontriviality witness ✓. Also the bracket identity instance: D_{e₀}D_{e₁}X₀ − D_{e₁}D_{e₀}X₀ = D_{e₀×e₁}X₀ = D_{e₂}X₀ = x₁. Good sanity checks.
+
+- Also, the second half of the milestone "Ric = ½g": ricci_eq_half_metric via ricciSum + basis: 
+  `CurvatureOperator.ricci K X Y = ricciSum (Pi.basisFun ℝ (Fin 3)) K X Y = ∑ i, (Pi.basisFun ℝ (Fin 3)).repr (K (e i) X Y) i = ∑ i, (K (e i) X Y) i` (repr of Pi.basisFun is the identity map — need lemma: `(Pi.basisFun R ι).repr x i = x i`? Let me check mathlib: `Pi.basisFun_repr`? There's `basisFun_repr` or `repr_self`... Let me search for the lemma. Actually `Pi.basisFun R ι` is defined as `Basis.ofEquivFun` (LinearEquiv.refl), so `(Pi.basisFun R ι).repr = LinearEquiv.refl _ _`. There should be a simp lemma `basisFun_repr_apply` or maybe it just simplifies by unfolding: `(Pi.basisFun ℝ (Fin 3)).repr v` = `v` defeq? `Basis.ofEquivFun (LinearEquiv.refl R (ι → R))` — repr = that equiv = refl, so `(Pi.basisFun ...).repr v = v` defeq? LinearEquiv.refl is identity — probably `rfl` after unfolding. So ∑ᵢ (K (e i) X Y) i = ∑ᵢ (−¼·((eᵢ×X)×Y))ᵢ.
+
+  Then use cross_cross_eq_smul_sub_smul: ((eᵢ×X)×Y) = ((eᵢ×X) ⬝ᵥ Y)·... wait that's for the outer cross: (u×v)×w = (u·w)v − (v·w)u with u = eᵢ×X, v = Y, w = Y: ((eᵢ×X)×Y) = ((eᵢ×X)⬝ᵥY)·Y − (Y⬝ᵥY)·(eᵢ×X) = ⟨eᵢ×X, Y⟩Y − |Y|²(eᵢ×X).
+
+  Coordinate i: ((eᵢ×X)×Y)ᵢ = ⟨eᵢ×X,Y⟩Yᵢ − |Y|²(eᵢ×X)ᵢ.
+
+  ∑ᵢ ⟨eᵢ×X,Y⟩Yᵢ: ∑ᵢ Yᵢ⟨eᵢ×X,Y⟩ = ⟨∑ᵢ Yᵢeᵢ×X, Y⟩ = ⟨Y×X, Y⟩ = 0 (dot of Y with something... ⟨Y×X,Y⟩ = 0 ✓ dot_self_cross).
+
+  ∑ᵢ |Y|²(eᵢ×X)ᵢ = |Y|²·(∑ᵢ (eᵢ×X)ᵢ) = |Y|² · (e₀×X + e₁×X + e₂×X)₀ + ... = |Y|²·((e₀×X)₀+(e₁×X)₀+(e₂×X)₀) = |Y|²·(0 + X₂ − X₁)... hmm that's not directly ⟨X,Y⟩ related. Wait let me redo: Ric(X,Y) = ∑ᵢ ⟨R(eᵢ,X)Y, eᵢ⟩ = ∑ᵢ ⟨−¼((eᵢ×X)×Y), eᵢ⟩ = −¼∑ᵢ⟨(eᵢ×X)×Y, eᵢ⟩.
+
+  ⟨(eᵢ×X)×Y, eᵢ⟩ = ⟨(eᵢ×X)×Y, eᵢ⟩ — use triple product: ⟨a×b,c⟩ = ⟨b, c×a⟩? triple_product_permutation: u⬝ᵥ(v⨯w) = v⬝ᵥ(w⨯u). So ⟨(eᵢ×X)×Y, eᵢ⟩ = ⟨Y, eᵢ×(eᵢ×X)⟩. Hmm. Alternatively use the expansion ((eᵢ×X)×Y) = ⟨eᵢ×X,Y⟩Y − |Y|²(eᵢ×X) and dot with eᵢ: ⟨(eᵢ×X)×Y,eᵢ⟩ = ⟨eᵢ×X,Y⟩⟨Y,eᵢ⟩ − |Y|²⟨eᵢ×X,eᵢ⟩ = ⟨eᵢ×X,Y⟩Yᵢ − |Y|²·0 (dot_self_cross) = Yᵢ⟨eᵢ×X,Y⟩.
+
+  So Ric(X,Y) = −¼∑ᵢ Yᵢ⟨eᵢ×X,Y⟩ = −¼⟨∑ᵢ Yᵢ(eᵢ×X), Y⟩ = −¼⟨Y×X, Y⟩... wait ∑ᵢ Yᵢ(eᵢ×X) = (∑ᵢ Yᵢeᵢ)×X = Y×X. ⟨Y×X,Y⟩ = 0. That gives Ric = 0?! That contradicts the earlier computation which gave ½⟨X,Y⟩. Let me recheck my earlier hand computation. Earlier I computed T = ∑ᵢ⟨(eᵢ×X)×Y, eᵢ⟩ = −2⟨X,Y⟩ via the expansion (eᵢ×X)×Y = X⟨Y,eᵢ⟩ − eᵢ⟨Y,X⟩. Let me recheck that expansion: vector triple product A×(B×C) = B(A·C) − C(A·B). Here (eᵢ×X)×Y: it's (A×B)×C form with A=eᵢ, B=X, C=Y: (A×B)×C = B(A·C) − A(B·C) = X(eᵢ·Y) − eᵢ(X·Y). ✓. So ⟨(eᵢ×X)×Y, eᵢ⟩ = ⟨X,eᵢ⟩⟨Y,eᵢ⟩ − ⟨eᵢ,eᵢ⟩⟨X,Y⟩ = XᵢYᵢ − ⟨X,Y⟩. Sum: ∑ᵢ XᵢYᵢ − 3⟨X,Y⟩ = ⟨X,Y⟩ − 3⟨X,Y⟩ = −2⟨X,Y⟩. So Ric = −¼·(−2⟨X,Y⟩) = ½⟨X,Y⟩ ✓.
+
+  Where did my second computation go wrong? ⟨(eᵢ×X)×Y,eᵢ⟩ via cross_cross_eq_smul_sub_smul: (u×v)×w = (u·w)v − (v·w)u with u=eᵢ×X, v=Y, w=Y: = (eᵢ×X · Y)Y − (Y·Y)(eᵢ×X) ✓. Dot with eᵢ: (eᵢ×X·Y)(Y·eᵢ) − |Y|²(eᵢ×X·eᵢ) = Yᵢ⟨eᵢ×X,Y⟩ − |Y|²·0 = Yᵢ⟨eᵢ×X,Y⟩. Hmm — but this contradicts the previous: XᵢYᵢ − ⟨X,Y⟩ vs Yᵢ⟨eᵢ×X,Y⟩. Let me test i=1, X=e₁, Y=e₂: XᵢYᵢ − ⟨X,Y⟩ = 0 − 0 = 0. Yᵢ⟨eᵢ×X,Y⟩ = (e₂)₁·⟨e₁×e₁, e₂⟩ = 0·0 = 0 ✓. i=1, X=e₀, Y=e₁: XᵢYᵢ−⟨X,Y⟩ = 0−0 = 0. Yᵢ⟨e₁×e₀,e₁⟩ = 1·⟨−e₂,e₁⟩ = 0 ✓. i=2, X=e₀, Y=e₁: XᵢYᵢ−⟨X,Y⟩ = 0−0=0; Yᵢ⟨e₂×e₀,e₁⟩ = 1·⟨e₁,e₁⟩ = 1. ✗!! So the two computations disagree: ⟨(e₂×e₀)×e₁, e₂⟩: (e₂×e₀)×e₁ = e₁×e₁ = 0. So ⟨0, e₂⟩ = 0. My first formula gave 0 ✓ (XᵢYᵢ−⟨X,Y⟩ = 0·1−0 = 0). The second formula: Yᵢ⟨eᵢ×X,Y⟩ = (e₁)₂·⟨e₂×e₀,e₁⟩ = 0·1 = 0! I made an arithmetic error: i=2 means Yᵢ = (e₁)₂ = 0, not 1. ✓ OK so both agree. So ∑ᵢ Yᵢ⟨eᵢ×X,Y⟩: let me compute: ∑ᵢ Yᵢ⟨eᵢ×X,Y⟩. For the general X,Y: ⟨eᵢ×X,Y⟩ = eᵢ·(X×Y) (cyclic). So Yᵢ⟨eᵢ×X,Y⟩ = Yᵢ(eᵢ·(X×Y)) = Yᵢ·(X×Y)ᵢ. Sum: ∑ᵢ Yᵢ(X×Y)ᵢ = Y·(X×Y) = 0 ✓. But the first computation says ∑ᵢ (XᵢYᵢ − ⟨X,Y⟩) = ⟨X,Y⟩ − 3⟨X,Y⟩ = −2⟨X,Y⟩ ≠ 0 in general! CONTRADICTION.
+
+  Let me recompute the first: (eᵢ×X)×Y = X(eᵢ·Y) − eᵢ(X·Y). Check with i=2, X=e₀, Y=e₁: X(eᵢ·Y) − eᵢ(X·Y) = e₀·0 − e₂·0 = 0 ✓. i=0, X=e₂, Y=e₁: (e₀×e₂)×e₁ = (−e₁)×e₁ = 0. Formula: X(e₀·Y) − e₀(X·Y) = e₂·0 − e₀·0 = 0 ✓. i=0, X=e₁, Y=e₂: (e₀×e₁)×e₂ = e₂×e₂ = 0. Formula: e₁(e₀·e₂) − e₀(e₁·e₂) = 0 ✓. i=0, X=e₂, Y=e₂: (e₀×e₂)×e₂ = (−e₁)×e₂ = −(e₁×e₂) = −e₀. Formula: X(e₀·Y) − e₀(X·Y) = e₂·0 − e₀·1 = −e₀ ✓.
+
+  Now dot with eᵢ: ⟨X(eᵢ·Y), eᵢ⟩ − ⟨eᵢ, eᵢ⟩⟨X,Y⟩ = XᵢYᵢ − ⟨X,Y⟩. Sum over i: ⟨X,Y⟩ − 3⟨X,Y⟩ = −2⟨X,Y⟩. For X=e₂,Y=e₂: −2. Direct: ⟨(eᵢ×X)×Y, eᵢ⟩ for i=0: ⟨(e₀×e₂)×e₂, e₀⟩ = ⟨−e₀, e₀⟩ = −1; i=1: ⟨(e₁×e₂)×e₂, e₁⟩ = ⟨e₀×e₂, e₁⟩ = ⟨−e₁, e₁⟩ = −1; i=2: ⟨(e₂×e₂)×e₂, e₂⟩ = 0. Total −2 ✓ matches.
+
+  Second formula check for X=e₂, Y=e₂: ∑ᵢ Yᵢ⟨eᵢ×X, Y⟩ = ∑ᵢ Yᵢ⟨eᵢ×e₂, e₂⟩. i=0: Y₀=0 → 0. i=1: Y₁=0 → 0. i=2: Y₂=1·⟨e₂×e₂,e₂⟩ = 0. Total 0 ≠ −2. ✗!! So the SECOND computation is wrong somewhere. Let me recheck the identity ⟨(eᵢ×X)×Y, eᵢ⟩ = Yᵢ⟨eᵢ×X, Y⟩: from cross_cross_eq_smul_sub_smul: (u×v)×w = (u·w)v − (v·w)u. Careful: the theorem says `u ⨯₃ v ⨯₃ w = (u ⬝ᵥ w) • v - (v ⬝ᵥ w) • u` — note `u ⨯₃ v ⨯₃ w` parses as (u×v)×w ✓ (left assoc). So (eᵢ×X)×Y = (eᵢ·Y)X − (X·Y)eᵢ. AH — I swapped u and v! u = eᵢ, v = X: (eᵢ×X)×Y = (eᵢ·Y)X − (X·Y)eᵢ. Dot with eᵢ: (eᵢ·Y)(X·eᵢ) − (X·Y)(eᵢ·eᵢ) = YᵢXᵢ − ⟨X,Y⟩. Sum: ⟨X,Y⟩ − 3⟨X,Y⟩ = −2⟨X,Y⟩ ✓. Consistent. Good — so Ric(X,Y) = ½⟨X,Y⟩ confirmed by two routes.
+
+  In Lean: ∑ᵢ ((eᵢ×X)×Y)ᵢ = ∑ᵢ (YᵢXᵢ − ⟨X,Y⟩) = ⟨X,Y⟩ − 3⟨X,Y⟩ = −2⟨X,Y⟩, so Ric = −¼·(−2)⟨X,Y⟩ = ½⟨X,Y⟩. 
+
+  The Lean proof: 
+  - rw [CurvatureOperator.ricci_eq_ricciSum (Pi.basisFun ℝ (Fin 3)) ...] — need the module basis of Vec3 = Fin 3 → ℝ: Pi.basisFun ℝ (Fin 3) : Module.Basis (Fin 3) ℝ (Fin 3 → ℝ). Is there a Module.Basis instance? MetricData's basis field was `Pi.basisFun ℝ (Fin 3)` typed as `Module.Basis ι ℝ V`? In So3Model stdMetric: `basis := Pi.basisFun ℝ (Fin 3)` and MetricData's basis field type — need to check MetricData.lean. The `ricci_eq_ricciSum` requires `e : Module.Basis ι R V`. If MetricData.basis : Module.Basis ι ℝ V then fine — `CurvatureOperator.ricci_eq_ricciSum stdMetric.basis K X Y`.
+
+  Let me check MetricData.lean for the basis field type.
+
+Also check: does `CurvatureOperator.ricci` need `[FiniteDimensional ℝ V]`? It uses LinearMap.trace which needs `[Module.Finite R V]` + `[Module.Free R V]`? `LinearMap.trace R V` requires `[Module.Finite R V] [Module.Free R V]`. Vec3 has these instances ✓. And `ricci_eq_ricciSum` needs the basis — but trace_eq_sum_diag needs the Module.Basis... fine.
+
+Then in Lean:
+  ricciSum (Pi.basisFun ...) K X Y = ∑ i, (Pi.basisFun ℝ (Fin 3)).repr (K (e i) X Y) i.
+  (Pi.basisFun ℝ ι).repr — hmm, what is it? `Pi.basisFun R ι := Basis.ofEquivFun (LinearEquiv.refl R (ι → R))`. Its repr is the refl equiv, so repr v i = v i. There might be a simp lemma; or just unfold Pi.basisFun and simp. Let me test in a scratch file.
+
+  Then K (e i) X Y = crossLeviCivita.toCurvatureOperator (e i) X Y = (meanConnection crossBracket).curvature (e i) X Y (via toCurvatureOperator_apply → d.nabla... hmm for the mean connection the toCurvatureOperator_apply gives the definitional form. Actually for the mean connection, use `mean_curvature_apply crossBracket (e i) X Y` after rewriting: crossLeviCivita.toCurvatureOperator = (meanConnection crossBracket).toCurvatureOperator? Since crossLeviCivita.nabla = (meanConnection crossBracket).nabla and the torsion_free/lie match: LeviCivitaData.toCurvatureOperator d = AbstractConnection.toCurvatureOperator {nabla := d.nabla, lie := b, torsion_free := d.torsion_free}. Hmm — is that equal to (meanConnection crossBracket).toCurvatureOperator? The latter has lie := crossBracket and nabla := meanConnection nabla, torsion_free := meanConnection's. The former: lie := crossBracket, nabla := crossLeviCivita.nabla = (meanConnection crossBracket).nabla, torsion_free := crossLeviCivita.torsion_free = (meanConnection crossBracket).torsion_free. So they're propositionally equal but the struct includes a Prop field (torsion_free) — proof irrelevance makes them equal, but `toCurvatureOperator` is `noncomputable def ... where toTrilinear := c.curvature` and `curvature` depends on nabla and lie only (not torsion_free? let me check AbstractConnection.curvature definition — it's `nabla X (nabla Y Z) − nabla Y (nabla X Z) − nabla (lie.bracket X Y) Z`? The torsion_free field is used in curvature_skew but the toTrilinear is c.curvature which is defined from nabla+lie). So `crossLeviCivita.toCurvatureOperator = (meanConnection crossBracket).toCurvatureOperator` should hold by ext + rfl... Let me look at the curvature def. From the earlier read: line 248: toCurvatureOperator : toTrilinear := c.curvature. And curvature presumably = curvatureEndo stuff from nabla & lie. Then `crossLeviCivita.toCurvatureOperator = (meanConnection crossBracket).toCurvatureOperator` — ext X Y Z; simp [LeviCivitaData.toCurvatureOperator, AbstractConnection.toCurvatureOperator, AbstractConnection.curvature] — both sides unfold to the same nabla expression since crossLeviCivita.nabla = (meanConnection crossBracket).nabla definitionally? crossLeviCivita.nabla := (meanConnection crossBracket).nabla — yes definitionally equal. So `rfl`-ish after ext. Actually even better: `mean_curvature_apply crossBracket (e i) X Y : (meanConnection crossBracket).curvature (e i) X Y = −¼•((e i × X) × Y)`. Then after `rw [toCurvatureOperator_apply]`... the toCurvatureOperator_apply lemma gives the abstract curvature of c = {nabla := d.nabla, ...} — `(crossLeviCivita.toCurvatureOperator) X Y Z = d.nabla X (d.nabla Y Z) − d.nabla Y (d.nabla X Z) − d.nabla (b.bracket X Y) Z`. With d.nabla = meanConnection nabla, this equals (meanConnection crossBracket).curvature X Y Z if curvature is defined that way. Let me check AbstractConnection.curvature_apply in ConnectionAdapter (around line 200-240). I saw `curvature_skew` and `curvature_bianchi`; let me read the definition of curvature.
+
+Then: ∑ᵢ (−¼·((eᵢ×X)×Y))ᵢ = −¼·∑ᵢ ((eᵢ×X)×Y)ᵢ and ∑ᵢ ((eᵢ×X)×Y)ᵢ = ∑ᵢ (XᵢYᵢ − ⟨X,Y⟩) = −2⟨X,Y⟩ — need `fin_cases`-free proof: use cross_cross_eq_smul_sub_smul for each i: ((eᵢ×X)×Y)ᵢ = ((eᵢ·Y)X − (X·Y)eᵢ)ᵢ = (eᵢ·Y)Xᵢ − (X·Y)(eᵢ)ᵢ = YᵢXᵢ − (X·Y)·1. Sum over i: ∑ᵢ YᵢXᵢ − 3(X·Y) = X·Y − 3(X·Y) = −2(X·Y).
+
+  The step ∑ᵢ (YᵢXᵢ) = X·Y = ∑ᵢ XᵢYᵢ: `Finset.sum_congr` + mul_comm, and `dotProduct` def: X ⬝ᵥ Y = ∑ᵢ XᵢYᵢ. And ∑ᵢ (X·Y)·1 = 3·(X·Y): `Finset.sum_const` with Fintype.card (Fin 3) = 3. And (eᵢ)ᵢ = 1: `Pi.basisFun_apply`: (Pi.basisFun ℝ (Fin 3)) i i = 1 — simp lemma exists (basisFun_apply: basisFun R ι i j = if i = j then 1 else 0? actually `Pi.basisFun_apply` or `basisFun_apply`). Let me check: In mathlib `Pi.basisFun`: `basisFun_apply : basisFun R ι i j = if i = j then 1 else 0`? There's `Pi.basisFun_apply`... I'll check. And (eᵢ·Y) = Yᵢ.
+
+  OK. So the whole ricci_eq_half_metric proof is feasible with:
+  1. `ricci_eq_ricciSum` rewrite.
+  2. `(Pi.basisFun ℝ (Fin 3)).repr v i = v i` — hopefully simp.
+  3. K (e i) X Y = −¼((eᵢ×X)×Y): rewrite toCurvatureOperator_apply → expand nabla → meanConnection_nabla → ring/jacobi. Actually there's the existing `curvature_eq_quarter_doubleBracket` in So3Model (already proved, no sorry): `crossLeviCivita.toCurvatureOperator X Y Z = (−¼)•((X ⨯₃ Y) ⨯₃ Z)` ✓ — use that directly!
+  4. cross_cross_eq_smul_sub_smul for ((eᵢ×X)×Y).
+  5. dot product sums.
+
+Good. Now the plan for `crossDerivation` — I sketched it. Also need `A = MvPolynomial (Fin 3) ℝ` has `CommRing` + `Algebra ℝ A` ✓ (MvPolynomial over ℝ is an ℝ-algebra).
+
+One more consideration: BochnerIdentity's DerivationData expects `D : V →ₗ[ℝ] A →ₗ[ℝ] A`. With A = MvPolynomial (Fin 3) ℝ. ✓.
+
+Now — IMPORTANT check on the crossDerivation bracket_deriv: our D uses vField = x×X on polynomials in ℝ³. The bracket compatibility: D_XD_Y − D_YD_X = D_{X×Y}. We verified [v_X,v_Y] = v_{X×Y} symbolically. In Lean, the computation: D_X(D_Y f) = ∑ᵢ vXᵢ ∂ᵢ(∑ⱼ vYⱼ ∂ⱼ f).
+
+Steps in Lean:
+- `Dlin_apply`: (Dlin X) f = ∑ i, vField X i * pderiv i f. (unfold Dlin; simp)
+- `Dlin_Dlin_expand`: (Dlin X) ((Dlin Y) f) = ∑ i, ∑ j, (vField X i * pderiv i (vField Y j) * pderiv j f + vField X i * vField Y j * pderiv i (pderiv j f)). Proof: Dlin_apply, then map_sum of (vField X i • pderiv i) — hmm (Dlin X) = ∑ᵢ vXᵢ • pderiv i as linear map; applied to Dlin Y f: (∑ᵢ vXᵢ•pderiv i) (Dlin Y f) = ∑ᵢ (vXᵢ•pderiv i)(Dlin Y f) = ∑ᵢ vXᵢ·pderiv i (∑ⱼ vYⱼ∂ⱼf). Then pderiv i of the sum: ∑ⱼ pderiv i (vYⱼ ∂ⱼf) = ∑ⱼ (pderiv i vYⱼ·∂ⱼf + vYⱼ·pderiv i (pderiv j f)) by leibniz. Then distribute vXᵢ over the sum; ring.
+
+- `pderiv_comm` as above.
+- Then second-order cancellation: `∑ i j, vX i * vY j * pderiv i (pderiv j f) = ∑ i j, vX i * vY j * pderiv j (pderiv i f)` via pderiv_comm. Then in D_XD_Y − D_YD_X the second-order parts: ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf − ∑ᵢⱼ vYᵢvXⱼ∂ᵢ∂ⱼf = ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf − ∑ᵢⱼ vYᵢvXⱼ∂ⱼ∂ᵢf (pderiv_comm) = ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf − ∑ᵢⱼ vXⱼvYᵢ∂ᵢ∂ⱼf (rename i↔j in second) = ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf − ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf (comm) = 0.
+
+  To implement "rename i↔j": `Finset.sum_comm` gives ∑ᵢⱼ a i j = ∑ᵢⱼ a j i. So second sum = ∑ᵢⱼ vYⱼvXᵢ∂ⱼ∂ᵢf... hmm careful: ∑ᵢⱼ vYᵢvXⱼ∂ⱼ∂ᵢf → sum_comm → ∑ᵢⱼ vYⱼvXᵢ∂ᵢ∂ⱼf. Then vYⱼvXᵢ = vXᵢvYⱼ by mul_comm, ∂ᵢ∂ⱼf via pderiv_comm... wait already used pderiv_comm once: original second-order of D_YD_X is ∑ᵢⱼ vYᵢvXⱼ∂ᵢ∂ⱼf (pderiv i (pderiv j f)). Apply pderiv_comm: ∂ᵢ∂ⱼf = ∂ⱼ∂ᵢf. Sum_comm: = ∑ᵢⱼ vYⱼvXᵢ∂ᵢ∂ⱼf. mul_comm: = ∑ᵢⱼ vXᵢvYⱼ∂ᵢ∂ⱼf = first sum. ✓ Then cancel.
+
+- First-order part of the commutator: ∑ᵢⱼ vXᵢ∂ᵢvYⱼ∂ⱼf − ∑ᵢⱼ vYᵢ∂ᵢvXⱼ∂ⱼf = ∑ⱼ (∑ᵢ vXᵢ∂ᵢvYⱼ)∂ⱼf − ∑ⱼ (∑ᵢ vYᵢ∂ᵢvXⱼ)∂ⱼf.
+  By sub-lemma (b)+(d): ∑ᵢ vXᵢ ∂ᵢ(vYⱼ) = ((x×X)×Y)ⱼ. Similarly ∑ᵢ vYᵢ∂ᵢ(vXⱼ) = ((x×Y)×X)ⱼ. Then commutator = ∑ⱼ (((x×X)×Y) − ((x×Y)×X))ⱼ ∂ⱼf = ∑ⱼ (x×(X×Y))ⱼ ∂ⱼf (by crossJacobi_vec) = D_{X×Y} f ✓.
+
+So sub-lemmas needed (all over A = MvPolynomial (Fin 3) ℝ):
+  (A1) `vField_pderiv_coeff`: pderiv i (vField Y j) = C ((basis i ⨯₃ Y) j). [via vField_lin_combo + pderiv_linear_combo]
+  (A2) `vField_lin_combo`: vField Y j = ∑ k, C ((basis k ⨯₃ Y) j) * X k.
+  (A3) `cross_coord_eq_sum`: (u ⨯₃ polyVec Y) j = ∑ k, u k * C ((basis k ⨯₃ Y) j).
+  (A4) `pderiv_comm` on A.
+  (A5) `crossJacobi_vec` (A-valued): (u ⨯₃ polyVec X) ⨯₃ polyVec Y − (u ⨯₃ polyVec Y) ⨯₃ polyVec X = u ⨯₃ polyVec (X ⨯₃ Y).
+  (A6) `pderiv_linear_combo`: pderiv i (∑ k, C (c k) * X k) = C (c i).
+
+Where (A3) with u = vField X gives (A2'): ∑ᵢ vXᵢ∂ᵢvYⱼ = ∑ᵢ vXᵢ·C((eᵢ×Y)ⱼ) = (vField X ⨯₃ polyVec Y) j = ((x×X)×Y)ⱼ. ✓ chain: pderiv i (vField Y j) = C ((basis i ⨯₃ Y) j) via (A2)+(A6); then ∑ᵢ vXᵢ·C((basis i ⨯₃ Y) j) = (vX ⨯₃ polyVec Y) j via (A3) with u = vX.
+
+Now — implementing all of this in Lean is substantial but very doable. The main risk: pderiv API friction. Let me be careful about:
+- `pderiv i : Derivation ℝ A A` — coercions to linear map. In older mathlib, Derivation extends A →ₗ[R] M. To apply: `(pderiv i) f` works via coercion to function. map_sum: `map_sum (pderiv i)` — needs the AddMonoidHom structure. Should work since Derivation is a linear map.
+- `(pderiv i).leibniz f g : pderiv i (f * g) = pderiv i f * g + f * pderiv i g` — note: for M = A, the module action is multiplication; the leibniz field: `D (a * b) = a • D b + b • D a` where • is A-action on M = A → multiplication. In the pderiv file: `theorem pderiv_mul {i} {f g} : pderiv i (f * g) = pderiv i f * g + f * pderiv i g := by simp only [(pderiv i).leibniz f g, smul_eq_mul, mul_comm, add_comm]`. So use pderiv_mul ✓ (exactly the form I need).
+
+- smul on linear maps: `(vField X i) • (pderiv i : A →ₗ[ℝ] A)` — the instance: LinearMap has SMul by A if codomain is A-module... `LinearMap.instSMul`? For `M = A →ₗ[ℝ] A` with A-module structure on codomain A: `SMul A M`? In mathlib, `LinearMap.instModule` provides Module S (M →ₗ[R] N) when N is an S-module with IsScalarTower? Something like that. Should exist: `(v • L) m = v • L m`. The simp lemma: `LinearMap.smul_apply`. ✓ (the file BochnerIdentity uses `(1 / 2 : ℝ) • ...` on A elements mostly; but in So3Model crossLeviCivita uses `(1 / 2 : ℝ) • b.bracket X Y` as a Vec3. For linear maps smul — `map_smul` etc. I'll test.)
+
+Actually to reduce friction, define Dlin directly via `LinearMap.mk₂ ℝ (fun X f => ∑ i, vField X i * pderiv i f)` with map_add'/map_smul' proved by sum manipulation — avoids the A-module-on-linear-maps instance. Hmm, but then Dlin X is not a "nice" linear map object... it is fine: `LinearMap.mk₂ ℝ Dfun ... : V →ₗ[ℝ] A →ₗ[ℝ] A`? mk₂ builds a bilinear map V →ₗ A →ₗ A — wait, mk₂ ℝ gives `V →ₗ[ℝ] A →ₗ[ℝ] A`? LinearMap.mk₂' : (M →ₗ N →ₗ P)... yes `LinearMap.mk₂ R f : M →ₗ[R] N →ₗ[R] P` with linearity in both slots, first slot via V module... but our Dfun is linear in X (ℝ-linear in the vector field argument) and linear in f. mk₂ with R = ℝ, M = V, N = A, P = A: f : V → A → A, additivity in each slot and ℝ-smul in each slot. Dfun (X₁+X₂) f = ∑ᵢ (x×(X₁+X₂))ᵢ∂ᵢf = ∑ᵢ (x×X₁)ᵢ∂ᵢf + ∑ᵢ (x×X₂)ᵢ∂ᵢf ✓ (crossProduct ℝ-bilinear → A-bilinear by extension of scalars). smul in X: x×(cX) = c(x×X) ✓. smul in f: Dfun X (c•f) = ∑ᵢ vᵢ∂ᵢ(cf) = c·Dfun X f ✓ (pderiv i is ℝ-linear: map_smul). Good — all provable by simp [vField, map_sum, map_smul, mul_smul...]. Hmm, one subtlety: crossProduct on A-vectors: `(xVec ⨯₃ polyVec X)` — crossProduct : (Fin 3 → A) →ₗ[A] ... — the instance crossProduct is A-linear, so ℝ-linearity in X follows through polyVec which is ℝ-linear. If I define vField via the A-linear crossProduct, then Dfun is automatically ℝ-linear in X: `(xVec ⨯₃ polyVec (X₁+X₂)) = (xVec ⨯₃ polyVec X₁) + (xVec ⨯₃ polyVec X₂)` via map_add (crossProduct xVec) — simp should handle: simp [vField, polyVec, map_add] or `rw [map_add]`.
+
+OK. Also — one more check: does `Pi.basisFun` exist as `Pi.basisFun R ι : Basis ι R (ι → R)`? In So3Model stdMetric it was used as the MetricData basis, so yes: `Pi.basisFun ℝ (Fin 3)`.
+
+And `Module.Basis` — in this repo MetricData.basis has type...? Let me check MetricData.lean. Also whether `ricci_eq_ricciSum` accepts `stdMetric.basis`. Let me read MetricData.lean quickly.
+
+Also potential wrinkle: `CurvatureOperator.ricci_eq_ricciSum` requires `[Fintype ι] [DecidableEq ι]` and a `Module.Basis ι R V`. stdMetric.basis : Module.Basis (Fin 3) ℝ Vec3 presumably ✓.
+
+Then also the meanConnection curvature: `(crossLeviCivita.toCurvatureOperator) X Y Z = −¼((X×Y)×Z)` — already proved as curvature_eq_quarter_doubleBracket ✓.
+
+For ricci_eq_half_metric:
+```
+lemma ricci_eq_half_metric (X Y : Vec3) :
+    CurvatureOperator.ricci crossLeviCivita.toCurvatureOperator X Y = (1/2) * (X ⬝ᵥ Y) := by
+  rw [CurvatureOperator.ricci_eq_ricciSum stdMetric.basis crossLeviCivita.toCurvatureOperator X Y]
+  -- = ∑ i, (stdMetric.basis).repr (K (e i) X Y) i
+  -- basis repr is identity: need lemma. Pi.basisFun: repr = LinearEquiv.refl? 
+```
+
+Let me check `Pi.basisFun` in this mathlib: `Mathlib/LinearAlgebra/Basis.lean` or `PiLp`... `Pi.basisFun (R : Type*) (ι : Type*) : Basis ι R (ι → R)` defined as `Basis.ofEquivFun (LinearEquiv.refl R (ι → R))`. `Basis.ofEquivFun e` has repr = e? `Basis.ofEquivFun : (ι → R) ≃ₗ[R] M → Basis ι R M` with `repr := e.symm`? For refl, symm = refl. So `(Pi.basisFun R ι).repr = LinearEquiv.refl R (ι → R)` — defeq? Then `(Pi.basisFun R ι).repr v = v` by rfl, and `.repr v i = v i` by rfl. So `simpa` or even `change` works. Let me verify with a probe.
+
+Let me also plan the timing: this is a big chunk of work. Priority order:
+1. Fix import + ricci_eq_half_metric + get So3Model compiling (drop the crossDerivation for now if needed — but the derivation is the core downstream). 
+2. crossDerivation with all sub-lemmas.
+3. Downstream corollaries (so3 Bochner + nontriviality + ricciContraction).
+4. sympy verification script extension for the so(3) instantiation.
+5. Axiom audit + checkpoint + results.
+
+The downstream application milestone (24h) needs: "downstream use or a concrete subproblem split". The so(3) model IS the downstream use: Ric=½g + instantiated Bochner identity.
+
+One thing to double check: the direction of `DerivationData.bracket_deriv`: D_X(D_Y f) − D_Y(D_X f) = D_{[X,Y]}f where [X,Y] = b.bracket X Y. And the Bochner proof used it via D_comm_apply etc. Our crossDerivation gives exactly that with b = crossBracket. ✓
+
+Another check — the `stdMetric` pos_def proof used a slightly sketchy approach with single_le_sum, but it compiled already (So3Model had no sorry in stdMetric, and the build failure was only the import + the ricci sorry). Wait, actually, was So3Model compiling before? The build failed on `Mathlib.Data.MvPolynomial.PDeriv` import missing — meaning even the module couldn't load. The `sorry` in ricci_eq_half_metric was inside. After fixing the import, the sorry is still there. I must remove it.
+
+Also `sectional_nonflat` proof — let me double-check it compiles (it used curvature_eq_quarter_doubleBracket + simp [Pi.basisFun_apply, dotProduct_single, cross_apply]). Probably fine.
+
+Let me now check MetricData.lean for the basis field type and check `Module.Basis`:
+dsh: reasoning:
+`pderiv` is not in scope — it's in namespace `MvPolynomial`. I need `open MvPolynomial` or `MvPolynomial.pderiv`. The So3Model.lean file will need `open MvPolynomial` too. Let me fix the probe. Also the probe had a definition-order bug (`Vec3'` used before defined). Let me rewrite the probe.
+dsh: reasoning:
+Several issues to fix:
+1. `(pderiv i : A →ₗ[ℝ] A)` coercion fails — Derivation does not coerce directly to A →ₗ[ℝ] A here? The Derivation structure in this mathlib: `Derivation R A M` extends `A →ₗ[R] M`? Apparently not directly — it seems Derivation in this revision does NOT extend the linear map (there's `toLinearMap`?). Let me check the Derivation structure. In some revisions, `Derivation R A M` has a field `toLinearMap : A →ₗ[R] M` with coercion. The type mismatch suggests the coercion doesn't exist — maybe need `(pderiv i).toLinearMap` or just treat it as a function via `fun f => pderiv i f`. Let me check Derivation structure in RingTheory/Derivation/Basic.lean.
+
+2. `map_sum (pderiv i) fs` gives the wrong type: `∀ s : Finset, ...` — so map_sum found a `AddMonoidHom.map_sum` instance for pderiv i where the domain is treated as AddMonoid. The expected form: `(pderiv i) (∑ k, fs k) = ∑ k, (pderiv i) (fs k)`. Since map_sum's output is about sums over a Finset with `∑ x ∈ s`, and `∑ k : Fin 3, fs k` is notation for `Finset.sum Finset.univ (fun k => fs k)`. The elaborator isn't matching because the AddMonoidHom instance of Derivation is `toAddMonoidHom`... it produced `∀ s : Finset (Fin 3), (pderiv i) (∑ x ∈ s, fs x) = ∑ x ∈ s, (pderiv i) (fs x)` — that's exactly `map_sum` specialized. Hmm, that IS usable: `exact (map_sum (pderiv i) fs Finset.univ)`? But the goal form `(pderiv i) (∑ k, fs k)` — `∑ k, fs k` elaborates to `∑ k ∈ Finset.univ, fs k`? Hmm, it type-checks as `∀ s`, so applying to univ gives the goal if the goal's sum elaborates as Finset.univ sum. Actually the issue: `map_sum (pderiv i) fs` has type `∀ (s : Finset (Fin 3)), ...` — so `map_sum (pderiv i) fs Finset.univ` gives `(pderiv i) (∑ x ∈ Finset.univ, fs x) = ∑ x ∈ Finset.univ, (pderiv i) (fs x)` — and the goal `(pderiv i) (∑ k, fs k) = ∑ k, (pderiv i) (fs k)` is definitionally the same if `∑ k : Fin 3, ...` unfolds to `∑ k ∈ Finset.univ`... hmm, `∑ k, fs k` for Fintype is `Finset.univ.sum (fun k => fs k)` and `∑ x ∈ Finset.univ, fs x` is also that. So just `exact map_sum (pderiv i) fs Finset.univ` should work, or better use the linear map: `map_sum (pderiv i).toLinearMap`... wait let me first check the Derivation structure to see how to get the linear map.
+
+3. `Pi.single i 1 j : ℝ` vs expected A — pderiv_X statement: `pderiv i (X j) = Pi.single (M := fun _ => _) i 1 j` where the M := ... elaborates to the coefficient type. When I specialize with A := MvPolynomial (Fin 3) ℝ, the single gives ℝ? The probe said `Pi.single i 1 j` has type ℝ but expected MvPolynomial... hmm, actually in pderiv_X the R is the coefficient semiring; `pderiv i (X j : MvPolynomial σ R) = Pi.single (M := fun _ => _) i 1 j` — the M is inferred from the goal; in my example the goal is `... = Pi.single i 1 j` with expected type A — the single elaborates with M := A but 1 : A? Then `Pi.single i 1 j : A` — the error says it has type ℝ but expected A — because `1` got inferred as ℝ from somewhere (the expected type was `? = Pi.single i 1 j` and the left side pderiv i (X j) : A; so the expected type of Pi.single i 1 j is A; with M := fun _ => A the single has value 1 : A, giving A ✓; but it inferred M := ℝ? because `1` in Pi.single i 1 j — if M is a metavariable, `1` gets type A? Hmm the error message says `Pi.single i 1 j` has type ℝ — so M was solved as ℝ somehow... Actually in `pderiv_X i j` the RHS is `Pi.single (M := fun _ => _) i 1 j` where the `_` is solved by unification to ℝ (since R = ℝ? and the single is `Pi.single i 1 j` with M = R = ℝ). Wait the statement: `pderiv_X [DecidableEq σ] (i j : σ) : pderiv i (X j : MvPolynomial σ R) = Pi.single (M := fun _ => _) i 1 j`. The M := fun _ => _ — a metavariable; unified with R? That would give RHS type ℝ, but LHS is MvPolynomial σ R... that can't be the statement. Let me look at pderiv_X again: `pderiv i (X j : MvPolynomial σ R) = Pi.single (M := fun _ => _) i 1 j` — the `_` unifies with... hmm in the file I saw `Pi.single (M := fun _ => _) i 1 j`. Since it's from `mkDerivation_X`, and mkDerivation with f : σ → A gives `(mkDerivation R f) (X i) = f i`. For pderiv, f = Pi.single i 1 : σ → R. So pderiv_X says pderiv i (X j) = Pi.single i 1 j : R. For R = ℝ: RHS : ℝ, LHS : MvPolynomial (Fin 3) ℝ?? That would be a type error in mathlib... unless R = MvPolynomial σ R0 and σ = ... no wait. `pderiv i : Derivation R (MvPolynomial σ R) (MvPolynomial σ R)` — the target M is MvPolynomial σ R, so pderiv i (X j) : MvPolynomial σ R and `Pi.single i 1 j` must be in MvPolynomial σ R... but the file says the single has M := fun _ => _; hmm, maybe the elaboration uses `1 : MvPolynomial σ R`? i.e., M := fun _ => MvPolynomial σ R, so single i 1 j : MvPolynomial σ R ✓, and the mkDerivation_X gives `(mkDerivation R (Pi.single i 1)) (X j) = Pi.single i 1 j` — where Pi.single i 1 : σ → MvPolynomial σ R? mkDerivation takes f : σ → A where A = MvPolynomial σ R. So single i 1 : σ → A with 1 : A, and single i 1 j : A ✓. So in the probe, `Pi.single i 1 j` with expected type A should elaborate with 1 : A. The error says it has type ℝ — maybe because the unifier picked M := fun _ => ℝ from the RHS `1`... and the expected type A is the *goal* type; the mismatch arises... The fix: write `Pi.single (M := fun _ : Fin 3 => A) i (1 : A) j` explicitly, or just avoid this lemma and use `pderiv_X_self` / `pderiv_X_of_ne` which are cleaner: `pderiv i (X i) = 1`, `pderiv i (X j) = 0` for j ≠ i. 
+
+4. cross_apply simp: after `rw [cross_apply]` the goal `xVec 1 * polyVec Xv 2 − ...` didn't simplify because xVec/polyVec are `abbrev`/`def` not unfolded. Add `simp [xVec, polyVec]` (unfold) — probe 6 shows the simp didn't unfold xVec 1 = X 1... wait the error shows the goal remained `xVec 1 * polyVec Xv 2 - ...` — because `rw [cross_apply]` succeeded and then `simp` didn't unfold xVec/polyVec (they're not reducible by simp since abbrev xVec : Fin 3 → A := fun i => X i — simp should unfold abbrevs? Apparentely not automatically here because... hmm `abbrev` unfolds. The issue: `simp` without configuration unfolds abbrevs? It usually does not unfold non-reducible definitions unless they're semireducible — abbrev IS reducible. Odd. Maybe the remaining goal was different: `xVec 1 * polyVec Xv 2 - xVec 2 * polyVec Xv 1 = X 1 * C (Xv 2) - X 2 * C (Xv 1)` — simp could not rewrite because `polyVec Xv 2` — polyVec is a def with Xv implicit... `polyVec Xv := fun i => C (Xv i)` — simp needs [polyVec] in the simp set. Let me add `simp [xVec, polyVec]`. Actually error 5 shows the same issue in probe 9: I had `simp [polyVec, xVec, ...]` with `Finset.sum_univ_three` unknown. Let me remove that lemma name and rely on `fin_cases j` + `simp [polyVec, xVec, cross_apply]` — with fin_cases the sums become explicit.
+
+5. probe 7: `rw [map_add]` failed because the goal after unfolding is `(crossProduct xVec) (polyVec (Xv+Yv)) = ...` — crossProduct xVec is a linear map `(Fin 3 → A) →ₗ[A] (Fin 3 → A)`; map_add on it: `(crossProduct xVec) (a+b) = (crossProduct xVec) a + (crossProduct xVec) b` — but the goal has `polyVec (Xv + Yv)` where polyVec Xv : Fin 3 → A is a def — so map_add doesn't match until polyVec (Xv+Yv) unfolds to `fun i => C (Xv i + Yv i)` and crossProduct xVec applied to it = ... hmm, the linear map application: `(crossProduct xVec) (polyVec (Xv+Yv))` — map_add gives additivity of the FUNCTION argument: needs the argument to be `a + b` syntactically. `polyVec (Xv + Yv)` ≠ `polyVec Xv + polyVec Yv` syntactically. So instead: `simp [polyVec]` then `rw [map_add]`? After simp [polyVec], the argument becomes `fun i => C ((Xv+Yv) i)` = `fun i => C (Xv i) + C (Yv i)`? simp might rewrite C of sum... `map_add'` of C. Might be easier to prove linearity of the composition by funext + crossProduct bilinearity at the A-level:
+
+```
+example (Xv Yv : Vec3') : xVec ⨯₃ polyVec (Xv + Yv) = (xVec ⨯₃ polyVec Xv) + (xVec ⨯₃ polyVec Yv) := by
+  ext j
+  simp [polyVec, cross_apply, map_add]  -- hmm
+```
+
+Alternatively define vField differently: `vField (Xv : Vec3') : Fin 3 → A := fun j => ∑ k : Fin 3, C ((crossProduct (Pi.basisFun ℝ (Fin 3) k) Xv) j) * X k` — the linear-combination form directly! Then linearity in Xv is automatic from crossProduct linearity: (basis k ⨯₃ (Xv+Yv)) j = (basis k ⨯₃ Xv) j + (basis k ⨯₃ Yv) j via map_add (crossProduct (basis k)) — and `map_add` applies since (Xv+Yv) is syntactically a sum ✓. And smul: (basis k ⨯₃ (c•Xv)) = c • (basis k ⨯₃ Xv) via map_smul ✓.
+
+Then prove `vField_cross_apply`: vField Xv = xVec ⨯₃ polyVec Xv (equivalence with the cross form) — needed for the bracket_deriv computation (to get ∑ᵢ vXᵢ ∂ᵢ vYⱼ = (vX ⨯₃ polyVec Y)ⱼ via cross_coord_eq_sum). Hmm, but actually with vField in linear-combination form, ∑ᵢ vXᵢ ∂ᵢ vYⱼ = ∑ᵢ vXᵢ C((eᵢ×Y)ⱼ) directly (∂ᵢ vYⱼ = C((eᵢ×Y)ⱼ) via pderiv of the linear combo — exactly pderiv_linear_combo), and then we need ∑ᵢ vXᵢ·C((eᵢ×Y)ⱼ) = ((x×X)×Y)ⱼ. For this we need the cross-coord identity in the OTHER direction: for u : Fin 3 → A, (u ⨯₃ polyVec Y)ⱼ = ∑ᵢ uᵢ·C((eᵢ×Y)ⱼ) — cross_coord_eq_sum, proved by fin_cases j + ring (over A). Then with u = xVec ⨯₃ polyVec X (= vField X via the equivalence lemma): ((x×X)×Y)ⱼ. So the equivalence lemma vField_eq_cross is needed. Alternatively prove cross_coord_eq_sum first (fin_cases + ring) and define vField := xVec ⨯₃ polyVec X, proving linearity via ext + cross_coord_eq_sum:
+
+vField (Xv+Yv) j = ∑ᵢ (xVec ⨯₃ polyVec (Xv+Yv))ᵢ C((eᵢ×Y)j)... no wait. Hmm, let me think again about which definition gives the smoothest proofs.
+
+Option A: vField Xv := xVec ⨯₃ polyVec Xv (cross form). 
+- linearity in Xv: (xVec ⨯₃ polyVec (Xv+Yv)) = (xVec ⨯₃ polyVec Xv) + (xVec ⨯₃ polyVec Yv): ext j; rw [cross_apply]; simp [polyVec]; ring? Each coordinate j: LHS e.g. for j=0: xVec 1 * C((Xv+Yv) 2) − xVec 2 * C((Xv+Yv) 1); RHS: (xVec 1 * C (Xv 2) − xVec 2 * C (Xv 1)) + (xVec 1 * C (Yv 2) − xVec 2 * C (Yv 1)). C((Xv+Yv) 2) = C (Xv 2 + Yv 2) = C (Xv 2) + C (Yv 2) — map_add C ✓ (simp [map_add] or ring_nf handles ring homs? ring can't unfold C... need `rw [map_add]` or simp). So: ext j; fin_cases j <;> rw [cross_apply] <;> simp [polyVec, map_add, add_mul, mul_add] <;> ring? Let me be careful: after fin_cases j and rw [cross_apply], LHS has `polyVec (Xv+Yv) 2` etc. simp [polyVec] unfolds to `C ((Xv+Yv) 2)` = `C (Xv 2 + Yv 2)`; need `rw [map_add]` — simp with `map_add` attribute: map_add is simp? `map_add` is a simp lemma I believe (marked @[simp]? In mathlib, `map_add` is simp). Yes `map_add` is @[simp]. So simp [polyVec] handles it, then ring. OK: `fin_cases j <;> rw [cross_apply] <;> simp [polyVec] <;> ring` — should work. Actually wait: `ring` on MvPolynomial with C-coefficients: C (Xv 2) etc are atoms (opaque), ring treats them as variables ✓. And C (Xv 2 + Yv 2) vs C (Xv 2) + C (Yv 2): simp [map_add]... map_add is simp, fine.
+
+- Dlin := ∑ᵢ vField X i • (pderiv i as A →ₗ[ℝ] A)? — but I need to confirm the smul instance on linear maps and the linear map coercion of Derivation. If Derivation doesn't coerce, use `.toLinearMap`? Let me check the Derivation structure fields in this mathlib.
+
+Actually simpler: define Dlin via mk₂ over ℝ:
+```
+def Dlin : Vec3' →ₗ[ℝ] A →ₗ[ℝ] A :=
+  LinearMap.mk₂ ℝ (fun Xv f => ∑ i : Fin 3, (vField Xv) i * pderiv i f)
+    (by intro X1 X2 f; ... )
+    (by intro c Xv f; ...)
+    (by intro Xv f1 f2; ...)
+    (by intro Xv c f; ...)
+```
+The f-linearity is easy: ∑ᵢ vᵢ ∂ᵢ(f₁+f₂) = ∑ᵢ vᵢ(∂ᵢf₁+∂ᵢf₂) = ... via pderiv map_add and ring/sum distributivity. And c•f: ∂ᵢ(c•f) = c•∂ᵢf — the ℝ-smul on MvPolynomial is C c * f — pderiv i is ℝ-linear: `map_smul (pderiv i) c f`? Since pderiv i is a Derivation ℝ A A which is ℝ-linear (as linear map over ℝ? Derivation R A M is R-linear as A →ₗ[R] M). Does map_smul apply? map_smul for `pderiv i : A →ₗ[ℝ] A`... if the coercion works. Hmm.
+
+Let me check the Derivation structure to figure out the linear map extraction. Let me read RingTheory/Derivation/Basic.lean.
+dsh: reasoning:
+`Derivation` has `[coe] toLinearMap` and a `Coe (Derivation R A M) (A →ₗ[R] M)` instance. So `(pderiv i : A →ₗ[ℝ] A)` should work... but the probe failed with "Type mismatch pderiv i has type Derivation ?m.12 ... expected A →ₗ[ℝ] A". The problem: `pderiv i : Derivation ℝ (MvPolynomial (Fin 3) ℝ) (MvPolynomial (Fin 3) ℝ)` — the coe instance is `Coe (Derivation R A M) (A →ₗ[R] M)`. To coerce `Derivation ℝ A A` to `A →ₗ[ℝ] A` — that's exactly the instance. Why the mismatch? Maybe because the elaborator couldn't synthesize the typeclass parameters: the derivation's R must match the linear map's R: Derivation ℝ ... to A →ₗ[ℝ] A — R := ℝ both. Hmm, the error says `pderiv i has type Derivation ?m.12 (MvPolynomial (Fin 3) ?m.12) (MvPolynomial (Fin 3) ?m.12)` — the ring is a metavariable, and coercion to A →ₗ[ℝ] A with A := MvPolynomial (Fin 3) ℝ requires solving ?m.12 = ℝ AND finding the Algebra ℝ (MvPolynomial (Fin 3) ℝ) instance. The elaborator treats `(pderiv i : A →ₗ[ℝ] A)` as an *annotation* check — it first elaborates `pderiv i` with expected type A →ₗ[ℝ] A... The expected type propagates into `pderiv`'s implicit params: pderiv (i : σ) : Derivation R (MvPolynomial σ R) (MvPolynomial σ R) with σ := Fin 3 (from i). R remains meta. Expected A →ₗ[ℝ] A = MvPolynomial (Fin 3) ℝ →ₗ[ℝ] MvPolynomial (Fin 3) ℝ. The coe instance requires Derivation R A M with the SAME R as the linear map's scalar: Derivation ℝ (MvPolynomial (Fin 3) ℝ) (MvPolynomial (Fin 3) ℝ). So R := ℝ should be solvable... unless the instance search fails because `pderiv` requires `[CommSemiring R]` and elaborates R as meta — the coercion search should still work. Maybe the issue is the `Algebra ℝ A` needed for Derivation... it exists.
+
+Hmm, actually maybe the problem: expected type `A →ₗ[ℝ] A` where A is my abbrev — `A →ₗ[ℝ] A` elaborates the module instances for A over ℝ — `MvPolynomial (Fin 3) ℝ` has module over ℝ via Algebra ✓.
+
+Let me look again: "Type mismatch pderiv i has type Derivation ?m.12 (MvPolynomial (Fin 3) ?m.12) ... but is expected to have type A →ₗ[ℝ] A" — this happens when the coercion did NOT fire: the expected-type-driven elaboration failed to coerce. Possibly because Coe is `Coe` not `CoeOut` — coercion from Derivation to linear map needs the *expected type* to drive instance search with metavariables... `Coe` instances are used with expected type propagation. Should work...
+
+Actually wait — maybe the issue is that `pderiv i` with R := ?m.12 : the `pderiv` def requires `[CommSemiring R]`; with i : Fin 3, σ := Fin 3. The expected type A →ₗ[ℝ] A could drive R := ℝ. When coercing `Derivation R A A` (R meta) to `A →ₗ[ℝ] A`, unification: Coe (Derivation R A M) (A →ₗ[R] M) with A := MvPolynomial (Fin 3) ℝ, M := MvPolynomial (Fin 3) ℝ, R := ℝ. So R := ℝ solved. Hmm, then why did it fail? 
+
+Maybe the ambiguity: `pderiv` is also elaborating with implicit `{σ : Type*}` and `{R : Type*}` — I wrote `(pderiv i : A →ₗ[ℝ] A)`; maybe the parser sees `pderiv i` where pderiv has implicit params — expected type flows in. This should work...
+
+Let me just test in isolation whether `(pderiv i : A →ₗ[ℝ] A)` works with a fresh probe; maybe the earlier failure was due to a cascade from the first error (probe line 18 error message also mentioned the first example failed). Actually error at line 18 was exactly this coercion. Let me test variants:
+- `((pderiv (R := ℝ) (σ := Fin 3) i) : A →ₗ[ℝ] A)`
+- `(MvPolynomial.pderiv i).toLinearMap`
+- `↑(pderiv i : Derivation ℝ A A)`
+
+Let me probe these.
+dsh: reasoning:
+Good progress:
+1. `(pderiv (R := ℝ) (σ := Fin 3) i)` coercions work (probes 1 passed).
+2. `map_sum`: need `map_sum (pderiv ...).toLinearMap fs Finset.univ`? The issue: `∑ k : Fin 3, fs k` vs `∑ x ∈ s, fs x`. The error: map_sum ... fs has type ∀ s, ... but the goal is `↑(pderiv i) (∑ k, fs k) = ∑ k, ...` — since `∑ k : Fin 3, fs k` is `Finset.univ.sum fs`, applying map_sum to Finset.univ should give exactly the goal (∑ x ∈ Finset.univ, fs x elaborates to Finset.univ.sum fs). Hmm, but the error says the type "is expected to have" the goal — meaning exact failed. The map_sum produced `↑(pderiv i) (∑ x ∈ s, fs x) = ∑ x ∈ s, ↑(pderiv i) (fs x)` — with s : Finset; applying to univ: `↑(pderiv i) (∑ x ∈ Finset.univ, fs x) = ∑ x ∈ Finset.univ, ↑(pderiv i) (fs x)`. The goal: `↑(pderiv i) (∑ k, fs k) = ∑ k, ↑(pderiv i) (fs k)` — the goal's LHS: `∑ k, fs k` where the sum is over the Fintype — notation `∑ k : Fin 3, fs k` expands to `Finset.univ.sum (fun k => fs k)` — definitionally equal to `∑ x ∈ Finset.univ, fs x`? `∑ x ∈ s, f x` is `s.sum (fun x => f x)`. So both are `Finset.univ.sum fs`. Defeq... but exact failed. Because map_sum (↑(pderiv i)) fs : ∀ s, ... — the binder over s makes the expected type match `∀ s : Finset (Fin 3), ...` — the goal is NOT a forall. So I should do `exact (map_sum (pderiv (R := ℝ) (σ := Fin 3) i).toLinearMap fs Finset.univ)`. My probe wrote `exact map_sum ... fs` without applying to Finset.univ. Fix: apply to Finset.univ, then simpa. Since `∑ x ∈ Finset.univ, ...` = goal — maybe needs `simpa`.
+
+3. map_smul failed: there's no MulActionHomClass instance for Derivation over ℝ-smul on the polynomial? Interesting — Derivation R A A is R-linear, but the `map_smul` lemma requires `MulActionHomClass F R M N`... For LinearMap there is such instance; for Derivation, the FunLike/AddMonoidHomClass instances exist but not MulActionHomClass? Hmm — Derivation extends A →ₗ[R] M; map_smul for it: since the linear map structure is available, `map_smul` should apply to `.toLinearMap`: `map_smul (pderiv i).toLinearMap c f : (pderiv i).toLinearMap (c • f) = c • (pderiv i).toLinearMap f` ✓. Use `.toLinearMap` explicitly everywhere. And map_add for Derivation directly has AddMonoidHomClass ✓ (probe 2's map_sum worked through ↑ which is the linear map? interesting — map_sum (↑(pderiv i)) fs worked, so ↑(pderiv i) : A →ₗ[ℝ] A and map_sum applied to it as a linear map ✓).
+
+So the working recipes:
+- `(pderiv (R := ℝ) (σ := Fin 3) i)` — full explicit application, or set a local notation. Actually with the namespace open, `pderiv i` alone failed to coerce earlier — because R was a metavariable and the expected type A →ₗ[ℝ] A didn't drive it? But probe 1 line 14 `(pderiv (R := ℝ) (σ := Fin 3) i) : A →ₗ[ℝ] A` worked. For simplicity I'll write `pderiv (R := ℝ) (σ := Fin 3) i` everywhere or define:
+
+```
+def ddx (i : Fin 3) : A →ₗ[ℝ] A := (pderiv (R := ℝ) (σ := Fin 3) i)
+```
+Hmm wait — actually if I write `(pderiv i : A →ₗ[ℝ] A)` with expected type, the metavariable R should be solvable... it failed earlier ("pderiv i has type Derivation ?m.12 ..."). The difference: in probeSo3.lean line 18 I wrote `(pderiv i : A →ₗ[ℝ] A) f = pderiv i f` — the first occurrence needed coercion with meta R. Failed. With explicit R it works. Fine — use explicit.
+
+Also `pderiv_X_self`: `pderiv i (X i) = 1` — with `@[simp]` ✓. And `pderiv_X_of_ne` ✓. And `pderiv_C_mul` ✓.
+
+Now, smul on linear maps: probe 5 in probeSo3.lean — `(a • (pderiv i : A →ₗ[ℝ] A)) f = a * pderiv i f` by rfl — did that compile? The output only showed errors from lines 18,24,25,29,35,41,44,51. Probe 5 (line 29) errored due to the coercion (cascade). Let me assume the A-smul on A →ₗ[ℝ] A exists with smul_apply = rfl. Actually for LinearMap, the instance: `LinearMap.instSMul`/`LinearMap.instModule`: `Module S (M →ₗ[R] N)` if N has Module S with IsScalarTower R S N... For S = A acting on N = A over R = ℝ: IsScalarTower ℝ A A ✓. So `a • L` with L : A →ₗ[ℝ] A makes sense and `(a • L) f = a • L f` via `LinearMap.smul_apply` (which is likely rfl). ✓
+
+Now the big question: how to define Dlin most smoothly. Options:
+- `Dlin : Vec3' →ₗ[ℝ] A →ₗ[ℝ] A` via LinearMap.mk₂ ℝ with proofs.
+- proofs need: ∑ᵢ (vField (X₁+X₂))ᵢ ∂ᵢf = ∑ᵢ vField X₁ᵢ∂ᵢf + ∑ᵢ vField X₂ᵢ∂ᵢf — via vField additivity (needs cross_coord_eq_sum or direct cross_apply+fin_cases).
+- smul in X: vField (c•Xv) = c • vField Xv — via map_smul (crossProduct xVec) + polyVec smul.
+- additivity in f: map_add of pderiv ✓.
+- smul in f: map_smul of (pderiv i).toLinearMap ✓.
+
+The X-linearity proofs are the fiddly ones. Alternative: define vFieldLin : Vec3' →ₗ[ℝ] Fin 3 → A := (crossProduct xVec).comp polyVecLin where polyVecLin : Vec3' →ₗ[ℝ] Fin 3 → A. Then Dlin := LinearMap.mk₂ ℝ (fun X f => ∑ i, (vFieldLin X) i * pderiv i f)? Still mk₂ proofs for both slots, but X-slot: vFieldLin linearity automatic (vFieldLin is a linear map → `rw [map_add]` works syntactically since vFieldLin (X₁+X₂) = vFieldLin X₁ + vFieldLin X₂ by map_add ✓ — clean!). So define vFieldLin via comp:
+
+polyVecLin : Vec3' →ₗ[ℝ] Fin 3 → A:
+```
+def polyVecLin : Vec3' →ₗ[ℝ] (Fin 3 → A) where
+  toFun := fun Xv i => C (Xv i)
+  map_add' := by intro X1 X2; ext i; simp  -- C (X1 i + X2 i) = C (X1 i) + C (X2 i): map_add C — simp [map_add]? C is a ringHom, map_add is simp. ✓
+  map_smul' := by intro c X; ext i; simp  -- C (c * X i) = c • C (X i): map_smul — simp [map_smul]? For ring homs, smul = mul by C c: C (c * X i) = C c * C (X i) = c • C (X i) — simp should close via map_mul + smul_eq_mul? Use simp [map_mul, smul_eq_mul]? Hmm — actually `map_smul (C : ℝ →+* A)`? RingHom map_smul: map_smul (C) c (X i)?? c • (X i) for ℝ on ℝ: c * X i ✓. So `simpa using map_smul (C : ℝ →+* A) c (X i)`? Hmm, C : ℝ →+* A is the algebraMap ring hom. Let me just try `simp` and see.
+```
+vFieldLin : Vec3' →ₗ[ℝ] (Fin 3 → A) := (crossProduct xVec).comp polyVecLin — crossProduct xVec : (Fin 3 → A) →ₗ[A] (Fin 3 → A). comp: (Fin 3 → A) →ₗ[ℝ] Vec3' →ₗ[ℝ]... wait .comp : (N →ₗ[R] P) → (M →ₗ[R] N) → M →ₗ[R] P. Here (crossProduct xVec) : (Fin 3 → A) →ₗ[A] (Fin 3 → A) — as ℝ-linear: A-linear implies ℝ-linear via scalar tower: (Fin 3 → A) →ₗ[ℝ] (Fin 3 → A) — Lean can coerce automatically? A-linear maps are ℝ-linear when Algebra ℝ A: there's a coercion instance `LinearMap.restrictScalars`... it's a Coe? In mathlib, `LinearMap.restrictScalars` is a def with an instance `SMulCommClass`... For composition to typecheck: (crossProduct xVec).comp polyVecLin requires the scalars to match: crossProduct xVec : (Fin 3 → A) →ₗ[A] (Fin 3 → A); need (Fin 3 → A) →ₗ[ℝ] (Fin 3 → A). There's an instance that an A-linear map is also an R-linear map? In mathlib, `LinearMap.restrictScalars` gives a function but coercion is automatic via `IsScalarTower`? Hmm, actually mathlib has: instance from `(M →ₗ[S] N)` to `(M →ₗ[R] N)`? I don't think it's automatic. Let me avoid: build vFieldLin directly:
+
+```
+def vFieldLin : Vec3' →ₗ[ℝ] (Fin 3 → A) where
+  toFun Xv := xVec ⨯₃ polyVec Xv
+  map_add' := by intro X1 X2; -- (xVec ⨯₃ polyVec (X1+X2)) = xVec ⨯₃ polyVec X1 + xVec ⨯₃ polyVec X2
+    ext j; fin_cases j <;> rw [cross_apply] <;> simp [polyVec] <;> ring  -- hmm cross_apply rw then simp
+  map_smul' := by intro c X; ext j; fin_cases j <;> rw [cross_apply] <;> simp [polyVec] <;> ring
+```
+Hmm wait — cross_apply: `a ⨯₃ b = ![a 1 * b 2 - a 2 * b 1, a 2 * b 0 - a 0 * b 2, a 0 * b 1 - a 1 * b 0]`. After `fin_cases j`, `rw [cross_apply]` rewrites `xVec ⨯₃ polyVec (X1+X2)` inside `(xVec ⨯₃ polyVec (X1+X2)) 0` — rw at the application... the LHS is `(xVec ⨯₃ polyVec (X1+X2)) 0` = `(![...]) 0` after rw, then simp computes `(![a,b,c]) 0 = a`? simp knows `cons_val_zero`? `(![...])` is Matrix.of or `vecNotation` — `![a,b,c]` is `Matrix.of ![a,b,c]`... For Fin 3 vectors, `![a,b,c]` is `fun i => match i with ...` — `(![a, b, c]) 0` simplifies by simp? In the earlier So3Model sectional_nonflat proof: `simp [Pi.basisFun_apply, dotProduct_single, cross_apply]` — worked? That's for a closed numeric goal. For my goals with ring: `simp [polyVec, xVec, cross_apply]` then ring. Let me be safe: after fin_cases j, `rw [cross_apply]` produces `(![...]) j = (![...]) j + (![...]) j` for j one of 0,1,2 — hmm, actually `(xVec ⨯₃ polyVec (X1+X2)) j` with j : Fin 3 after fin_cases is `(xVec ⨯₃ polyVec (X1+X2)) (0 : Fin 3)` etc. rw [cross_apply] turns xVec ⨯₃ polyVec (X1+X2) into `![...]`, and `(![...]) 0` — simp: `simp only [Fin.reduceFinMk, Matrix.cons_val_zero]`? The So3Model file used `simp [Pi.basisFun_apply, dotProduct_single, cross_apply]` for the closed case and it compiled (sectional_nonflat was accepted — was it? The module failed to build due to import; I don't know if sectional_nonflat's proof was checked. Need to verify after fixing import.)
+
+OK rather than guessing, let me write the probe incrementally: get vFieldLin building with map_add'/map_smul' by fin_cases+rw+simp+ring, then Dlin via mk₂, then test the key sub-lemmas. Let me be methodical. Actually, an important decision: define vField in cross form `xVec ⨯₃ polyVec Xv`, and prove `vField_eq_lincombo` separately:
+
+`vField_lincombo (Xv) (j) : (xVec ⨯₃ polyVec Xv) j = ∑ k, C (((basis k) ⨯₃ Xv) j) * X k`.
+
+Then:
+- pderiv_coeff: pderiv i (vField Xv j) = C ((basis i ⨯₃ Xv) j) — via vField_lincombo + linear-combo pderiv.
+- cross_coord_sum: (u ⨯₃ polyVec Y) j = ∑ i, u i * C ((basis i ⨯₃ Y) j) — for u : Fin 3 → A arbitrary. This gives the ∑ᵢvXᵢ∂ᵢvYⱼ step: = ∑ᵢ vXᵢ·C((eᵢ×Y)ⱼ) = (vField X ⨯₃ polyVec Y) j via cross_coord_sum with u = vField X.
+
+So cross_coord_sum is the load-bearing lemma. Proof: ext/fin_cases j; rw [cross_apply] (for u ⨯₃ polyVec Y); simp [polyVec] to expand polyVec; then the RHS sum over Fin 3: `∑ k : Fin 3, u k * C ((basis k ⨯₃ Y) j)` — after fin_cases j, the (basis k ⨯₃ Y) j terms: need to compute cross products of basis vectors with Y. `(Pi.basisFun ℝ (Fin 3) k) ⨯₃ Yv` — rw [cross_apply] — then C of the coordinate combos — the sums over k need to be expanded: `simp` with `Finset.sum_univ_succ`? For Fin 3, sum over univ = f 0 + f 1 + f 2: there's `fin.sum_univ_three`? In mathlib: `Fin.sum_univ_three : ∑ i : Fin 3, f i = f 0 + f 1 + f 2`. And `fin_cases` can also case-split the sum binder? No. Let me check the lemma name: `Fin.sum_univ_three` in Mathlib/Data/Fin/... Let me grep. Also for the (basis k ⨯₃ Yv) j with k : Fin 3 variable — after fin_cases j, the expression still has k. Better: also fin_cases k inside the sum? Can't directly. Use `rw [Fin.sum_univ_three]` to expand the sum into three terms, then each term has explicit basis vectors, then rw [cross_apply], simp, ring.
+
+Let me check the exact lemma name for Fin.sum_univ_three.
+dsh: reasoning:
+- `Pi.basisFun_repr` exists: `(Pi.basisFun R η).repr x i = x i` — as a theorem (probably @[simp]). 
+- `basisFun_apply [DecidableEq η] (i) : basisFun R η i = Pi.single i 1`? Let me check line 126's statement.
+- `Fin.sum_univ_three` not found in Data/Fin — let me search more broadly. It might be in `Mathlib/Data/Fin/Basic.lean` as `Fin.sum_univ_three` or in `Mathlib/Algebra/BigOperators/...`. Let me grep the whole mathlib.
+dsh: reasoning:
+`Fin.sum_univ_three` exists: `∑ i : Fin 3, f i = f 0 + f 1 + f 2` presumably (used with simp in Height/MvPolynomial). `basisFun_apply` is @[simp]: basisFun R η i = Pi.single i 1.
+
+Now let me write a comprehensive probe implementing the core sub-lemmas to validate the approach before writing the real module:
+
+1. `vField_lincombo`
+2. `cross_coord_sum`  
+3. `pderiv_linear_combo` (general)
+4. `vField_pderiv_coeff`
+5. `pderiv_comm` on A
+6. `crossJacobi_vec`
+7. `Dlin` construction + leibniz + expand lemma
+
+Let me write these one at a time. First batch: 1-4.
+dsh: reasoning:
+The ring failed because `C ((crossProduct (Pi.single 1 1)) Xv 0)` doesn't reduce — the cross product with a single-vector needs `cross_apply` to expand: `(Pi.single 1 1) ⨯₃ Xv` → rw [cross_apply] + simp [Pi.single_eq_same, Pi.single_eq_of_ne]. The `Pi.basisFun_apply` rewrote basisFun to Pi.single, but the cross products with single vectors remained. Add `cross_apply` to the simp set? cross_apply is a theorem (not @[simp]) — rw [cross_apply] once at the beginning rewrites only the outer cross. I need to also expand `(crossProduct (Pi.single k 1)) Xv` for k = 0,1,2. Since these appear as arguments to C, use `simp` with `cross_apply`: simp can use cross_apply as a rewrite if included: `simp [cross_apply]` rewrites all cross products in the goal (including nested). Let me restructure: after fin_cases j, `simp [cross_apply, Fin.sum_univ_three, Pi.single_eq_same, Pi.single_eq_of_ne, Pi.basisFun_apply]` then `ring`. The issue: cross_apply as simp lemma — it rewrites `a ⨯₃ b` to `![...]`, then `(![...]) 0` needs `Matrix.cons_val_zero` — simp should handle `![a,b,c] 0`? `![a, b, c]` is `vecCons`/`Matrix.of`? The notation `![a,b,c] : Fin 3 → A` — `(Matrix.of ![a,b,c])`... it elaborates to `fun i => Fin.cons ...`? In cross_apply: `a ⨯₃ b = ![a 1 * b 2 - a 2 * b 1, ...]` — the RHS is a `Fin 3 → R` literal. `(![...] : Fin 3 → A) 0` — simp reduces via `Fin.cons_zero`? The earlier So3Model used `simp [Pi.basisFun_apply, dotProduct_single, cross_apply]` for sectional_nonflat and presumably worked. Let me look at how Height/MvPolynomial did it: `case H => fin_cases j <;> simp [p, q, Fin.sum_univ_three] <;> ring` — they defined p, q as explicit functions and used simp.
+
+The problem in my goals: terms like `C ((crossProduct (Pi.single 1 1)) Xv 0)` — the crossProduct applied to `Pi.single 1 1 : Fin 3 → ℝ` (a linear map application `(crossProduct (Pi.single 1 1)) Xv`) — simp doesn't unfold `Pi.single` applications without knowing the index. I should rewrite with `basisFun_apply` in reverse or provide the single evaluations: `Pi.single_eq_same`, `Pi.single_eq_of_ne` are simp lemmas but need the index to be concrete — the index here is `0 : Fin 3` etc. — after fin_cases j, `(Pi.single 1 1) 0` — simp should rewrite `Pi.single 1 1 0 = 0` via Pi.single_eq_of_ne? Hmm, it needs to prove (0 : Fin 3) ≠ (1 : Fin 3) — by decide/norm_num. simp can use `Pi.single_eq_of_ne` if the ne hypothesis is available syntactically? simp needs a proof of 0 ≠ 1 — it can synthesize via `norm_num`-style simp lemmas (Fin 0 ≠ Fin 1 is decidable; simp can discharge with decide? simp doesn't decide by default). 
+
+Alternative approach: use `crossProduct_apply` — there's `cross_apply` which expands fully; for the inner cross with single: `(Pi.single 1 1) ⨯₃ Xv` = `![(single 1 1) 1 * Xv 2 - (single 1 1) 2 * Xv 1, ...]` — then `(single 1 1) 1` etc need simplification.
+
+Better approach: avoid Pi.single entirely — express the basis-cross coordinate directly. Define helper:
+
+```
+lemma basis_cross_coord {k j : Fin 3} (Xv : Vec3') :
+    (((Pi.basisFun ℝ (Fin 3) k) ⨯₃ Xv) j) = ... 
+```
+no — closed form depends on k,j. Cleaner: prove the needed facts with `fin_cases k` after `fin_cases j`: nested fin_cases k — but k appears inside the sum ∑ k — can't fin_cases a bound variable. Use Fin.sum_univ_three to expand the sum FIRST, then all three k's are numerals, then `fin_cases j`, then for each goal, rw [cross_apply] for each cross, then simp can handle `Pi.single 0 1 0` etc? Still the decide issue.
+
+Cleanest: prove a tiny closed-form lemma for the single cross:
+
+```
+lemma single_cross (k : Fin 3) (Xv : Vec3') : (Pi.basisFun ℝ (Fin 3) k) ⨯₃ Xv = ... := by
+  fin_cases k <;> rw [cross_apply] <;> ext j <;> fin_cases j <;> simp [Pi.single_eq_same, Pi.single_eq_of_ne] -- decide issue again
+```
+
+Hmm. Let me test what simp does with `Pi.single (1 : Fin 3) 1 0`. There are simp lemmas: `Pi.single_eq_same` : `single i a i = a`; `Pi.single_eq_of_ne h : single i a j = a... ` hmm: `single_eq_of_ne : i ≠ j → single i a j = 0`. simp uses single_eq_of_ne only when it can prove i ≠ j — with `decide` it won't automatically. But there's `simp` with `(by decide : (0 : Fin 3) ≠ 1)` — not automatic.
+
+Alternative: don't use Pi.single at all! Use the closed forms:
+- e₀ = ![1, 0, 0], e₁ = ![0,1,0], e₂ = ![0,0,1].
+- (e₀ ⨯ Xv) = ![0*Xv₂ − 0*Xv₁, 0*Xv₀ − 1*Xv₂, 1*Xv₁ − 0*Xv₀] = ![0, −Xv₂, Xv₁] — after simp these evaluate numerically since the e₀ coordinates are 0/1 literals — the cross_apply of (basisFun k) ⨯₃ Xv involves `(basisFun k) 1 * Xv 2` etc — if k is a numeral (0,1,2), then (basisFun 0) 1 = 0 via `basisFun_apply` + `Pi.single_eq_of_ne` (needs decide) — ugh same issue.
+
+OK here's the robust trick: use `norm_num` to evaluate the single: `simp` with `Pi.single_eq_of_ne` requires the proof; instead use the simp theorem `Pi.single_eq_of_ne'`? Or: fin_cases k once globally BEFORE the sum expansion won't work for bound k... 
+
+Wait — actually simpler: define the three basis vectors explicitly:
+```
+def e0 : Fin 3 → ℝ := ![1, 0, 0]  -- hmm, still needs ![...] evaluation
+```
+The vector literal `![1, 0, 0]` applied to index: `(![1,0,0]) 1 = 0` — simp knows this via `Matrix.cons_val_one`? In the Height/MvPolynomial example, they used `Fin.sum_univ_three` and simp with explicitly defined p, q. Let me look at that file's context to see the pattern.
+
+Actually — simplest robust approach: avoid sums over Fin 3 entirely by using explicit literals. The fin_cases + norm_num pattern: after fin_cases j (goals become closed-ish with numeric indices), the sums expand via Fin.sum_univ_three, the basisFun k with k numeral expands via basisFun_apply to Pi.single, then `norm_num` can handle `Pi.single 0 1 0 = 1`? norm_num knows Pi.single? Hmm.
+
+Let me just test a minimal case to see what works:
+- `example : (Pi.basisFun ℝ (Fin 3) 0) 0 = 1 := by simp` — basisFun_apply → Pi.single 0 1 0 → single_eq_same → 1 ✓ (simp handles same without decide).
+- `example : (Pi.basisFun ℝ (Fin 3) 0) 1 = 0 := by simp` — needs single_eq_of_ne with (0 : Fin 3) ≠ 1 — decide needed? Let me test. If simp fails, use `norm_num [Pi.single_eq_of_ne]`? norm_num can prove 0≠1 and feed it. Let me test these mini-probes.
+dsh: reasoning:
+Issues:
+1. Line 18: `((Pi.basisFun ℝ (Fin 3) 1) ⨯₃ Xv) 1 = 0` — after rw [cross_apply], goal: `(Pi.single 1 1) 1 * Xv 2 - (Pi.single 1 1) 2 * Xv 1 = 0`; norm_num got stuck on `Pi.single 1 1 2 = 0` (needs the ne proof). So simp alone doesn't discharge the ne. `Pi.single_eq_of_ne` needs the proof `(2 : Fin 3) ≠ 1`. norm_num failed. Fix: `rw [Pi.single_eq_same, Pi.single_eq_of_ne (by decide)]` — decide works for Fin inequality? `by decide : (2 : Fin 3) ≠ 1` ✓. Or simpler: `norm_num [Pi.single_eq_same, Pi.single_eq_of_ne]`? norm_num with the lemma — norm_num calls the lemma? Hmm. Or use `simp [Pi.single_eq_of_ne]` — simp will try to discharge the hypothesis via `decide`? simp does NOT call decide by default... Actually simp can solve `(2 : Fin 3) ≠ 1` if there's a simp lemma... there isn't.
+
+Easiest robust: prove the closed forms with explicit indices directly via `decide`:
+```
+example (Xv : Vec3') : ((Pi.basisFun ℝ (Fin 3) 1) ⨯₃ Xv) 1 = 0 := by
+  rw [cross_apply]
+  simp [Pi.single_eq_same]
+  norm_num [show (2 : Fin 3) ≠ 1 by decide]
+```
+Hmm the goal after cross_apply: `Pi.single 1 1 1 * Xv 2 - Pi.single 1 1 2 * Xv 1 = 0`. simp [Pi.single_eq_same] rewrites single 1 1 1 = 1. Then `Pi.single 1 1 2` remains: rewrite with `rw [Pi.single_eq_of_ne (by decide)]`. So: 
+```
+rw [cross_apply]
+simp only [Pi.single_eq_same, Pi.single_eq_of_ne (by decide), mul_zero, sub_self]
+```
+Hmm but `Pi.single_eq_of_ne (by decide)` as simp lemma: simp uses it and the hyp is the provided proof — need the ne for (2 : Fin 3) ≠ 1: `by decide` works.
+
+2. The `where` clause after example doesn't work that way in Lean (definitions inside where are fine actually — `example ... := by ... where` — no, `where` attaches to declarations; for `example`, you can't use where. Move defs before.
+
+This is getting fiddly. Step back: rather than fighting the basisFun singles, define the THREE basis vectors and NINE closed-form cross coordinates as explicit constants, proved once with fin_cases/decide:
+
+```
+def e (k : Fin 3) : Vec3' := Pi.basisFun ℝ (Fin 3) k   -- keep using basisFun in statements
+
+-- closed forms:
+lemma e0 : e 0 = ![1, 0, 0] := by ext j; fin_cases j <;> simp [e]
+```
+Hmm — `![1, 0, 0] : Vec3'` as a vector literal. And cross coordinates:
+```
+lemma cross_e0 (Xv : Vec3') : (e 0) ⨯₃ Xv = ![(0 : ℝ), - Xv 2, Xv 1] := by
+  ext j; fin_cases j <;> rw [cross_apply] <;> simp [e, Pi.single_eq_same, Pi.single_eq_of_ne (by decide)]
+```
+Wait — does `![0, -Xv 2, Xv 1]` elaborate? `![a, b, c]` with a b c : ℝ. And `rw [cross_apply]` on `(e 0 ⨯₃ Xv) j`: e 0 ⨯₃ Xv rewrites to `![(e 0) 1 * Xv 2 - (e 0) 2 * Xv 1, ...]`; then `(e 0) 1` etc — e 0 = basisFun 0 → simp [e] → Pi.single 0 1 1 → single_eq_of_ne (by decide) → 0. Then the goal is `![...] j = (![...] ) j`-ish → fin_cases j → literal evaluation via simp.
+
+Actually — hold on, is there a simpler path? For `Pi.single` there's a simp lemma `Pi.single_eq_of_ne' : i ≠ j → single i a j = 0`? Same thing. What about `norm_num` knowing how to compute single? It didn't.
+
+What about using `fin_cases` + `native_decide`... forbidden. OK — the decide route: simp [Pi.single_eq_of_ne] leaves side goal (2 : Fin 3) ≠ 1 which `simp` can close? simp closes by trying `decide`? No. But we can do `simp [Pi.single_eq_same, Pi.single_eq_of_ne (by decide)]`? The lemma with the proof provided: `Pi.single_eq_of_ne (by decide)` : `Pi.single (1 : Fin 3) 1 2 = 0`? No — the lemma needs (1 : Fin 3) ≠ 2 for single 1 1 2. `by decide : (1 : Fin 3) ≠ (2 : Fin 3)` ✓. But as a simp lemma `Pi.single_eq_of_ne (by decide)` — simp treats it as a rewrite lemma with condition already discharged: it's `Pi.single 1 1 2 = 0`... wait the lemma's type is `Pi.single i a j = 0` with hyp i ≠ j; applying to i=1, j=2: `Pi.single (1 : Fin 3) 1 (2 : Fin 3) = 0` ✓ matches. So `simp [Pi.single_eq_same, Pi.single_eq_of_ne (by decide : (1 : Fin 3) ≠ (2 : Fin 3))]` rewrites that specific occurrence. Since goals after fin_cases j are fully instantiated (all indices numerals), I can provide all 6 needed ne-pairs... clunky but works. Alternatively write `norm_num [Pi.single_eq_same, Pi.single_eq_of_ne]`? — norm_num tries each rw lemma and discharges the side condition with its own arithmetic — norm_num CAN prove (1 : Fin 3) ≠ 2 (decidable, via reduce?). The earlier attempt `norm_num` alone failed with `⊢ Pi.single 1 1 2 = 0 ∨ Xv 0 = 0` — norm_num treated single as an unknown function (can't unfold). With `norm_num [Pi.single_eq_of_ne]` it might work: it rewrites via the lemma and proves the condition itself. Let me test that specifically.
+
+Also — alternative without any of this pain: since fin_cases gives three goals, use `decide` + `Pi.single_eq_of_ne` in each. Let me write helper:
+
+```
+lemma basisFun_apply_ne {i j : Fin 3} (h : i ≠ j) : (Pi.basisFun ℝ (Fin 3) i) j = 0 := by
+  rw [Pi.basisFun_apply, Pi.single_eq_of_ne h]
+```
+
+and then in the fin_cases goals: `simp [basisFun_apply_ne (by decide), Pi.single_eq_same]`? simp with basisFun_apply_ne (by decide): as simp lemma it matches `(Pi.basisFun ℝ (Fin 3) i) j = 0` where i, j are metavariables — the provided proof is fixed to specific indices — no. Hmm, as a simp lemma with hyp h : i ≠ j — simp would need to discharge h — no.
+
+OK let me just test `norm_num [Pi.single_eq_of_ne]` and `norm_num [basisFun_apply_ne]`.
+dsh: reasoning:
+norm_num doesn't use single_eq_of_ne as a rw (it's not a simp lemma, and norm_num [..] uses them as rewrite rules but got stuck — it reduced to `Pi.single 1 1 2 = 0 ∨ Xv 0 = 0` — meaning norm_num DID try single_eq_of_ne but couldn't prove the side condition (1 : Fin 3) ≠ (2 : Fin 3)? Odd — norm_num should be able to decide Fin inequalities... maybe norm_num can't handle Fin literals that way.
+
+Simplest deterministic approach: provide the six ne-proofs explicitly. Actually — cleaner idea: use `simp only [Pi.single_eq_same]` then handle each off-diagonal single with a dedicated rewrite `show Pi.single 1 1 2 = 0 by exact Pi.single_eq_of_ne (by decide)`. But even simpler: define the cross-product-with-basis in closed form ONCE via decide-heavy proofs, as a single lemma with fin_cases + decide:
+
+```
+lemma cross_basisFun_apply (k j : Fin 3) (Xv : Vec3') :
+    (((Pi.basisFun ℝ (Fin 3) k) ⨯₃ Xv) j) = ... closed form ...
+```
+The closed form depends on (k,j) pairs — 9 cases. With `fin_cases k <;> fin_cases j <;> rw [cross_apply] <;> simp [Pi.single_eq_same]` — the off-diagonal singles remain as `Pi.single 1 1 2`... 
+
+Hmm — what does `simp` do with `Pi.single (1 : Fin 3) 1 (2 : Fin 3)`? There might be a simp lemma `Pi.single_eq_of_ne` that simp CAN use when i and j are syntactically distinct LITERALS? No — simp needs to prove ≠.
+
+Wait — maybe there's `norm_num` support for Fin via `norm_num1`... The output shows norm_num got stuck at the ∨ goal. Perhaps `decide` can prove the whole coordinate equality: the goal `Pi.single 1 1 2 = 0` is decidable? DecidableEq... `decide` computes: Pi.single 1 1 2 = if 2 = 1 then 1 else 0 = 0. decide can evaluate this! So `decide` proves it directly? The goal is a Prop about ℝ equality — decidability of ℝ equality exists (classical). Hmm — decide uses computation: Pi.single is computable, 2 = 1 is false, so it reduces to 0 = 0 — decide should prove it! Let me test `by decide` on `Pi.single 1 1 2 = 0`... it might work via reduction. Let me test:
+
+`example : Pi.single (1 : Fin 3) (1 : ℝ) (2 : Fin 3) = 0 := by decide` — decide needs Decidable instance for ℝ = — classical gives DecidableEq ℝ? ℝ has DecidableEq? No! ℝ does not have DecidableEq. So decide fails.
+
+OK the definitive approach: `Pi.single_eq_of_ne` with explicit `by decide` proofs:
+
+```
+lemma single11_2 : Pi.single (1 : Fin 3) (1 : ℝ) (2 : Fin 3) = 0 := Pi.single_eq_of_ne (by decide)
+```
+
+That's fine — write a helper for the 6 off-diagonals, or actually — better — write the closed-form coordinate lemmas once and for all with explicit rewrites. Let me define:
+
+```
+lemma cross_e0 (Xv : Vec3') : (Pi.basisFun ℝ (Fin 3) 0) ⨯₃ Xv = ![(0 : ℝ), - Xv 2, Xv 1] := by
+  ext j; fin_cases j <;> rw [cross_apply] <;> simp [Pi.basisFun_apply, Pi.single_eq_same,
+    Pi.single_eq_of_ne (by decide : (0 : Fin 3) ≠ (1 : Fin 3)),
+    Pi.single_eq_of_ne (by decide : (0 : Fin 3) ≠ (2 : Fin 3))] <;> ring
+```
+Hmm wait — as simp lemmas `Pi.single_eq_of_ne (by decide : (0:Fin 3) ≠ (1 : Fin 3))` has type `Pi.single (0 : Fin 3) ?a (1 : Fin 3) = 0` — matches single 0 a 1 ✓. And for `single 0 1 2` need the (0 ≠ 2) proof. In each fin_cases branch only specific singles appear. Since after fin_cases j ALL indices are literals, providing the complete set of 6 off-diagonal single rewrites + single_eq_same closes everything. The `simp` call with the full list in all branches (unused lemmas are warnings, not errors — set_option linter unusedSimpArgs? just accept warnings or structure per-branch). Warnings are fine but noisy; let me instead write the closed forms as a single lemma with 9 fin_cases branches? Same thing.
+
+Hmm — ACTUALLY, wait. Let me reconsider: `![a, b, c]` — the vector notation. After `ext j; fin_cases j`, goal e.g. `(![...]) 0 = (![0, -Xv 2, Xv 1]) 0` — `simp` alone evaluates the literal applications `(![a,b,c]) 0 = a`? In So3Model sectional_nonflat's proof: `simp [Pi.basisFun_apply, dotProduct_single, cross_apply]` worked for a closed goal (was it checked? unknown). Let me test whether `(![1,0,0]) 1 = 0` simplifies by simp: the notation ![...] for Fin 3 → ℝ is `Matrix.of`/`vecCons`... I think `![a,b,c] 0` — simp handles via `Matrix.cons_val_zero`. The Height/MvPolynomial precedent: `fin_cases j <;> simp [p, q, Fin.sum_univ_three] <;> ring` — they got it working with functions p, q defined via explicit matching. Let me just define the basis vectors with explicit literals as defs and prove the needed facts about them with fin_cases + simp [def] — and define everything through these literal defs (never Pi.single):
+
+```
+def e0 : Vec3' := ![(1 : ℝ), 0, 0]
+def e1 : Vec3' := ![0, (1 : ℝ), 0]
+def e2 : Vec3' := ![0, 0, (1 : ℝ)]
+```
+But then `stdMetric` uses Pi.basisFun — I'd need to connect e_k to basisFun... For the DerivationData/bochner machinery I need `m.basis` = Pi.basisFun anyway for the abstract theorems. Hmm — for the ricci_eq_half_metric and crossLeviCivita I need basisFun; for the derivation computations I can use basisFun too but the *cross-with-basis* computations get messy.
+
+Alternative that avoids ALL of this: prove cross_coord_sum and friends not by fin_cases on Fin 3, but abstractly!
+
+`cross_coord_sum` abstract proof: (u ⨯₃ polyVec Y) j = ∑ₖ uₖ C((eₖ×Y)ⱼ). Hmm — abstractly: crossProduct is bilinear; ∑ₖ uₖ eₖ = u (basis expansion: `Basis.sum_repr`); so u ⨯₃ polyVec Y = (∑ₖ uₖ eₖ) ⨯₃ polyVec Y = ∑ₖ uₖ (eₖ ⨯₃ polyVec Y) — coordinatewise: (u ⨯₃ polyVec Y) j = ∑ₖ uₖ (eₖ ⨯₃ polyVec Y) j = ∑ₖ uₖ C((eₖ×Y)ⱼ). The identity (eₖ ⨯₃ polyVec Y) j = C((eₖ×Y)ⱼ) — the cross product over A of a basis-vector-with-C-coefficients equals C of the ℝ cross product: polyVec (eₖ×Y) = polyVec eₖ ⨯₃ polyVec Y — crossProduct commutes with polyVec: `polyVec (X ⨯₃ Y) = polyVec X ⨯₃ polyVec Y` — since C is a ring hom and cross coordinates are ± products: provable by fin_cases j + rw [cross_apply] + simp [polyVec] + ring — no Pi.single needed!! Because polyVec eₖ = C of ℝ-literals — no, wait: `polyVec (eₖ × Y) j = C ((eₖ×Y) j)` vs `(polyVec eₖ ⨯₃ polyVec Y) j = (polyVec eₖ) 1 * (polyVec Y) 2 − ... = C((eₖ) 1) C(Y 2) − ... = C((eₖ×Y) j)` — the inner (eₖ) 1 with k : Fin 3 abstract — no literals — C((eₖ) 1 · Y 2 − (eₖ) 2 · Y 1) — and ring homs map ℝ arithmetic: C(a·b) = C a · C b, C(a−b) = C a − C b, C(−a) = −C a — provable abstractly by simp [polyVec, map_mul, map_sub, map_neg] + ring! And (eₖ×Y) j vs (polyVec eₖ ⨯₃ polyVec Y) j: both expand via cross_apply to the same ℝ expression under C. So `polyVec_cross (X Y : Vec3') : polyVec (X ⨯₃ Y) = polyVec X ⨯₃ polyVec Y` — provable with ext j; fin_cases j <;> rw [cross_apply] <;> simp [polyVec, map_sub, map_mul] <;> ring — the only literals involved are the index numerals themselves (which fin_cases handles). No Pi.single anywhere. 
+
+Then:
+- `vField` := xVec ⨯₃ polyVec X — linearity in X: xVec ⨯₃ polyVec (X+Y) = xVec ⨯₃ polyVec X + xVec ⨯₃ polyVec Y — via polyVec_cross + polyVec additivity + cross bilinearity: polyVec (X+Y) = polyVec X + polyVec Y: `polyVec_add` — ext i; simp [polyVec] (C (X i + Y i) = C (X i) + C (Y i) via map_add ✓). Then rw [polyVec_add] gives crossProduct xVec applied to a syntactic sum → map_add ✓. Similarly smul: polyVec (c•X) = c • polyVec X? C (c · X i) = C c · C (X i) = c • C (X i) — `polyVec_smul`: ext i; simp [polyVec, map_mul] (c • f = C c * f? In MvPolynomial, c • p = C c * p — simp knows `smul_eq_mul`? There's `Algebra.smul_def`/`smul_eq_mul` — simp [smul_eq_mul]? Might need `simpa [polyVec] using congrArg...`. Test.)
+
+So the abstract (basis-free where possible) plan:
+
+Core lemmas (all coordinate computations via fin_cases on the OUTPUT index j only):
+1. `polyVec_add`, `polyVec_smul`, `polyVec_cross`.
+2. `vFieldLin : Vec3' →ₗ[ℝ] (Fin 3 → A) := { toFun X := xVec ⨯₃ polyVec X, ... }` via 1.
+3. `vField_eq_sum_basis`: vField X j = ∑ₖ C(((basisFun k) ⨯₃ X) j) * X k. Hmm — this one still needs basis cross coordinates... OR avoid it entirely: instead of going through "pderiv i (vField Y j) = C((eᵢ×Y)ⱼ)", go through a cleaner chain:
+
+   pderiv i (vField Y j): write vField Y = xVec ⨯₃ polyVec Y. pderiv i of a coordinate of an A-vector that is an A-multilinear expression in the variables with constant coefficients. General lemma: if f = ∑ₖ cₖ X k (linear form), pderiv i f = C... still needs the linear-combo expansion. Hmm.
+
+   Alternative chain without ANY basis expansion: note ∂ᵢ(x×Y)ⱼ = (eᵢ×Y)ⱼ. We can prove `pderiv_i_vField (i j) : pderiv i (vField Y j) = C (((Pi.basisFun ℝ (Fin 3) i) ⨯₃ Y) j)` via fin_cases i <;> fin_cases j <;> rw [cross_apply]... — the vField Y j expands into x₁C(Y₂) − x₂C(Y₁) etc with literal indices; pderiv_X_self/X_of_ne handles pderiv i (X k) with literals; the off-diagonal singles GONE because we use literal indices and X-variables directly. The basis cross (eᵢ×Y)ⱼ with literal i,j expands via cross_apply into ℝ literals times Y coordinates: `C (((basisFun 1) ⨯₃ Y) 0)` = C(Y 2) needs (basisFun 1) 1 = 1 etc — Pi.single AGAIN. Ugh.
+
+   OK — decisively: I will define my own literal basis vectors AND prove they equal basisFun, using decide at the single point where needed:
+
+```
+def e0 : Vec3' := ![(1 : ℝ), 0, 0] -- etc
+lemma e0_eq : e0 = Pi.basisFun ℝ (Fin 3) 0 := by
+  ext j; fin_cases j <;> simp [e0, Pi.basisFun_apply, Pi.single_eq_same,
+    Pi.single_eq_of_ne (by decide), Pi.single_eq_of_ne (by decide)]
+```
+Hmm — the (by decide) proofs: `(0 : Fin 3) ≠ (1 : Fin 3)` by decide ✓, `(0 : Fin 3) ≠ (2 : Fin 3)` by decide ✓. With three e's, 6 decide proofs total, one-time cost. Wait, in the fin_cases branches: for e0_eq, branches j = 0,1,2: j=0: goal e0 0 = basisFun 0 0 — simp [e0] → 1 = single 0 1 0 → single_eq_same → done. j=1: 0 = single 0 1 1 → single_eq_of_ne (0≠1 by decide). j=2: single_eq_of_ne (0≠2 by decide). Including both decide-lemmas in the simp list for all branches works (unused warnings ok). 
+
+Then define cross coordinate closed forms:
+```
+lemma cross_e0 (Xv : Vec3') : ((Pi.basisFun ℝ (Fin 3) 0) ⨯₃ Xv) = ![(0 : ℝ), - Xv 2, Xv 1] := by
+  ext j; fin_cases j <;> rw [cross_apply] <;> simp [Pi.basisFun_apply, Pi.single_eq_same, Pi.single_eq_of_ne (by decide), Pi.single_eq_of_ne (by decide)]
+```
+Wait — (basisFun 0) ⨯₃ Xv via cross_apply = ![(basisFun 0) 1 * Xv 2 - (basisFun 0) 2 * Xv 1, (basisFun 0) 2 * Xv 0 - (basisFun 0) 0 * Xv 2, (basisFun 0) 0 * Xv 1 - (basisFun 0) 1 * Xv 0] — then with simp [basisFun_apply] → single 0 1 k terms — then single_eq_same/ne. ✓. These 3×3 closed forms give me everything: cross_coord_sum and vField_pderiv_coeff become provable via these closed forms + Fin.sum_univ_three + fin_cases j.
+
+Hmm, wait — cross_coord_sum needs (eₖ×Y)ⱼ for all k as k ranges over the sum ∑ₖ — after Fin.sum_univ_three the k's are literals and cross_e0/e1/e2 closed forms apply ✓.
+
+Actually — hmm, let me reconsider whether I even need cross_coord_sum / the sum-over-basis form. The bracket_deriv proof needs ∑ᵢ vXᵢ·∂ᵢ(vYⱼ) = ((x×X)×Y)ⱼ. With vField defined as xVec ⨯₃ polyVec X and ∂ᵢ(vYⱼ) = C((eᵢ×Y)ⱼ), we need ∑ᵢ (x×X)ᵢ C((eᵢ×Y)ⱼ) = ((x×X)×Y)ⱼ. This is EXACTLY cross_coord_sum with u := vField X (since (x×X) = vField X and polyVec (eᵢ×Y)ⱼ-coefficient form). So yes, cross_coord_sum (or an equivalent lemma) is needed. Its proof via closed forms: ext? no — it's for fixed j: fin_cases j; rw [Fin.sum_univ_three, cross_e0, cross_e1, cross_e2 (rewriting the summands)]; simp [polyVec]; rw [cross_apply] for (u ⨯₃ polyVec Y); simp; ring. The u is abstract (a generic A-vector) so ring treats u 0, u 1, u 2 as atoms ✓.
+
+OK — this is all implementable. It's a fair amount of Lean code but the plan is now concrete. Let me also handle pderiv_comm. And then assemble.
+
+Given the 4-hour budget and the amount of remaining work, let me organize:
+
+Step 1 (this invocation): Fix So3Model.lean import + ricci_eq_half_metric proof; get the module compiling with the crossDerivation defined but... no — the acceptance rules forbid leaving sorry. If crossDerivation isn't finished, leave it OUT of So3Model for now (comment noting WIP) and finish ricci + downstream: sectional_nonflat + ricci + crossLeviCivita (the LeviCivitaExistenceStatement closure) + the so(3) Bochner instantiation only once crossDerivation is done.
+
+Plan: 
+1. Fix import; prove ricci_eq_half_metric (no sorry). Add the downstream lemmas that don't need the derivation: e.g. `meanConnection_ricci_eq_half_metric` corollary etc. Also a nice corollary: `so3_scalarCurvature`? Scalar curvature needs the metric sharp — skip.
+2. Build crossDerivation with all sub-lemmas (probes first, then the real file).
+3. Downstream: so3_ricciContraction (Ric(∇u,∇u) = ½|∇u|²), so3 Bochner identity instantiation, non-vacuity lemmas.
+4. sympy verification script for the so(3) instantiation.
+5. Axiom audit + checkpoint + results update.
+
+Let me start with the probes for the pderiv_comm lemma and the derivation structure. Actually, time is ticking; let me write the real So3Model.lean directly, but in stages, compiling after each stage. First stage: fix import + ricci_eq_half_metric.
+dsh: reasoning:
+First, let me write the So3Model.lean with the import fixed and ricci_eq_half_metric proved. Let me check the current ricci_eq_half_metric statement and what `CurvatureOperator.ricci` needs. Also I should check what `ricci_eq_sum_basis` is — it appeared in the sorry comment: `rw [CurvatureOperator.ricci_eq_sum_basis stdMetric crossLeviCivita.toCurvatureOperator X Y]`. That's not the right name — the lemma is `ricci_eq_ricciSum`. Let me check if there's another lemma in LeviCivitaIdentities (TensorCalculus?) — BochnerIdentity imports TensorCalculus which might have `LeviCivitaIdentities.ricci_eq_sum_curvatureForm`. Let me check TensorCalculus.lean for ricci lemmas that could help here.
+dsh: reasoning:
+`LeviCivitaIdentities.ricci_eq_sum_curvatureForm` is the perfect bridge for ricci_eq_half_metric:
+
+`CurvatureOperator.ricci d.toCurvatureOperator X Y = ∑ i, curvatureForm m d.toCurvatureOperator (m.basis i) X Y (m.basis i)`
+
+where `curvatureForm m K X Y Z W = m.form (K X Y Z) W` presumably.
+
+Then with K = crossLeviCivita.toCurvatureOperator: = ∑ᵢ ⟨R(eᵢ,X)Y, eᵢ⟩ = ∑ᵢ ⟨−¼((eᵢ×X)×Y), eᵢ⟩ (via curvature_eq_quarter_doubleBracket — note the order: curvature_eq_quarter_doubleBracket says toCurvatureOperator X Y Z = (−¼)•((X⨯Y)⨯Z) — for R(eᵢ,X)Y: = −¼((eᵢ×X)×Y) ✓).
+
+Then = ∑ᵢ ⟨−¼((eᵢ×X)×Y), eᵢ⟩ = −¼·∑ᵢ ⟨(eᵢ×X)×Y, eᵢ⟩.
+
+⟨(eᵢ×X)×Y, eᵢ⟩ = XᵢYᵢ − ⟨X,Y⟩ (computed earlier) — via cross_cross_eq_smul_sub_smul: (eᵢ×X)×Y = (eᵢ·Y)X − (X·Y)eᵢ. So ⟨(eᵢ×X)×Y, eᵢ⟩ = Yᵢ⟨X,eᵢ⟩ − ⟨X,Y⟩⟨eᵢ,eᵢ⟩ = YᵢXᵢ − ⟨X,Y⟩·1.
+
+Sum over i: ∑ᵢ XᵢYᵢ − ∑ᵢ ⟨X,Y⟩ = ⟨X,Y⟩ − 3⟨X,Y⟩ = −2⟨X,Y⟩.
+
+So Ric = −¼·(−2⟨X,Y⟩) = ½⟨X,Y⟩.
+
+In Lean:
+```
+lemma ricci_eq_half_metric (X Y : Vec3) :
+    CurvatureOperator.ricci crossLeviCivita.toCurvatureOperator X Y = (1 / 2 : ℝ) * (X ⬝ᵥ Y) := by
+  rw [LeviCivitaIdentities.ricci_eq_sum_curvatureForm crossLeviCivita X Y]
+```
+Hmm — `ricci_eq_sum_curvatureForm` is in namespace `Poincare.D12.TensorMaximumBochner.LeviCivitaIdentities` with implicit params (d : LeviCivitaData m b) and (X Y : V). So3Model has `open Poincare.D12.TensorMaximumBochner`? It imports BochnerIdentity which is in that namespace. Let me write `LeviCivitaIdentities.ricci_eq_sum_curvatureForm (d := crossLeviCivita) X Y`? The variables m, b are implicit — from d they're inferred ✓. But the curvatureForm m — m := stdMetric inferred from d. OK.
+
+Then: goal: ∑ i, curvatureForm stdMetric crossLeviCivita.toCurvatureOperator (stdMetric.basis i) X Y (stdMetric.basis i) = ½(X·Y).
+
+For each i: curvatureForm m K (e i) X Y (e i) = m.form (K (e i) X Y) (e i) = ⟨−¼((eᵢ×X)×Y), eᵢ⟩ (by curvature_eq_quarter_doubleBracket). = −¼·⟨(eᵢ×X)×Y, eᵢ⟩ = −¼·(YᵢXᵢ − X·Y) (via cross_cross_eq_smul_sub_smul + dot lemmas).
+
+Then the sum: ∑ᵢ −¼(YᵢXᵢ − X·Y) = −¼(∑ᵢ YᵢXᵢ − 3(X·Y)) = −¼((X·Y) − 3(X·Y)) = −¼(−2(X·Y)) = ½(X·Y).
+
+Lean steps:
+1. `apply Finset.sum_congr rfl; intro i _; ...` per-summand: 
+   - unfold curvatureForm (check its def in Contraction.lean).
+   - rw [curvature_eq_quarter_doubleBracket (stdMetric.basis i) X Y]
+   - the form: m.form (−¼•((eᵢ×X)×Y)) (eᵢ) = −¼·(m.form ((eᵢ×X)×Y) (eᵢ)) — map_smul of the linear form.
+   - rw [cross_cross_eq_smul_sub_smul] to expand ((eᵢ×X)×Y) = ((eᵢ⬝ᵥY)•X − (X⬝ᵥY)•eᵢ).
+   - m.form of the smul-sub combination: (eᵢ·Y)⟨X,eᵢ⟩ − (X·Y)⟨eᵢ,eᵢ⟩ = YᵢXᵢ − (X·Y) — need ⟨eᵢ,eᵢ⟩ = 1: MetricData.form_basis_apply? In the basis orthonormal: m.orthonormal i j : m.form (basis i) (basis j) = if i = j then 1 else 0. There's probably a lemma form_basis_apply or similar in MetricData. Also ⟨X,eᵢ⟩ = m.form X (eᵢ) = Xᵢ·... — need `m.form X (basis i) = Xᵢ`? There's a repr-based lemma: form_basis_apply or `form_eq_coord`? Let me check MetricData.lean for the coordinate lemmas (X ⬝ᵥ Y via basis coordinates: m.form X Y = ∑ᵢ XᵢYᵢ — MetricData might have a lemma `form_eq_sum_repr` or similar). Let me grep MetricData.lean.
+
+2. After per-summand equality, the outer sum: −¼·(∑ᵢ (YᵢXᵢ) − 3·(X·Y))... with Finset.sum_sub_distrib, sum_const, then: ∑ᵢ YᵢXᵢ = ∑ᵢ XᵢYᵢ = X·Y (dotProduct def: X ⬝ᵥ Y = ∑ᵢ XᵢYᵢ — `dotProduct` unfolds; and Fintype.card (Fin 3) = 3 by norm_num/Fintype.card_fin). Then ring/norm_num.
+
+Let me look at MetricData.lean quickly for the available form lemmas.
+dsh: reasoning:
+All the pieces are in place:
+- `curvatureForm m K X Y Z W = m.form (K X Y Z) W`
+- `form_basis_apply m i Y : m.form (basis i) Y = basis.repr Y i` — and for stdMetric, basis = Pi.basisFun, repr = id, so form (eᵢ) Y = Yᵢ.
+- `ricci_eq_sum_curvatureForm` for the frame sum.
+
+Now the per-summand computation for ricci_eq_half_metric:
+
+curvatureForm stdMetric K (e i) X Y (e i) = stdMetric.form (K (e i) X Y) (e i) = ⟨−¼•((eᵢ×X)×Y), eᵢ⟩.
+
+stdMetric.form (−¼ • W) (e i) = −¼ · (stdMetric.form W (e i)) — map_smul on the linear form.
+
+⟨(eᵢ×X)×Y, eᵢ⟩: rw [cross_cross_eq_smul_sub_smul (eᵢ) X Y]: (eᵢ×X)×Y = ((eᵢ⬝ᵥY)•X − (X⬝ᵥY)•eᵢ). So form = (eᵢ⬝ᵥY)·⟨X,eᵢ⟩ − (X⬝ᵥY)·⟨eᵢ,eᵢ⟩. 
+
+⟨X, eᵢ⟩ = stdMetric.form X (e i) = form_symm → form (e i) X = repr X i = Xᵢ.
+⟨eᵢ,eᵢ⟩ = form (e i) (e i) = repr (e i) i = (basisFun ℝ (Fin 3)) i i = 1.
+eᵢ⬝ᵥY = (basisFun i) ⬝ᵥ Y = Yᵢ? dotProduct of single-vector with Y: `dotProduct_single`? For the Pi.basisFun form: (Pi.single i 1) ⬝ᵥ Y = Y i — mathlib lemma `dotProduct_single_one`? So3Model's stdMetric proof used `dotProduct_single_one`. Probably `Pi.dotProduct_single_one` or `dotProduct_single`. There's `dotProduct_single` in mathlib: `(Pi.single i x) ⬝ᵥ v = x * v i` — likely. So eᵢ·Y = Yᵢ (with x = 1).
+
+So the summand = −¼(YᵢXᵢ − (X·Y)). Sum over i: ∑ᵢ −¼(YᵢXᵢ − X·Y) = −¼(∑ᵢ XᵢYᵢ − ∑ᵢ (X·Y)) = −¼((X·Y) − 3(X·Y)) = −¼(−2(X·Y)) = ½(X·Y). 
+
+The stdMetric.form X (e i) — X·eᵢ: form_basis_apply gives form (e i) X = repr X i; form_symm gives form X (e i) = repr X i = X i ✓.
+
+Now, summand equality in Lean:
+```
+have hsummand : ∀ i, curvatureForm stdMetric crossLeviCivita.toCurvatureOperator (stdMetric.basis i) X Y (stdMetric.basis i)
+    = -(1 / 4 : ℝ) * (Y i * X i - X ⬝ᵥ Y) := by
+  intro i
+  rw [curvatureForm]
+  rw [curvature_eq_quarter_doubleBracket (stdMetric.basis i) X Y]
+  -- stdMetric.form ((-1/4) • ((eᵢ×X)×Y)) (e i)
+  simp only [map_smul, LinearMap.smul_apply]  -- or rw [map_smul]
+  -- = (-1/4) * stdMetric.form ((eᵢ×X)×Y) (e i)
+  congr 1? 
+```
+Hmm — map_smul for the bilinear form: stdMetric.form : V →ₗ[ℝ] V →ₗ[ℝ] ℝ — applied to (−¼•W): form (−¼•W) (e i) = −¼·(form W (e i)) — `map_smul (stdMetric.form) ...`? form as a function: `stdMetric.form W : V →ₗ[ℝ] ℝ`. `map_smul` needs the linear map — simp [map_smul] might handle. Or `rw [LinearMap.map_smul]`... Let me write:
+```
+  change stdMetric.form ((-1 / 4 : ℝ) • ((stdMetric.basis i ⨯₃ X) ⨯₃ Y)) (stdMetric.basis i) = ...
+  rw [LinearMap.map_smul]  -- hmm form W : V →ₗ ℝ, map_smul: (form W) (a•v) = a•(form W v) — that's for the second slot. For the first slot: form is a linear map V →ₗ (V →ₗ ℝ): map_smul (form) a W: form (a•W) = a•(form W) ✓ — LinearMap.map_smul.
+```
+So `rw [map_smul]` with the right elaboration... In practice `simp only [map_smul, LinearMap.smul_apply, smul_eq_mul]` then the goal: (−¼) * form ((eᵢ×X)×Y) (eᵢ) = −¼·(YᵢXᵢ − X·Y) → congr/ring after computing form ((eᵢ×X)×Y) (eᵢ).
+
+form ((eᵢ×X)×Y) (eᵢ) via cross_cross_eq_smul_sub_smul:
+```
+  rw [cross_cross_eq_smul_sub_smul (stdMetric.basis i) X Y]
+  -- form ((eᵢ·Y)•X − (X·Y)•eᵢ) (eᵢ)
+  simp only [map_sub, map_smul, LinearMap.sub_apply, LinearMap.smul_apply, smul_eq_mul]
+  -- (eᵢ·Y)·form X (eᵢ) − (X·Y)·form (eᵢ) (eᵢ)
+  -- form X (eᵢ) = X i, form (eᵢ)(eᵢ) = 1, eᵢ·Y = Y i
+  rw [show stdMetric.form X (stdMetric.basis i) = X i by
+    rw [stdMetric.form_symm]
+    simpa [stdMetric] using MetricData.form_basis_apply stdMetric i X]  -- hmm form_basis_apply gives form (basis i) X = repr X i = X i (Pi.basisFun_repr)
+  ...
+```
+Wait — form_basis_apply m i Y : m.form (m.basis i) Y = m.basis.repr Y i. For stdMetric: = (Pi.basisFun ℝ (Fin 3)).repr Y i = Y i by basisFun_repr (simp). So `simpa [stdMetric] using MetricData.form_basis_apply stdMetric i X` gives form (e i) X = X i — note `stdMetric` is a def with fields; form_basis_apply needs to see stdMetric.form = dotProduct? No — form_basis_apply is a theorem about any MetricData ✓, using only orthonormal+basis fields. 
+
+And form (e i) (e i) = repr (e i) i = (basisFun i) i = 1: basisFun_apply → Pi.single i 1 i = 1 by single_eq_same — simp ✓: `simpa [stdMetric, Pi.single_eq_same] using MetricData.form_basis_apply stdMetric i (stdMetric.basis i)`. Hmm — repr (basis i) i — `(Pi.basisFun ℝ (Fin 3)).repr (basisFun i) i` — basisFun_repr: repr x i = x i → (basisFun i) i → basisFun_apply → single i 1 i → single_eq_same → 1 ✓.
+
+And eᵢ·Y = Y i: `(stdMetric.basis i) ⬝ᵥ Y = Y i` — lemma? mathlib: `dotProduct_single` : `(Pi.single i a) ⬝ᵥ v = a * v i`? Let me check. There's `dotProduct_single` in Mathlib/Data/Fin/VecNotation? or Pi. In So3Model's stdMetric orthonormal proof they used `simp [dotProduct_single_one, Pi.basisFun_apply]`. So `dotProduct_single_one` exists: `(Pi.single i 1) ⬝ᵥ v = v i` probably. So: `simpa [stdMetric.basis, Pi.basisFun_apply] using dotProduct_single_one (1 : ℝ) Y` — hmm need to check its statement. Let me grep.
+
+Then the sum: 
+```
+  rw [LeviCivitaIdentities.ricci_eq_sum_curvatureForm crossLeviCivita X Y]
+  -- = ∑ i, curvatureForm ... — but need m inferred = stdMetric ✓ (from d := crossLeviCivita)
+  have hsummand : ...
+  rw [Finset.sum_congr rfl (fun i _ => hsummand i)]
+  -- ∑ i, -¼*(Y i * X i - X⬝ᵥY) = ½ (X⬝ᵥY)
+  rw [Finset.sum_mul, ... ] — sum of −¼·(...) = −¼·∑(...): Finset.sum_mul? (−¼)·f — sum over i of (−¼)·(f i) = (−¼)·∑ f i — rw [← Finset.mul_sum]? (−¼) * ∑ f = ∑ (−¼) * f — rw [Finset.mul_sum]... need smul form: (−¼)•(...) with smul_eq_mul — use `rw [← Finset.smul_sum]`? or just `simp [smul_eq_mul]` → −¼·∑ᵢ (YᵢXᵢ − X·Y). Then ∑ᵢ (YᵢXᵢ − X·Y) = (∑ᵢ XᵢYᵢ) − 3·(X·Y) = (X·Y) − 3(X·Y) = −2(X·Y). Then −¼·(−2(X·Y)) = ½(X·Y) — norm_num/ring.
+  ∑ᵢ YᵢXᵢ = ∑ᵢ XᵢYᵢ via mul_comm; = X⬝ᵥY via dotProduct def: `X ⬝ᵥ Y = ∑ i, X i * Y i` — `dotProduct` is `∑ i, X i * Y i` — after `change`/`unfold`? `X ⬝ᵥ Y` = `dotProduct X Y` = Finset.univ.sum (fun i => X i * Y i) — rw [dotProduct]? Let me check how So3Model used it: `rw [dotProduct]` and `simp [dotProduct]` — so `dotProduct` unfolds to the sum. Then `Finset.sum_congr rfl (fun i _ => mul_comm (Y i) (X i))`.
+  ∑ᵢ (X·Y) = 3·(X·Y): `Finset.sum_const` + `Fintype.card (Fin 3) = 3`: simp [Finset.sum_const, nsmul_eq_mul]? sum_const: ∑ x ∈ s, b = s.card • b — for ℕ-smul on ℝ: 3•b = 3*b ✓. `norm_num` for card (Fin 3) = 3 — Fintype.card_fin 3.
+```
+
+The `LeviCivitaIdentities.ricci_eq_sum_curvatureForm` — its namespace: `Poincare.D12.TensorMaximumBochner.LeviCivitaIdentities`. In So3Model, `open Poincare.D12.TensorMaximumBochner` + refer as `LeviCivitaIdentities.ricci_eq_sum_curvatureForm`? The lemma takes implicit m b and explicit d? Looking at the signature: `lemma ricci_eq_sum_curvatureForm (X Y : V) : CurvatureOperator.ricci d.toCurvatureOperator X Y = ∑ i : ι, curvatureForm m d.toCurvatureOperator (m.basis i) X Y (m.basis i)` with variable (d : LeviCivitaData m b) declared. So calling: `LeviCivitaIdentities.ricci_eq_sum_curvatureForm (d := crossLeviCivita) X Y`? Since it's `variable (d)` — the lemma has implicit {m b} and explicit (d). So `(LeviCivitaIdentities.ricci_eq_sum_curvatureForm crossLeviCivita X Y)`. And the RHS: `∑ i : Fin 3, curvatureForm stdMetric crossLeviCivita.toCurvatureOperator (stdMetric.basis i) X Y (stdMetric.basis i)` ✓.
+
+Hmm wait — one more thing: the So3Model.lean has `open Poincare.CurvatureAlgebra` and `open Poincare.Longrun.Geometry` at top — from the existing file. `curvatureForm` is in `Poincare.Longrun.Geometry`? No — curvatureForm is in Contraction.lean: namespace Poincare.Longrun.Geometry presumably. Let me check quickly — the file Contraction.lean namespace. Whatever — it's accessible via the opens in BochnerIdentity usage; So3Model imports BochnerIdentity which opens... no, namespaces don't propagate. In So3Model, `curvatureForm` needs the right open. The existing So3Model used `CurvatureOperator.ricci` — `CurvatureOperator` from `Poincare.CurvatureAlgebra` (open at top ✓).
+
+Alright — let me also verify `dotProduct_single_one` exists. Then write the new So3Model.lean. Also — the `LeviCivitaData.toCurvatureOperator_apply` simp-lemma rewrite in curvature_eq_quarter_doubleBracket — that's existing code, fine.
+
+Let me write the first version of the fixed So3Model.lean now. I'll keep the existing structure and replace the sorry with a real proof. Then compile. Then add crossDerivation in the next stage.
+dsh: reasoning:
+`dotProduct_single` : `v ⬝ᵥ Pi.single i x = v i * x` and `dotProduct_single_one` : `v ⬝ᵥ Pi.single i 1 = v i` presumably. So `(stdMetric.basis i) ⬝ᵥ Y = Y i` via basisFun_apply + dotProduct_single_one.
+
+Now let me write the updated So3Model.lean. I'll rewrite the file with:
+1. Fixed import `Mathlib.Algebra.MvPolynomial.PDeriv`.
+2. `ricci_eq_half_metric` with a real proof.
+3. Add `ricci_eq_half_metric'` in basis form + `so3_nonflat` already there.
+
+I'll write the proof carefully.
+dsh: reasoning:
+I need to read the file first (I did read it via bash cat earlier, but the tool requires a `read` call). Let me read it with the read tool then write.
+Now I'll rewrite So3Model.lean with the fixed import and a real proof of `ricci_eq_half_metric`.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

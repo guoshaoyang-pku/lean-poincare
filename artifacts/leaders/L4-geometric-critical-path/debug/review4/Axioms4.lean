@@ -1,0 +1,22 @@
+import Poincare.L4.GeodesicComparison.ConstantCurvatureRauchLower
+import Poincare.L4.GeodesicComparison.ConjugatePointBound
+
+open Poincare.L4.GeodesicComparison
+open Poincare.D12.ComparisonGeodesics
+
+#print axioms Poincare.L4.GeodesicComparison.jacobiSol_pos_of_nonpos
+#print axioms Poincare.L4.GeodesicComparison.jacobiSol_monotoneOn_of_nonpos
+#print axioms Poincare.L4.GeodesicComparison.jacobiSol_second_deriv_bound_nonpos
+#print axioms Poincare.L4.GeodesicComparison.rauch_lower_of_jacobi_constCurv
+#print axioms Poincare.L4.GeodesicComparison.constCurvModel_le_jacobi
+#print axioms Poincare.L4.GeodesicComparison.sinh_quarter_le_three
+#print axioms Poincare.L4.GeodesicComparison.sinh_one_le_three
+#print axioms Poincare.L4.GeodesicComparison.rauch_lower_constCurv_witness
+#print axioms Poincare.L4.GeodesicComparison.constCurvModel_le_jacobi_witness
+#print axioms Poincare.L4.GeodesicComparison.JacobiSolutionOn.mono
+#print axioms Poincare.L4.GeodesicComparison.conjugate_point_bound
+#print axioms Poincare.L4.GeodesicComparison.conjugate_point_bound_witness
+#print axioms Poincare.L4.GeodesicComparison.jacobi_le_constCurvModel
+#print axioms Poincare.L4.GeodesicComparison.jacobiSolTwo_le_model_witness
+#print axioms Poincare.D12.ComparisonGeodesics.riccati_ge_of_singular_normalization
+#print axioms Poincare.D12.ComparisonGeodesics.riccati_le_of_singular_normalization

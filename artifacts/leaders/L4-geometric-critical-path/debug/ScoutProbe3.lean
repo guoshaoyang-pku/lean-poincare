@@ -1,0 +1,27 @@
+import Mathlib.MeasureTheory.Measure.Lebesgue.EqHaar
+import Mathlib.MeasureTheory.Group.Measure
+import Mathlib.MeasureTheory.Measure.Haar.OfBasis
+import Mathlib.Topology.Sequences
+import Mathlib.MeasureTheory.Measure.Typeclasses.Finite
+import Mathlib.Geometry.Manifold.VectorBundle.Riemannian
+import Mathlib.Geometry.Manifold.VectorBundle.CovariantDerivative.Basic
+import Mathlib.MeasureTheory.Covering.Vitali
+
+#check @IsAddHaarMeasure
+#check @isUnifLocDoublingMeasureOfIsAddHaarMeasure
+#check @MeasureTheory.Measure.addHaar
+#check @Basis.addHaar
+#check @IsCompact.tendsto_subseq
+#check @IsCompact.tendsto_subseq'
+#check @SeqCompactSpace.tendsto_subseq
+#check @IsCompact.measure_lt_top
+#check @Bundle.RiemannianBundle
+#check @IsContinuousRiemannianBundle
+#check @Bundle.RiemannianMetric
+#check @Bundle.ContinuousRiemannianMetric
+#check @Bundle.ContMDiffRiemannianMetric
+#check @IsContMDiffRiemannianBundle
+#check @CovariantDerivative
+#check @MeasureTheory.Measure.hausdorffMeasure
+#check @HasBesicovitchCovering
+#check @MeasureTheory.VitaliFamily

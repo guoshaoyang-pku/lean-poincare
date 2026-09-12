@@ -1,0 +1,267 @@
+dsh: reasoning:
+Let me start by exploring the worktree to understand the current state of the codebase, check the checkpoint.json, and understand the D10 heat kernel code and other components.
+dsh: reasoning:
+The checkpoint says the task is COMPLETE. Let me verify the current state: check the results file, the authored files, and run a verification to confirm everything still compiles. Let me look at the key files.
+dsh: reasoning:
+The checkpoint says the task is COMPLETE with TASK_DONE. But I should verify this is genuinely correct and current — the checkpoint might be stale or the relay might expect a fresh verification. My job as the long-running builder on this invocation: "Continue from existing files and checkpoint.json in this worktree; do not restart completed work."
+
+So the task appears complete. I should verify:
+1. All 7 files compile (lake env lean, exit 0) from worktree root.
+2. Axiom audit passes.
+3. The result card exists and its last line is TASK_DONE with card path.
+
+Then just re-verify and confirm. But wait — maybe I should check whether the checkpoint is genuinely the current state, and do a fresh verification pass. Let me check the remaining files, run the compile gate, run the axiom audit, and confirm.
+
+Let me look at the other files quickly, then run verification. Actually the most important thing is to re-verify compile + axioms + forbidden tokens, since the checkpoint claims it was done. Let me do a fresh verification now.
+dsh: reasoning:
+The files look complete and well-formed. The checkpoint says COMPLETE. Let me now do a fresh verification pass:
+
+1. Compile all 7 files with `lake env lean` (exit 0) from worktree root.
+2. Run the axiom audit (`#print axioms`).
+3. Check forbidden tokens.
+4. Check the git status and results files.
+
+Let me first check StraightRays.lean quickly and All/Probe/Audit, then run the compile gate in background.
+dsh: reasoning:
+Everything looks complete and coherent. Now let me run the fresh verification:
+
+1. Compile all 7 files individually with `lake env lean` from worktree root.
+2. Run `lake build` for the whole release.
+3. Run the axiom audit.
+4. Check forbidden tokens.
+
+Since the checkpoint says everything was verified at 2026-09-10T18:07Z, and files were last modified Sep 11 02:00 (results) — the compile state should be current. Let me re-run the verification to be safe. I'll do a quick fresh gate in background, and in parallel check git status and timestamps.
+dsh: reasoning:
+The git status is empty (worktree clean). Note this is not a git repo? "git status --short" returned nothing before "---git---", so either clean or not a repo. Fine.
+
+Files were last modified Sep 11 01:45–01:57, and results were written Sep 11 02:00, checkpoint at 02:07. That is consistent with the checkpoint's COMPLETE status.
+
+Now the background compile job for Basic.lean is running. Let me also queue the other files. Actually I'll wait for the first job, then run the rest. Actually better: run all 7 files in sequence in one background job. Let me kill the first and run a full fresh gate script instead — or just let the first one finish and run the rest. The first job only compiles Basic.lean and echoes exit code. Let me start a second background job for the rest of the files, plus lake build.
+dsh: reasoning:
+Basic.lean compiled with exit 0. Now while the other jobs run, let me prepare the forbidden-token scan and the axiom audit. Let me check the tools available and the scan script.
+dsh: reasoning:
+The lake build finished already — must have been fully cached. Let me check its output and run the forbidden scan.
+dsh: reasoning:
+Lake build exit 0 (9155 jobs, 0 errors — the "14" grep count is for the word "error" which includes lines like "0 errors" or "PASS — no sorryAx... error"... wait actually "grep -ci error" returned 14. Let me check what those are. It's probably "0 errors" in build summary lines or "error" in PASS lines like "no sorryAx ... in any dependency cone" — no, that doesn't contain "error". Hmm, "grep -ci error" counted 14 lines containing "error" case-insensitively. The tail shows PASS lines that don't contain "error". Let me check.
+dsh: reasoning:
+All "error" mentions are declaration names like `error_le` in D7 Limit module audit — not build errors. The build completed successfully with 0 build errors. 
+
+Now let me check the per-file compile gate (bash-2), and run the axiom audit. The audit prints via Audit.lean. Let me wait for bash-2 and run the audit compilation.
+dsh: reasoning:
+All 7 files compile with exit 0 (Basic from bash-1, the other 6 from bash-2). Lake build exit 0. Forbidden scan clean. Now waiting for the axiom audit (bash-4).
+
+While waiting, let me review the existing result card .md to see if it's accurate and complete, and check the .json timestamps. Also verify the card's final line. I read the tail earlier: "**Last line:** TASK_DONE — card: ...". Wait — the requirement is "Last line: TASK_DONE or TASK_BLOCKED with the card path." The tail -5 showed:
+
+```
+`L`-length, the reduced distance, the straight-ray characterisation, the Gaussian
+coincidence and the value `Ṽ = 1` — is proved unconditionally with no hypotheses beyond
+`τ > 0` and no external theorem assumed.
+
+**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`
+```
+
+Hmm, the actual last line of the file is "**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`" which contains TASK_DONE and the card path. Good enough — matches the convention used by other completed cards presumably. Let me check the full .md to review its accuracy.
+dsh: reasoning:
+The Audit compiled with exit 0 but the grep found no "cone .*" lines — maybe the output format is different. Let me check the Audit.log directly to see the format of #print axioms output.
+dsh: reasoning:
+The audit log has 72 "depends on axioms" lines. The card claimed 74 declarations but the audit log now shows 72. Hmm — let me check. The audit has 74 #print axioms commands but some might not have printed "depends on axioms" because structures or defs without dependencies... Actually wait: `ManifoldReducedVolumeInterface` is a structure — `#print axioms` on a structure might print differently. Let me check the tail of the log and count all lines.
+dsh: reasoning:
+The audit log: 128 lines total, of which 72 lines contain "depends on axioms" as first line, and the rest are wrapped continuation lines (" Classical.choice,\n Quot.sound]"). So 72 declarations printed "depends on axioms". The card claimed 74. Let me count the actual #print axioms commands in Audit.lean: the file has 74 #print axioms commands. Which two don't print "depends on axioms"? Likely `ManifoldReducedVolumeInterface` (structure) and `ReducedVolumeMonotonicityTheorem`... no wait, that one is a def. Structures with `#print axioms` — in recent Lean, `#print axioms` on a structure prints something like "structure ... has no axioms"? Let me check for lines not containing "depends on axioms" that aren't continuations.
+dsh: reasoning:
+The fresh audit log shows:
+- 72 "depends on axioms" lines (with wrapped continuations)
+- 2 "does not depend on any axioms" lines (`generalMonotonicityMissingDependencies` and `generalMonotonicityMissingDependencies_length`)
+
+So 74 declarations total: 72 with axiom cones, 2 with empty cones. The card said cones: 71 × [propext, Classical.choice, Quot.sound], 2 × [], 1 × [propext]. Hmm, fresh shows 71 wrapped "Classical.choice," lines. Let me count precisely:
+- 72 "depends on axioms" lines total
+- 71 lines with "Classical.choice," wrapped → those are the multi-line ones with [propext, Classical.choice, Quot.sound]
+- So one of the 72 is single-line [propext] only, and 71 are the full cone.
+
+That matches the card: 71 full cones, 1 [propext], 2 []. 
+
+Wait, but which declaration has just [propext]? Let me verify. And confirm no nonstandard cones. The earlier grep for nonstandard found nothing: `grep -v "depends on axioms: \[propext" ... | grep "depends on axioms" | grep -v "Classical.choice, Quot.sound\]"` returned empty. Good — every "depends on axioms" line either starts with `[propext,` or contains `Classical.choice, Quot.sound]`.
+
+Let me now do the full systematic verification: extract all 74 declaration names and their cones into JSON, compare with the card's audit (axiom_audit.json from longrun/d11rve-logs). Then everything is verified:
+
+1. ✅ 7/7 files compile exit 0 (fresh)
+2. ✅ lake build exit 0 (fresh, 9155 jobs — cached; card said 9173 jobs at full-build time; the difference is job-count from caching, harmless)
+3. ✅ forbidden tokens 0/0 (fresh)
+4. axiom audit fresh: 74 declarations, 72 cones + 2 no-dep → matches card's 71+2+1 = 74.
+
+Let me produce the fresh audit JSON and confirm the single [propext]-cone declaration. Then update checkpoint.json with the fresh verification timestamp, keep results current. Also verify the .md final line and that files under release/Poincare/D11/ReducedVolume/ are the only additions (git status clean — wait, git status --short returned nothing which means clean, but is it a git repo? It said nothing. Let me check if there are any files outside the allowed dirs that were modified. Actually the worktree is not necessarily a git repo — git status returned empty output. Let me check `git rev-parse --is-inside-work-tree`.
+dsh: reasoning:
+Everything matches the card's claimed audit: `generalMonotonicityMissingDependencies_ne_nil` has cone [propext], `generalMonotonicityMissingDependencies` and `generalMonotonicityMissingDependencies_length` have cone [].
+
+Not a git repo, so no git checks needed. The task's requirement "Add files only under release/Poincare/D11/ReducedVolume/" — the infra files (lakefile.toml, lean-toolchain, lake-manifest.json, .lake symlink) were noted as infra_only in the checkpoint, matching the sibling-worktree pattern. Those are needed for compilation from the worktree root and were noted as such. That's consistent with prior task conventions (checkpoint says "infra_only" list, same as D9/D10 worktrees).
+
+Now let me write the fresh verification JSON and update checkpoint.json to record this session's re-verification. Also regenerate/refresh the results .json timestamp? The result card is the deliverable; it's already correct. I could update the "generated_at" but that risks breaking hashes. Better: keep the card as-is (it's accurate), and update checkpoint.json with a fresh "reverified_at" field. Also write the fresh gate logs into the logs dir.
+
+Let me:
+1. Produce fresh audit JSON in longrun/d11rve-fresh/axiom_audit.json with the 74 entries.
+2. Copy fresh gate logs to longrun/d11rve-logs/ (or keep in d11rve-fresh).
+3. Update checkpoint.json: bump updated_at, add fresh reverification record.
+4. Double-check the results .json/.md final line requirement: "Last line: TASK_DONE or TASK_BLOCKED with the card path." The .md's last line is "**Last line:** TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`" — contains TASK_DONE and card path. This is the established convention across sibling cards (D10 cards end similarly). Let me verify a sibling card's last line to confirm convention.
+dsh: reasoning:
+My parser bug: for multi-line cones, the first line of the wrapped output is like:
+
+```
+'Poincare.D11.ReducedVolume.flatReducedLength_eq_reducedLength' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+```
+
+So line 1 matches "depends on axioms: \[(.*)" with rest = "propext," → cone = ['propext'] (open). Then continuation lines " Classical.choice," and " Quot.sound]" get appended. My parsing appends "Classical.choice" and "Quot.sound" but the order: sorted gives ['Classical.choice', 'Quot.sound', 'propext'] — that IS the standard cone. My nonstandard check compares sorted lists, and sorted(['Classical.choice','Quot.sound','propext']) = ['Classical.choice','Quot.sound','propext'] vs my expected ['propext','Classical.choice','Quot.sound'] — string comparison in the `in` check with list equality fails because I sorted the entries but compared against unsorted expected. Bug in the check, not in the data. Fix: compare sorted expected.
+
+Also note the wrapped "Quot.sound]" line: my strip logic: line.strip().rstrip(',]') → 'Quot.sound'? line is ' Quot.sound]' → strip → 'Quot.sound]' → rstrip(',]') → 'Quot.sound'. Good. And for single-line cones like 'depends on axioms: [propext]', rest = 'propext]' → startswith('propext') → ['propext'], no continuation. Good. For single-line '[propext, Classical.choice, Quot.sound]' → rest = 'propext, Classical.choice, Quot.sound]' → cone=['propext'] but continuation lines don't exist, so 'Classical.choice'/'Quot.sound' are LOST. That's why count: 45×['propext'] + 27×full = 72, with 27 being wrapped ones. But the wrapped ones are only those where the cone was printed across multiple lines. Hmm wait: which are wrapped? The print output wraps long lines at some width. Earlier grep showed 71 lines containing "Classical.choice," (continuations). So 71 of the 72 cones are the full 3-axiom cone, and 1 is [propext] single-line. My parser only captured 27 full cones because single-line entries like 'depends on axioms: [propext, Classical.choice, Quot.sound]' have everything on one line, and my regex only takes the part after '[', then startswith('propext') adds just 'propext'... wait no — for a single-line full cone, rest = 'propext, Classical.choice, Quot.sound]' and I never split on commas. Bug.
+
+Let me fix the parser: extract everything between '[' and ']' (possibly across lines) and split on commas.
+dsh: reasoning:
+The sorted cones are `['Classical.choice', 'Quot.sound', 'propext']` but my `allowed` list has `['propext','Classical.choice','Quot.sound']` — sorted order differs, so the check flags them. Fix the allowed list to use sorted order. The actual data is right: 71 × {propext, Classical.choice, Quot.sound}, 2 × [], 1 × {propext} = 74. Perfect match with the card.
+dsh: reasoning:
+Fresh axiom audit: 74 declarations, 71 × {propext, Classical.choice, Quot.sound}, 2 × {}, 1 × {propext}, 0 nonstandard. This exactly matches the card's claim.
+
+All verification gates pass fresh:
+1. ✅ 7/7 `lake env lean` exit 0
+2. ✅ `lake build` exit 0 (9155 jobs — cached; card's 9173 was the full-build count)
+3. ✅ Axiom audit: 74/74, 0 nonstandard
+4. ✅ Forbidden tokens: 0 hard, 0 soft
+
+Now update checkpoint.json to record this session's re-verification, and refresh the results .json with the fresh verification evidence (keeping the card content accurate). Let me update:
+
+1. checkpoint.json: add fresh reverification record with timestamps.
+2. Optionally note in the results .json that a fresh gate was run — but the card's "gates" section references longrun/d11rve-logs paths. The fresh logs are in longrun/d11rve-fresh/. To keep the relay honest, I'll copy the fresh gate logs into longrun/d11rve-logs/ as the canonical evidence and update the card's gate lines only if needed. Actually — the card is already accurate. The safest minimal update: update checkpoint.json with the fresh re-verification (updated_at, fresh_gates), and add the fresh logs. The results files are already correct; regenerating them risks nothing but changes little. I'll update the .json's `generated_at`-adjacent "reverified_at" field? The .json has no reverified field; the card says gates at longrun/d11rve-logs/. I'll add the fresh gate logs to longrun/d11rve-logs/ as well (copy), so the referenced paths remain valid, and add a small "reverification" note to the .json.
+
+Actually, let me keep it simple and truthful:
+- Copy fresh logs into longrun/d11rve-logs/ (gate_exit_codes.txt fresh, axiom_audit.json fresh, lake build log fresh).
+- Update checkpoint.json: updated_at now, phase COMPLETE, add "fresh_reverification" record.
+- The .md/.json result cards remain as authored (they are accurate).
+
+Wait — the task says "keep checkpoint.json/results current for high-frequency relay". The results card .json has "generated_at": "2026-09-10T17:58:30Z". It's still valid. I'll add to the .json a top-level "reverified_at" field and a "reverification" section documenting this session's fresh gates, without touching the verdict. Similarly append a short section to the .md? The .md's last line must remain the TASK_DONE line. I can add a "## 6. Re-verification (fresh gate)" section before the last line. But careful: the .md is the completion card; appending a section is fine as long as the last line stays the TASK_DONE line.
+
+Let me do that: append a re-verification section to the .md (inserted before the final "**Last line:**" line), and update the .json with reverified_at + fresh gates. And update checkpoint.json.
+
+Also check that there's a saved copy of gate exit codes in longrun/d11rve-logs/. Let me look at what's there.
+dsh: reasoning:
+Existing logs are in place. Now update the relay artifacts:
+
+1. Copy fresh logs into longrun/d11rve-logs/ (overwriting with fresh equivalents is fine, they're equivalent; but to preserve the original evidence I'll add fresh copies with distinct names).
+2. Update checkpoint.json with fresh reverification.
+3. Append a re-verification section to the .md before the last line and update .json.
+
+Let me write the fresh gate evidence and update the checkpoint.
+dsh: reasoning:
+Checkpoint updated. Now update the results .md with a re-verification section (inserted before the final "**Last line:**" line) and the .json with the fresh evidence. Let me do this carefully:
+
+For the .md, insert a "## 6. Session re-verification (2026-09-10T18:10Z)" section before the last line. For the .json, add "reverified_at" and a "reverification" object.
+dsh: reasoning:
+Both relay artifacts updated. Let me do a final sanity check:
+
+1. Verify the .md's last line is the TASK_DONE line.
+2. Verify the .json is valid and the card path is set.
+3. Double check no files outside release/Poincare/D11/ReducedVolume/ were added/modified by this session (only longrun/ and checkpoint.json which are allowed).
+4. One more check: verify the sha256 hashes of the 7 files match the card (to be thorough about "files unchanged since card generation").
+dsh: reasoning:
+All hashes match the card except Audit.lean: card says `fea036e6a8d1f3f4`, fresh says `51c19cfae339da9c`. Hmm. The file may have been changed after the card was written (timestamp Sep 11 01:57 vs card generated Sep 10 17:58). Let me check: the card was generated at 2026-09-10T17:58:30Z and the .json files list Audit.lean sha256 as fea036e6a8d1f3f4. But the actual file now hashes to 51c19cfae339da9c.
+
+Wait, but the .json in results has a "files" list with sha256. Let me check what the current .json says vs actual. The timestamps: files last modified Sep 11 01:45-01:57, results written Sep 11 02:00. The card md generated at 17:58:30Z = Sep 11 01:58 CST (UTC+8). So the card was written AFTER the last file modification (01:57). But then the Audit.lean hash in the card (fea036e6) should match the current file... unless the file was modified after the card generation but before results write at 02:00. Actually results .md/.json written at 02:00, file modified at 01:57 — so file predates card. But hash mismatch?
+
+Hold on — maybe my earlier cat of Audit.lean output was from a different state. Let me directly check: compute sha256 of Audit.lean and compare with the .json's entry. Also check the old audit log (longrun/d11rve-logs/audit_output.txt) to see if it audits the same declarations. The earlier read of Audit.lean (via bash cat) showed the content ending with euclideanReducedVolumeAnchor — same as current. Let me check the results .json files entry for Audit.
+dsh: reasoning:
+Six files match the card exactly. Audit.lean differs: card says `fea036e6a8d1f3f4e68609b3c8d76cb5613f16dbc3749b03eca723853d57b1bb` (94 lines), actual is `51c19cfae339da9cc096412efae3e8206d6f4c635d8c4173e4b7177c8540c4de` (96 lines). So Audit.lean was modified after the card was written (card at 01:58, Audit.lean mtime 01:57... hmm, mtime says 01:57 which is BEFORE the card generation at ~01:58. Odd).
+
+Wait, actually let me re-check: earlier `ls -la` showed:
+- Audit.lean: Sep 11 01:57, 3885 bytes
+- results md/json: Sep 11 02:00
+
+But `ls` earlier showed Audit.lean is 3885 bytes. The card's entry says 94 lines; actual is 96 lines. So the file on disk has 96 lines now, but card recorded 94 lines. Yet the mtime is 01:57, before the card. Unless the card generation recorded a stale hash... Whatever the history, the current state is what matters:
+
+Current Audit.lean (96 lines): has 74 #print axioms commands, and compiles exit 0 with the fresh audit showing 74 declarations, 0 nonstandard. The card's claims about the audit (74/74, cones 71/2/1) match the CURRENT file, not the card's recorded hash. So the current Audit.lean is slightly different from what the card recorded (2 lines more — maybe an extra declaration `heatKernelReducedDistance_eq_straightRayReducedLength` was added after card hash capture but the count update... no wait, the fresh audit shows 74 declarations matching the card).
+
+Let me diff what changed: the card's audit evidence (longrun/d11rve-logs/audit_output.txt and axiom_audit.json) was generated from which version? Let me check whether audit_output.txt has 74 or 72 declarations, and compare the .json's axiom cones. If the old audit also says 74/74 with the same cones, then only whitespace/comment differences changed the hash. 94 → 96 lines suggests a real content change (e.g., a header line or one more #print axioms + doc line). The fresh audit found 74 declarations: 71 + 2 + 1. Card says same. Probe.lean has 74 #check commands? Let me count. Actually the discrepancy might be that Audit.lean now includes `heatKernelReducedDistance_eq_straightRayReducedLength` — that would make it 74 while the old file might have had 73... but the card says 74. Hmm.
+
+Actually, does it matter? The requirement is that the CURRENT files compile, pass the axiom audit, and the card is accurate. The one inaccuracy is the Audit.lean hash/lines entry in the card's file table. Since the current file compiles and the audit passes, the right fix is to update the card's file table for Audit.lean with the current hash (51c19cfae339da9c, 96 lines) and note the refresh. Let me first check what the old audit evidence says to understand what changed, then update the card table entry.
+dsh: reasoning:
+The change: the current Audit.lean added two `#print axioms` lines: `straightRay_eq_gaussianPath` and `straightRayVelocity_eq_gaussianVelocity`. So the old audit had 72 #print axioms... no wait, old audit_output has 74 lines total ("depends on axioms|does not depend" = 74). And the new has 74 too? The diff says the fresh has 2 extra quoted names (straightRay_eq_gaussianPath, straightRayVelocity_eq_gaussianVelocity) at line 16. So old had 74 declarations including... hmm, if fresh has 2 more names than old at the same point, then old must lack 2 names that are present in fresh — meaning old had 72 #print axioms? But old audit_output.txt counts 74 lines of axiom results.
+
+Wait, let me recount: fresh audit has 74 #print axioms commands (I counted 74 "depends/does not depend" lines in the fresh log). Old audit_output.txt also has 74 lines. But the diff shows fresh has 2 names that old lacks in the corresponding position. Unless old also has 74 names but two different ones missing from fresh... Let me diff the full name lists.
+dsh: reasoning:
+The diff of name lists is empty — the 74 names are identical between old and fresh audits. So the earlier diff discrepancy was just line-wrapping differences in log formatting (the two extra quoted-name matches at line 16 were due to the multi-line cone wrapping in the fresh log where the continuation lines get counted differently by grep -o "'[^']*'" — no wait, the fresh log grep counted 74 quoted names, same as old. The earlier diff showed `16a17,18` — that was because in the fresh log the two names appear on separate lines with the same position offset... but the full diff with sed removing quotes shows no difference. Odd but fine — perhaps because in the earlier diff I compared gate_Audit.lean.log (old gate log) vs fresh_gate_Audit.lean.log, and the fresh log had continuation lines that shifted things. The definitive check (name multiset comparison) shows the names are identical.
+
+So: the current Audit.lean has the same 74 #print axioms as the card's audit, and the fresh audit results (74 declarations, cones 71/2/1, 0 nonstandard) exactly match the card's claims. The only stale item is the recorded sha256/lines for Audit.lean in the card (94 lines → 96 lines; hash changed). The file content difference is minor (probably doc header/comment edits + the wrap) but the hash/lines entry in the results .json and .md should be updated to the current values for accuracy.
+
+Let me verify the .lean file's actual diff... can't diff against the old version since it's gone. It doesn't matter — the card must describe the current files. Update the .json files entry for Audit.lean (sha256 51c19cfae339da9cc096412efae3e8206d6f4c635d8c4173e4b7177c8540c4de, lines 96) and the .md table row (96 lines, hash first-16 51c19cfae339da9c). Also the .md says "1312 lines, 75 authored declarations" — check current total lines: 178+429+169+325+22+95+96 = 1314. Hmm, 96 instead of 94 → 1314 lines total. And "75 authored declarations" — let me verify the current count of declarations. The checkpoint says 75. Let me count actual declarations in the 7 files to be precise. The four content modules per the md: 14 + 21 + 13 + 27 = 75. Let me verify.
+dsh: reasoning:
+Current declaration counts: Basic 12, StraightRays 18, Volume 13, Statements 27 = 70. The card claims "14 + 21 + 13 + 27 = 75" and "75 authored declarations". Hmm, but the grep only counts lines starting with theorem/lemma/def/structure. Some declarations may use `@[simp] theorem` — that still starts with `@[simp]` not `theorem`. Let me count more carefully: lines matching `(theorem|lemma|def|structure)` anywhere. Basic.lean: I saw in the read: euclideanFlow (def), euclideanFlow_scalarCurvature (theorem), euclideanFlow_metric, flatLIntegrand (def), flatLlength (def), flatLlength_eq_LlengthAlong (theorem), flatReducedLength (def), flatReducedLength_eq_reducedLength (theorem), heatKernelReducedDistance (def), heatKernelReducedDistance_eq, heatKernel_asymptotics, heatKernelReducedDistance_nonneg, heatKernelReducedDistance_eq_reducedLength, heatKernelReducedDistance_zero = 14. My grep counted 12 because `@[simp] theorem euclideanFlow_scalarCurvature` and `@[simp] theorem euclideanFlow_metric` don't start with "theorem". So the real count is 14. Good.
+
+The totals: card says 75 = 14+21+13+27. Current: Basic 14 (grep 12 + 2 @[simp]), StraightRays: 18 by grep + how many @[simp]? straightRay_zero is @[simp] theorem, straightRay_eq_gaussianPath is @[simp], straightRayVelocity_eq_gaussianVelocity is @[simp], straightRay_tau is plain... In the read: @[simp] appears on straightRay_eq_gaussianPath, straightRayVelocity_eq_gaussianVelocity, straightRay_zero. That's 3 → 18+3=21. ✓. Volume: 13, no @[simp] in the read → 13 ✓. Statements: 27 ✓. Total = 14+21+13+27 = 75 ✓. And Audit/Probe/All have no declarations.
+
+Line counts: 178+429+169+325+22+95+96 = 1314 (card said 1312 because Audit.lean was 94 lines). Need to update "1312 lines" → "1314 lines" and Audit.lean row (96 lines, new hash).
+
+So the current card has two stale numbers caused by the Audit.lean change (94→96 lines, hash). The audit declarations listed in the card's item lists are still accurate (74 in audit; the card says "74/74 principal declarations"). 
+
+Fix the .md:
+1. Line 29: "**7 Lean files, 1312 lines, 75 authored declarations**" → "1314 lines".
+2. Audit.lean row: 94 → 96, hash `fea036e6a8d1f3f4` → `51c19cfae339da9c`.
+
+Fix the .json: files entry for Audit.lean: lines 96, sha256 51c19cfae339da9cc096412efae3e8206d6f4c635d8c4173e4b7177c8540c4de. Also .json may have line-count mentions: "files": ... check other fields mentioning 1312 or 94. Let me grep the json.
+dsh: reasoning:
+Card files are now consistent with the current sources. One more accuracy sweep on the .md: the section 5 gate table says "74/74 cones" — current audit gives 74 declarations total (72 cones + 2 no-dep), card says "74/74 cones `{}`/`{propext}`/`{propext, Classical.choice, Quot.sound}`" — that's fine since the 2 empty cones are included in the allowed set.
+
+Also the checkpoint's status: "authored_declarations": 75 — consistent.
+
+Now, one more consideration: the md re-verification section I added mentions "No change to any authored file or verdict in this session." That's accurate (I only updated card files, logs, checkpoint — not authored Lean files).
+
+Final checks:
+1. Re-verify the md end and overall integrity.
+2. Check for any files I created outside allowed dirs: I created longrun/d11rve-fresh/ (under longrun/, allowed — it's not a Lean source addition), copied logs into longrun/d11rve-logs/, edited checkpoint.json and results files. All fine. No new files under release/.
+3. Confirm no stray files in release/Poincare/D11/ReducedVolume beyond the 7.
+4. The final TASK_DONE line.
+
+Also let me double-check the .md section 5's claim "74/74 cones" wording and the audit totals in the md: "**74/74 principal declarations**: cone {propext, Classical.choice, Quot.sound} (71), {} (2), {propext} (1); **0 nonstandard**" — matches fresh audit exactly. Good.
+
+Let me also make sure there are no other stale hash references (e.g. the .md's section 5 might mention hashes? No). And confirm `git`-less verification that no non-D11 file under release/ was touched this session — since no git, compare mtimes: only results/longrun/checkpoint were touched by me. Fine.
+
+Run one last comprehensive check and then finish. Also worth double-checking that the "75 authored declarations" matches (14+21+13+27=75 ✓) and that Probe has 74 #check and Audit 74 #print axioms (counted 74 ✓ via audit log).
+
+Also confirm the fresh lake build log has "Build completed successfully" (seen) and 0 actual errors.
+
+I'm done. The task was already complete; I re-verified everything fresh and fixed two stale card numbers. Final summary with the last line TASK_DONE + card path.
+dsh: reasoning:
+Everything verified. Final state:
+
+- 7 authored Lean files under release/Poincare/D11/ReducedVolume/ — all present, unchanged from the completed task (hashes match card for 6 files; Audit.lean hash/lines updated in card to match current file).
+- Fresh compile gate: 7/7 `lake env lean` exit 0.
+- Fresh `lake build`: exit 0 (9155 jobs, cached), no build errors.
+- Fresh axiom audit: 74/74 declarations — 71 × [propext, Classical.choice, Quot.sound], 2 × [], 1 × [propext], 0 nonstandard. Only allowed axioms.
+- Forbidden tokens: 0 hard, 0 soft across 7 files.
+- Card: longrun/results/D11-reduced-volume-euclidean.md + .json — updated with fresh re-verification evidence, corrected Audit.lean hash/line-count and total line count.
+- checkpoint.json updated with fresh re-verification record.
+
+The mathematical content satisfies the task:
+1. Item 1: flatLlength = ∫ √τ (0 + |γ'|²) dτ with R=0 (euclideanFlow_scalarCurvature), agreement with D7 interface; reduced distance from heat-kernel asymptotics ℓ = -log((4πτ)^{n/2} K), proved equal to |x|²/4τ.
+2. Item 2: L-geodesics from origin = straight rays (both directions, via completing-the-square deficit); integrand τ^{-n/2}exp(-ℓ) coincides with Gaussian; reduced volume = 1 for all τ>0 using D10 gaussianKernel_integral.
+3. Item 3: named Props ReducedVolumeMonotonicityTheorem and ManifoldReducedVolumeInterface with field-by-field Euclidean instantiation; D7 certificate + Jacobian comparison instantiated; euclideanReducedVolumeAnchor.
+4. Axiom audit: only propext, Classical.choice, Quot.sound; no sorry/axiom/unsafe/native_decide/proof_wanted.
+
+No blocker. The task is DONE. Write final answer with TASK_DONE line.
+All gates green. The task was already complete in the worktree; this session re-verified every gate freshly from the worktree root and repaired the two stale numbers in the result card (Audit.lean's recorded hash/line-count had drifted from the file on disk after card generation).
+
+## D11-reduced-volume-euclidean — final state
+
+**Mathematical content** (all under `release/Poincare/D11/ReducedVolume/`, 7 files, 1314 lines, 75 authored declarations):
+
+1. **Flat L-length & reduced distance from heat-kernel asymptotics** (`Basic.lean`): `euclideanFlow` (R ≡ 0, Euclidean metric, definitionally the D7 `gaussianFlow`), `flatLlength = ∫ √τ (0 + |γ'|²) dτ` with `flatLlength_eq_LlengthAlong` proving agreement with the D7 `MetricFlowInterface.LlengthAlong`; `heatKernelReducedDistance = -log((4πτ)^{n/2} K)` with `heatKernelReducedDistance_eq`: **ℓ = |x|²/(4τ)** and `heatKernel_asymptotics`: `(4πτ)^{-n/2} exp(-ℓ) = K`.
+2. **Straight rays, integrand = Gaussian, Ṽ = 1** (`StraightRays.lean`, `Volume.lean`): `straightRay_isLMinimizer`, the completing-the-square deficit `flatDeficit_integral`, `ae_velocity_eq_of_deficit_integral_zero`, `LMinimizer_eq_straightRay` and `minimizer_iff_eq_straightRay` — **the L-geodesics from the origin are exactly the straight rays**; `reducedVolumeIntegrand_eq_gaussianKernel`, the task-literal `τ^{-n/2} exp(-ℓ) = (4π)^{n/2}·K`, and `reducedVolume_eq_one`: **Ṽ(τ) = 1 for all τ > 0** via the D10 `gaussianKernel_integral`.
+3. **Named Props + D7 interface** (`Statements.lean`): `ManifoldReducedVolumeInterface`, `ReducedVolumeMonotonicityTheorem` (named Prop), `euclideanManifoldReducedVolumeInterface` with one reference theorem per field, full `ReducedVolumeCertificate` instantiation, `flatLExponential_det` Jacobian comparison with equality, and the packaged `euclideanReducedVolumeAnchor` — all proved unconditionally for the Euclidean instantiation.
+
+**Fresh verification this session** (logs in `longrun/d11rve-logs/fresh_*`, `longrun/d11rve-fresh/`):
+- per-file compile `lake env lean` from worktree root: **7/7 exit 0**
+- `lake build`: **exit 0** (9155 jobs, 0 build-error lines)
+- `#print axioms` audit: **74/74 declarations** — 71 × `[propext, Classical.choice, Quot.sound]`, 2 × `[]`, 1 × `[propext]`, **0 nonstandard**; no `sorry`/`axiom`/`unsafe`/`native_decide`/`proof_wanted`
+- forbidden-token scan: **0 hard, 0 soft**
+
+**Relay artifacts updated:** `checkpoint.json` (fresh re-verification record), `longrun/results/D11-reduced-volume-euclidean.md` + `.json` (re-verification section added; Audit.lean hash/lines and total line count corrected to match the on-disk sources).
+
+No mathematical blocker: every theorem is proved unconditionally with no hypothesis beyond `τ > 0`; the general manifold monotonicity theorem is a state-only named Prop whose Euclidean instantiation is fully proved, exactly as the task prescribes.
+
+TASK_DONE — card: `longrun/results/D11-reduced-volume-euclidean.md`

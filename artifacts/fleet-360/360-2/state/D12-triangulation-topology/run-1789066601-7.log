@@ -1,0 +1,205 @@
+dsh: reasoning:
+Let me start by understanding the current state of the worktree. I need to:
+
+1. Read the existing checkpoint.json and longrun/results/D12-triangulation-topology.md
+2. Read D7/D8/D10/D11 sources
+3. Read the pinned mathlib source and LONG_PLAN.json
+4. Inspect the frenzymath snapshot
+5. Build from release/ and continue work
+
+Let me first explore the worktree structure.
+dsh: reasoning:
+Let me read the rest of checkpoint.json and the results markdown to understand where things stand.
+dsh: reasoning:
+The task has substantial progress. Let me look at the current state:
+
+1. Three full homeomorphism theorems compile (coneQuotHomeoDisk, suspQuotHomeoSphere, doubleDiskQuotHomeoSphere) — milestone 1 complete.
+2. Axiom audit PASS.
+3. Covering lemma subproblem split planned (C1-C4).
+4. Also there's AntipodalQuotient.lean and CoveringLemma.lean, MoiseBranch.lean — some work started.
+
+Let me look at the current state of these files, the results md, and check whether the build still passes. Let me also read the results JSON and md file.
+dsh: reasoning:
+Good state. The task is well-advanced:
+
+- Milestone 1 done (first checkpoint).
+- 12-hour milestone done (useful nontrivial lemmas: covering lemma, antipodal quotient covering).
+- The 24-hour milestone (downstream use or concrete subproblem split) done.
+
+Now I need to:
+1. Verify the build still passes from a fresh checkout state.
+2. Look at remaining work: `SimplyConnectedSpace (Sphere 3)` is the big remaining named blocker. The objective says "Prove a concrete geometric-realization/homeomorphism statement for a finite complex or a gluing/covering lemma needed by sphere recognition" — which is already done. But we can go further: try to prove `SimplyConnectedSpace (Sphere 3)`? That's a significant theorem (π₁(S³)=1). Options:
+   - Port frenzymath `sphereSimplyConnected_of_two_le` from Hatcher Ch1 (it's sorry-free per the checkpoint; need to verify).
+   - Or prove via van Kampen: S³ = D³ ∪_{S²} D³ with both disks simply connected and the intersection S² path-connected... but van Kampen isn't in mathlib.
+   - Or prove directly: any loop in S³ is homotopic to a loop avoiding a point, and S³ minus a point ≅ R³ which is convex hence contractible. That needs: (a) a loop on a sphere in dimension ≥ 2 can be homotoped to avoid a point (simplicial approximation or the "smallness" argument), and (b) S³ minus a point homeo to R³ (stereographic projection). Both are substantial.
+
+Let me check what frenzymath's sphereSimplyConnected_of_two_le looks like, since it's supposedly sorry-free. If it's sorry-free and a port is feasible, we could port it with attribution (Apache-2.0 allows). The task says "Do not copy admitted proofs" — but if the proof is sorry-free, porting is legitimate reuse with attribution. The supervisor update explicitly says "Reuse MorganTian, Topping, DoCarmo, Shared and other upstream packages instead of recreating geometry/Ricci-flow foundations." And the checkpoint says the port candidate is `HatcherLib/Ch1/Sphere.lean` `sphereSimplyConnected_of_two_le`.
+
+Let me first:
+1. Rebuild release/ to verify current state.
+2. Check frenzymath's Sphere.lean to see the statement and dependencies.
+3. Decide whether to attempt the port in this invocation.
+
+Also pending dependency requests: D8/D10/D11 module paths. Let me search the worktree for those. The checkpoint says "No D8/D10/D11 sources exist in this worktree". Let me double check.
+
+Also I should look at MoiseBranch.lean and MOISE_DAG.md, AxiomAudit.lean, and the audit tool.
+
+Let me start the build in background and inspect files meanwhile.
+dsh: reasoning:
+Good. Now let me look at the frenzymath Sphere.lean to see the statement `sphereSimplyConnected_of_two_le` and its proof dependencies, to assess the port feasibility.
+dsh: reasoning:
+Build passed. Let me check the build output, then look at frenzymath's Sphere.lean statement to assess the port.
+dsh: reasoning:
+The find didn't locate Sphere.lean in frenzymath. Let me check the structure of the frenzymath snapshot.
+dsh: reasoning:
+Let me look at the frenzymath Hatcher Ch1 Sphere.lean to see the statement of `sphereSimplyConnected_of_two_le` and its dependencies. Also I need to check whether it's really sorry-free.
+dsh: reasoning:
+The frenzymath Sphere.lean provides `sphereSimplyConnected_of_two_le` which is the key missing input. Its dependency chain:
+
+1. `simplyConnectedSpace_of_pathConnectedOpenCover` — needs `PathConnectedOpenCover`, `loop_decomposition_of_pathConnectedOpenCover`, `CoveredLoop`, `coveredLoopProduct`, `IsSimplyConnected`, `PathIn` — all from `HatcherLib.Ch1.VanKampen` (frenzymath's own library).
+2. `sphereComplementHomeomorphEuclidean` — stereographic projection from `Mathlib.Geometry.Manifold.Instances.Sphere` (`stereographic'`) — exists in pinned mathlib? Need to check. It's a mathlib import, so likely present at pinned rev.
+3. `sphereComplementTwoPointsHomeomorphPuncturedEuclidean` — similar.
+4. `isPathConnected_sphere`, `isPathConnected_compl_singleton_of_one_lt_rank` from `Mathlib.Analysis.Normed.Module.Connected` — the AntipodalQuotient.lean already uses `isPathConnected_sphere`, so likely present.
+5. `homeomorphUnitSphereProd` from `Mathlib.Analysis.Normed.Module.Ball.RadialEquiv` — check pinned mathlib.
+
+The key question: how much of `HatcherLib.Ch1.VanKampen` do we need, and can we port it? The frenzymath proof of the sphere's simply-connectedness depends on a "loop decomposition theorem" which is essentially the van Kampen theorem for a finite cover. Porting that may be a large job.
+
+Alternative strategy: prove `SimplyConnectedSpace (Sphere n)` for n ≥ 2 directly in our pinned mathlib without porting the whole van Kampen machinery. The proof plan:
+
+- `S^n` is covered by two open sets U₊ = {x | x_n > -1/2} and U₋ = {x | x_n < 1/2} (hemispheres), each homeomorphic to an open ball in ℝ^n hence contractible, hence simply connected; the intersection is homeomorphic to S^{n-1} × (-1/2, 1/2), path-connected for n-1 ≥ 1 i.e. n ≥ 2.
+- The classical argument (Hatcher Prop 1.14): every loop can be decomposed into loops in the two open sets (Lebesgue number argument), and each such loop is nullhomotopic. The decomposition is the hard part — the "loop decomposition lemma".
+
+Actually, there's a much simpler classical proof: A loop γ : S¹ → S^n with n ≥ 2 is homotopic to a loop avoiding a point (by simplicial approximation or by the following elementary argument), and S^n minus a point ≅ ℝ^n which is contractible, so the loop is nullhomotopic. Proving "every loop is homotopic to a loop avoiding a point" in Lean still requires substantial work (path lifting, approximation).
+
+Alternatively, mathlib may already have a proof that S^n is simply connected! Let me search the pinned mathlib for `SimplyConnectedSpace` sphere theorems. There's `Mathlib.Geometry.Manifold.Instances.Sphere` and possibly results on higher homotopy groups. Let me grep mathlib source for sphere simply connected.
+
+Let me check where mathlib is in the release (lake packages dir).
+dsh: reasoning:
+The grep didn't work — likely because the cwd didn't exist when executing (cd with &&). Let me redo it properly.
+dsh: reasoning:
+So mathlib pinned rev does NOT have `SimplyConnectedSpace (Sphere n)` — confirming the gap. There is a `Geometry/Manifold/Instances/Sphere.lean` with `stereographic'`.
+
+Options for this invocation:
+
+**Option A**: Port the frenzymath proof of `sphereSimplyConnected_of_two_le`. That requires porting their van Kampen / loop decomposition machinery (`HatcherLib.Ch1.VanKampen.lean` and dependencies). Let me assess the size of that. Let me look at their VanKampen.lean.
+
+**Option B**: Prove `simplyConnectedSpace` of the sphere directly using mathlib's existing machinery in a way that avoids full van Kampen. 
+
+Actually there's a classical slicker route: Since we already have `suspQuotHomeoSphere` and `doubleDiskQuotHomeoSphere`, we could prove simply connectedness of S^n for n ≥ 2 by induction: S^{n+1} = ΣS^n... but that doesn't immediately give π₁. Hmm.
+
+Alternative: van Kampen for the specific situation — mathlib has no van Kampen at all, but maybe we can prove the specific "two-open-cover simply-connected criterion" directly using mathlib's `IsCoveringMap`/path lifting machinery? Actually the loop decomposition is the hard part.
+
+Wait — maybe there's a slicker argument available. mathlib has `Topology/Homotopy/Lifting.lean`. It has path lifting for covering maps. We also have the antipodal covering S^n → RP^n. Hmm.
+
+Another classical approach that's formalizable with less machinery:
+
+**Approach: loop compression via the suspension structure.** We proved ΣSⁿ ≅ Sⁿ⁺¹. A loop in ΣX based at... The suspension has a nice property: any loop in ΣX can be homotoped into the two cones... still needs the Lebesgue/compactness decomposition argument.
+
+**Approach: direct argument with Lebesgue number.** For a loop γ : S¹ → S^n (n ≥ 2), cover S^n by two open sets U, V (complements of antipodal points) each homeomorphic to ℝ^n (contractible). Since [0,1] is compact, there's a subdivision 0 = t₀ < ... < tₘ = 1 such that each γ([tᵢ, tᵢ₊₁]) ⊂ U or ⊂ V. The image of γ is path connected... For the loop to be decomposable into loops in U and V, we need each interval image to lie in one of U or V AND the endpoints to be in U ∩ V. With only two open sets covering, each γ(tᵢ) might lie only in U or only in V; we need intermediate points in the intersection. The standard trick uses three or more sets or the connectedness of U ∩ V... Hatcher's proof uses the Lebesgue number with cover by U, V where each subdivided segment lies in one of them; if consecutive segments lie in different sets, the common endpoint lies in U ∩ V. If the endpoint lies in both, fine. The decomposition into loops in U or V: concatenation of the pieces, inserting paths from basepoint... This is exactly the "loop decomposition theorem" that frenzymath formalized (`loop_decomposition_of_pathConnectedOpenCover`). Porting it means porting their `VanKampen.lean` machinery.
+
+Let me check the size and dependency of frenzymath's VanKampen.lean.
+dsh: reasoning:
+The frenzymath van Kampen machinery is ~3500 lines across 7 files plus `BasicConstructions` and `AlgebraicConstructions` and `HomotopyApplications` — a port of that would be a big job and involve a different topology API (they likely build on mathlib 520045a; some APIs may have shifted).
+
+Alternative: prove sphere simply-connectedness directly using the **two-hemisphere decomposition with the specific structure of the sphere**. Perhaps there's a simpler self-contained argument.
+
+Actually, let me think about the mathematics more carefully. There's a classical proof of π₁(Sⁿ)=0 for n≥2 that is very Lean-friendly:
+
+**Theorem**: Every loop in Sⁿ (n ≥ 2) is nullhomotopic.
+
+**Proof idea (via smooth approximation)**: Given a continuous loop γ : [0,1] → Sⁿ with γ(0)=γ(1)=x₀, approximate γ uniformly by a smooth loop... smooth loops in Sⁿ can't be surjective (Sard: measure zero image), so there's a point p not in the image; then compose with the stereographic projection Sⁿ∖{p} → ℝⁿ (which is a homeomorphism onto a convex set), giving a nullhomotopy. This requires:
+1. Smooth approximation of maps into the sphere (Whitney). mathlib has Stone-Weierstrass for maps into ℝ? There's `Mathlib.Topology.ContinuousMap.StoneWeierstrass`... For maps into ℝⁿ⁺¹ yes, then normalize. Proving the normalized approximation stays on the sphere and is homotopic to the original is delicate but doable? Hmm, there's actually a theorem in mathlib: `Topology/ContinuousMap/...`? Let me search for approximation theorems for maps into spheres.
+
+Actually, mathlib may have "maps into spheres are approximated by maps missing a point" somewhere... Let me search.
+
+Alternatively the topological route with two open sets:
+
+**Two-set loop decomposition, specialized to the sphere.** Cover Sⁿ by U = Sⁿ ∖ {N} and V = Sⁿ ∖ {S} (complements of north/south poles). U ∩ V = Sⁿ ∖ {N, S} ≅ punctured ℝⁿ, path-connected iff n ≥ 2 (it's Sⁿ⁻¹ × ℝ). Both U and V are homeomorphic to ℝⁿ, hence contractible, hence simply connected.
+
+Given a loop γ in Sⁿ, subdivide [0,1] finely so each piece lies in U or V. If two consecutive pieces lie in different sets, the shared endpoint is in U ∩ V. The issue: the subdivision points need to be in U ∩ V... Standard fix (Hatcher): choose subdivision points tᵢ such that γ(tᵢ) ∈ U ∩ V for all i (except possibly the endpoints pattern). Since γ([0,1]) is compact and U∪V = Sⁿ covers, by the Lebesgue number lemma there's ε > 0 such that any subset of diameter < ε lies in U or V. Subdivide [0,1] into pieces of length < ε. The subdivision points γ(tᵢ): for the decomposition to give loops based in U ∩ V, we want each γ(tᵢ) ∈ U ∩ V.
+
+Hmm, actually with only two sets, we can't guarantee that. Hatcher's actual argument (Prop 1.15 in Hatcher? no — the van Kampen proof) uses the cover by U, V and chooses subdivision points in U ∩ V using path-connectedness: between consecutive "runs"... Let me recall Hatcher's proof of π₁(Sⁿ)=0: he covers Sⁿ by Sⁿ∖{p} and Sⁿ∖{q}. Given loop γ, choose a subdivision such that each subarc lies in one of the two sets, and each subdivision point lies in the intersection (achievable because: first use Lebesgue number to get a subdivision where each piece is in some member; then... hmm).
+
+Actually the cleanest way: Lebesgue number gives a subdivision 0=t₀<...<tₘ=1 with each γ([tᵢ,tᵢ₊₁]) ⊂ U or ⊂ V. Now if γ(tᵢ) ∉ U∩V, then (say) γ(tᵢ) ∈ U∖V only. Then the two adjacent pieces γ([tᵢ₋₁,tᵢ]) and γ([tᵢ,tᵢ₊₁]) both contain γ(tᵢ) ∉ V, so both must lie in U (since a piece lying in V can't contain a point outside V... wait it can't: if the piece ⊂ V then all its points ∈ V). So both adjacent pieces lie in U, and the point tᵢ can be dropped from the subdivision... no wait, we need subdivision points in U∩V; if γ(tᵢ) ∈ U∖V then both neighbors are in U, so removing tᵢ keeps the property. Iterating, we get a subdivision where every interior point γ(tᵢ) ∈ U∩V... Let me verify: if γ(tᵢ) ∉ U∩V and tᵢ is an interior point, then since adjacent pieces are each in U or V, and each piece contains γ(tᵢ): if a piece contains γ(tᵢ) and γ(tᵢ) ∉ V, the piece can't be ⊂ V, so it's ⊂ U. Similarly if γ(tᵢ) ∉ U the pieces are ⊂ V. In either case both adjacent pieces are in the same set, so γ(tᵢ) is removable. After removing all removable interior points, every remaining interior point is in U∩V. 
+
+Then for each piece γᵢ = γ|[tᵢ,tᵢ₊₁] lying in U (say), connect both endpoints (which are in U∩V) to the basepoint x₀ ∈ U∩V by paths inside U∩V... wait, but the loops need to be inside U or V; the connectors go through the intersection which is in both. So γ is homotopic rel {0,1} to a product of loops each in U or V (with connectors). Each such loop is nullhomotopic since U, V are simply connected. Hence γ is nullhomotopic. Also need: loops in a simply-connected subset are nullhomotopic in the ambient space (that's frenzymath's `loop_nullhomotopic_of_isSimplyConnected` — elementary).
+
+This is exactly the frenzymath loop decomposition theorem. Porting it = porting ~3500 lines of VanKampen machinery? No — the loop decomposition part is `loop_decomposition_of_pathConnectedOpenCover` in their `VanKampen.lean` (probably relies on `VanKampenSubdivision`, `VanKampenGrid`, etc.). That's the 1000-line VanKampen.lean + helpers.
+
+Hmm. Alternatively, maybe there's a *simpler* proof specialized to the two-hemisphere cover that avoids the full generality (finite set of paths indexed by ι, connectors, etc.) and just handles two sets with one basepoint in the intersection. That could be written from scratch in maybe 300-500 lines using mathlib's `Path` API and the Lebesgue number lemma.
+
+But wait — before writing a custom loop-decomposition, let me check whether mathlib has:
+1. Lebesgue number lemma for compact metric spaces: `Metric.exists_lt_uniformity_dist_of_...`? There's `Metric.lebesgue_number_lemma` in `Mathlib.Topology.UniformSpace.Compact`? Let me search.
+2. Compactness of unitInterval: yes.
+3. `Path.trans`, `Path.symm`, `Path.refl`, homotopies: `Mathlib.Topology.Homotopy.Path` — yes, used already.
+4. Contractibility of convex sets → simply connected: `Convex.contractibleSpace` + `SimplyConnectedSpace.ofContractible` — already used in CoveringLemma.lean (diskSimplyConnected).
+5. Stereographic projection: `Mathlib.Geometry.Manifold.Instances.Sphere` has `stereographic'` — need to check the pinned rev has it with the same API. frenzymath uses it at mathlib 520045a; pinned rev is 7974e751 (later), so likely still present.
+
+Let me check what's in mathlib's `Geometry/Manifold/Instances/Sphere.lean` at pinned rev.
+
+Also, there might be an even simpler route for the actual needed instance: we need `SimplyConnectedSpace (Sphere 3)` specifically (n=3), but general n ≥ 2 is natural.
+
+Alternatively, maybe I should use the suspension/gluing structure we already have! We proved:
+- `coneQuotHomeoDisk`: cone(Sⁿ) ≅ Dⁿ⁺¹
+- `suspQuotHomeoSphere`: ΣSⁿ ≅ Sⁿ⁺¹
+- `doubleDiskQuotHomeoSphere`: Dⁿ⁺¹ ∪_{Sⁿ} Dⁿ⁺¹ ≅ Sⁿ⁺¹
+
+And we need π₁(S³)=1. There's a classical induction using the gluing: if X is path-connected and the attaching of cones... π₁(ΣX) = 1 always! Actually: the suspension ΣX is covered by two open cones C₊X, C₋X (each contractible, containing the equator X × {0}... hmm each open cone C₊X = X × (0,1] ∪ {vertex} deformation retracts to the vertex, contractible). The intersection is X × (0,1), which is path-connected iff X is path-connected. So π₁(ΣX) = 1 for any path-connected X by the same two-open-set van Kampen argument. So the two-set loop decomposition is still the crux.
+
+OK so the honest core work is: **prove the two-open-set simply-connected criterion** (or the full frenzymath-style decomposition) in our pinned mathlib. This would prove:
+- `simplyConnectedSpace_of_twoOpenCover` — the van Kampen corollary for two open path-connected simply connected sets with path-connected intersection (this is exactly node 6's `vanKampenSimplyConnectedCover` in MoiseBranch.lean restricted to... wait, MoiseBranch's statement is for arbitrary A B : Set X with A ∪ B = univ).
+- Then `sphereSimplyConnected_of_two_le` for n ≥ 2.
+- Then the unconditional `sphereRecognition` application: for the antipodal action, we get RP³ not simply connected... The real payoff: with π₁(S³)=1 we can't apply `sphericalSpaceFormRecognition` (its hypothesis is that S³/G is simply connected; for G=1 it's trivial).
+
+Hmm wait — what does `SimplyConnectedSpace (Sphere 3)` buy? In the DAG: node 6 says "π₁(#ᵢ S³/Γᵢ) = 0 forces each Γᵢ trivial". So the sphere's simply-connectedness feeds the van Kampen for connected sums. Our `sphericalSpaceFormRecognition` has hypothesis `SimplyConnectedSpace (S³/G)` — not the same thing.
+
+Actually the concrete payoff of `SimplyConnectedSpace (Sphere 3)` for this task:
+1. It closes the "next dependency request" recorded in the previous card.
+2. Combined with our covering lemma, it gives e.g.: any covering p : E → Sphere 3 with E compact path-connected... no wait that needs base simply connected — YES! `coveringOfSimplyConnectedIsHomeo` with X = Sphere 3: any covering map p : E → S³ with E compact path-connected and p surjective is a homeomorphism. That's the statement "S³ has no nontrivial compact path-connected covers" — a genuine sphere-recognition ingredient (the universal cover of a homotopy 3-sphere M is a covering p : M̃ → M; if π₁(M)=0 then... hmm, that's the other direction).
+
+Actually the real application: a homotopy sphere M with π₁(M)=0 — its universal cover... M simply connected means any covering E → M with E path-connected and E simply connected is a homeomorphism. Hmm.
+
+The direct concrete use in the recognition pipeline: Perelman gives M ≅ #ᵢ S³/Γᵢ; node 6 (van Kampen for connected sums) says π₁(M) = ✽ᵢ π₁(S³/Γᵢ); π₁(M)=0 forces each π₁(S³/Γᵢ) = 1 (free product of groups is trivial iff all factors trivial — needs each factor nonempty/group theory); each Γᵢ acts freely so S³ → S³/Γᵢ is a covering with simply connected total space S³ (THIS is where `SimplyConnectedSpace (Sphere 3)` is used: the universal covering property!) and simply connected base S³/Γᵢ, so by our covering lemma the covering is a homeomorphism, Γᵢ = 1, M ≅ #ᵢ S³ ≅ S³.
+
+So `SimplyConnectedSpace (Sphere 3)` is precisely the missing hypothesis to turn `sphericalSpaceFormRecognition` into an unconditional recognition: for any finite group Γ acting freely and continuously on S³: π₁(S³/Γ)=1 → S³/Γ ≅ S³. Wait no, that doesn't use π₁(S³)=1... The role of π₁(S³)=1 is elsewhere (universal cover in the space-form classification). Hmm, in `sphericalSpaceFormRecognition` the covering is S³ → S³/G; the hypothesis is SimplyConnectedSpace(S³/G) (base), not total space. Total space path-connectedness is used (PathConnectedSpace (Sphere 3), already have). So π₁(S³)=1 isn't needed for that corollary.
+
+Where it IS needed: for the converse/freeness — no. Honestly, `SimplyConnectedSpace (Sphere 3)` is needed for the *spherical space form classification*: finite groups acting freely on S³ are classified (linear); the universal cover argument. In the Poincaré DAG: node 6 — π₁(#ᵢ S³/Γᵢ) = ✽ᵢ π₁(S³/Γᵢ) and π₁(S³/Γᵢ) = Γᵢ via the covering theory (monodromy), needing π₁(S³)=1 for the covering S³ → S³/Γᵢ to be the universal cover. So it's a genuine needed input for the general DAG.
+
+So this invocation's best play: **prove `SimplyConnectedSpace (Sphere n)` for n ≥ 2** in pinned mathlib, closing the named next-lemma/blocker. This is a big but bounded job. Let me first check what the pinned mathlib offers:
+
+1. `stereographic'` in `Geometry/Manifold/Instances/Sphere.lean` — check API.
+2. Lebesgue number lemma — search.
+3. `PathConnectedOpenCover`-style machinery in mathlib? Search for `PathConnectedOpenCover` in mathlib. Actually I recall mathlib recently added `van Kampen`?? Let me search! mathlib at rev 7974e751 (Sep 2026?) — there might be a van Kampen formalization merged recently (there was work by various people...). Let me grep for "VanKampen" or "vanKampen" or "PathConnectedOpenCover" or "loop_decomposition" in mathlib.
+dsh: reasoning:
+`stereographic'` exists in the pinned mathlib with the same API (`stereographic'_source`, `stereographic'_target`). The Lebesgue number lemma: let me check `Topology/UniformSpace/Compact.lean` — there's a Lebesgue number lemma `lebesgue_number_lemma` there. Let me grep for it.
+dsh: reasoning:
+The Lebesgue number lemma exists (`lebesgue_number_lemma` in `Topology/UniformSpace/Compact.lean` and metric-space variants in `Topology/EMetricSpace/Basic.lean`). So the ingredients for a self-contained two-cover loop-decomposition are all present:
+
+1. `lebesgue_number_lemma` for the unit interval (compact).
+2. `Path` API (`Mathlib.Topology.Homotopy.Path`).
+3. Stereographic projection `stereographic'` (pinned mathlib has it).
+4. Convex → contractible → simply connected (already used).
+5. `isPathConnected_compl_singleton_of_one_lt_rank` — check existence in pinned mathlib.
+
+Let me check the last one and also what the frenzymath proof used: `isPathConnected_compl_singleton_of_one_lt_rank` in `Mathlib.Analysis.Normed.Module.Connected`. Also `isPathConnected_sphere`. Both are used in our AntipodalQuotient.lean (spherePathConnectedSpace_of_pos uses isPathConnected_sphere). Good.
+
+Plan for this invocation (4 hours):
+
+**Goal**: Prove `sphereSimplyConnected_of_two_le {n} (hn : 2 ≤ n) : SimplyConnectedSpace (Sphere n)` in pinned mathlib, self-contained in D12, with attribution to Hatcher Prop 1.14 / the frenzymath approach (not copying their code — writing our own proof over the two-pole cover; the underlying math is classical).
+
+Sub-goals:
+A. `sphereComplementHomeoEuclidean n (x : Sphere (n+1))`: Sⁿ⁺¹ ∖ {x} ≃ₜ EuclideanSpace ℝ (Fin (n+1)) — port of the stereographic composition (frenzymath has this; the API should be identical in pinned mathlib; write our own but same math).
+B. Path-connectedness of Sⁿ⁺² ∖ {p, q} for antipodal p, q (via B's homeo to punctured ℝⁿ⁺² and `isPathConnected_compl_singleton_of_one_lt_rank`).
+C. The two-cover loop decomposition: for X with open U, V covering, U∩V path-connected, U, V simply connected, basepoint x₀ ∈ U∩V: every loop is nullhomotopic. 
+
+Hmm — wait. Actually, do I need the general loop-decomposition, or can I use a simpler direct argument? There's a slicker approach for the sphere specifically, using mathlib's `IsCoveringMap` machinery! Here's the idea:
+
+Since we proved `antipodalQuotientCovering`: Sⁿ → RPⁿ is a covering map. A loop in Sⁿ... hmm, no.
+
+Alternative slicker approach via **Lifting.lean**: `Topology/Homotopy/Lifting.lean` has `exists_path_lifts` and homotopy lifting for covering maps. Consider the covering Sⁿ → RPⁿ. A nullhomotopic loop in RPⁿ lifts... no, still need the base fact.
+
+Better idea — use the **suspension gluing we already proved + the covering lemma**: Hmm, no.
+
+Another classical shortcut: **every loop in Sⁿ, n≥2, factors through Sⁿ minus a point** — there's a neat proof via the unit interval + density: the image of a loop γ : I → Sⁿ is compact, and Sⁿ is covered by complements of pairs... Standard topological proof of π₁(Sⁿ)=0 uses van Kampen
+The key remaining item is `SimplyConnectedSpace (Sphere n)`. Let me check what pinned mathlib offers — perhaps a van Kampen or Lebesgue-number API exists now.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed

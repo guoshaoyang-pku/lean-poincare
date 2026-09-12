@@ -1,0 +1,3 @@
+Task id: D13-cross-audit-ophis-cards
+Worktree: worktrees/D13-cross-audit-ophis-cards
+Independently audit all ophis-gpu D13 cards. Rebuild from cold source, replay source hashes, compile gates, fail-closed axiom cones (only propext, Classical.choice, Quot.sound), downstream-use queries and semantic classification. Preserve honest boundaries: TASK_DONE is not Poincare proof; conditional/model/statement-only claims stay labeled. Never use sorry, axiom, admit, unsafe, native_decide or proof_wanted. Record F-findings and exact blocker closures only with constructor + downstream use + independent rebuild. Write longrun/results/D13-cross-audit-ophis-cards.md/.json and checkpoint.json.

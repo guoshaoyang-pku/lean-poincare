@@ -1,0 +1,8 @@
+import Poincare.L4.GeodesicComparison.ConstantCurvatureRauchLower
+#print axioms Poincare.L4.GeodesicComparison.jacobiSol_pos_of_nonpos
+#print axioms Poincare.L4.GeodesicComparison.jacobiSol_monotoneOn_of_nonpos
+#print axioms Poincare.L4.GeodesicComparison.jacobiSol_second_deriv_bound_nonpos
+#print axioms Poincare.L4.GeodesicComparison.rauch_lower_of_jacobi_constCurv
+#print axioms Poincare.L4.GeodesicComparison.sinh_quarter_le_three
+#print axioms Poincare.L4.GeodesicComparison.sinh_one_le_three
+#print axioms Poincare.L4.GeodesicComparison.rauch_lower_constCurv_witness

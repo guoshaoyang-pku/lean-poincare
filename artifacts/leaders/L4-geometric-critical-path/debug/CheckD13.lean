@@ -1,0 +1,13 @@
+import Poincare.D13.ManifoldIBP.POUConstruction
+import Poincare.D13.ManifoldIBP.PartialChartModelPOU
+import Poincare.D13.ManifoldIBP.POUModel
+import Poincare.D13.HeatKernelBridge
+import Poincare.D13.ManifoldIBP.Transfer
+#check @Poincare.D13.ManifoldIBP.SmoothOverlapAtlas.globalWeightedIBP_of_cover_partial_ae
+#check @Poincare.D13.ManifoldIBP.OverlapAtlas.halfSpaceAtlas_weightedIBP_unconditional
+#check @Poincare.D13.ManifoldIBP.OverlapAtlas.halfSpaceAtlas_laplacianIntegralZero
+#check @Poincare.D13.ManifoldIBP.OverlapAtlas.halfSpaceAtlas_greenIdentity
+#check @Poincare.D13.ManifoldIBP.OverlapAtlas.dilationAtlasTwo_weightedIBP_via_pou
+#check @Poincare.D13.ManifoldIBP.manifoldWeightedIBP_of_atlasData
+#check @Poincare.D13.ManifoldIBP.monotoneOn_F_gaussian
+#check @Poincare.D13.ManifoldIBP.finiteLifetimeEntropyBridge_gaussian

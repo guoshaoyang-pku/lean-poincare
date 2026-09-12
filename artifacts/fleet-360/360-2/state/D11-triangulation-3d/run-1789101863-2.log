@@ -1,0 +1,1458 @@
+dsh: reasoning:
+Let me start by exploring the existing worktree to understand the current state, check checkpoint.json, and see what D10 infrastructure exists.
+dsh: reasoning:
+Let me look at the existing D11 files and the D10 TriangulationLowDim infrastructure, and check the results files.
+dsh: reasoning:
+The checkpoint says DeltaComplex.lean was "rewritten link section... compile in progress" and Models.lean was "written... compile pending". Let me check the current state of these files and try to compile them.
+dsh: reasoning:
+The file is quite long (1242 lines). Let me read the rest.
+dsh: reasoning:
+The files exist. The checkpoint says "compile in progress" for DeltaComplex.lean and "compile pending" for Models.lean. Let me try compiling both files now to see the state.
+dsh: reasoning:
+While that compiles, let me look at the Audit.lean file and the D10 TriangulationLowDim infrastructure, and check the results directory and existing h1check.py, search.py for reference.
+dsh: reasoning:
+The infrastructure is in place. Let me check the compile status of the background job. Meanwhile, let me look at the results directory requirements and how prior tasks wrote the results files, and check the local_gate.py.
+dsh: reasoning:
+Understood. Now let me check the compile job status.
+dsh: reasoning:
+There are 4 errors:
+
+1. Line 711: `deterministic timeout at whnf` in `same_block_of_pair` — the theorem proof takes too long. Probably the `rfl` heavy proof. I can restructure or increase heartbeats. Actually the error is at line 711:0, which is `theorem same_block_of_pair`. Hmm, that's a proof-theoretic timeout. Options: increase maxHeartbeats (already 2000000) or simplify the proof.
+
+2. Line 1042:68: invalid field `card` — `.card = 2` — `Function.card` doesn't exist. Let me look at line 1042: `((diskOnes T C).filter (fun ec => ...).card = 2))`. The issue: probably precedence — `(finsetToList ec).any (fun fc => ...) = vc ∨ ...).card`? Actually error says "The environment does not contain `Function.card`" — projecting `card` from an expression that is a function. Let me check exact context around line 1042.
+
+3. Line 1064:46: unexpected token '/--'; expected ')', ',' or ':' — a paren mismatch. Lines 1051-1064: the ∀ vc ∈ ... ∧ chain has mismatched parens.
+
+4. Line 1197:6: failed to synthesize instance — line 1197 is `({⟨g.t, c⟩, ⟨g.t, d⟩} : Finset (Corner N)) ∈ T.edgeClassOf f.t a b`. The membership instance issue: `T.edgeClassOf f.t a b` is a `Finset (Corner N)` — should be fine. Wait, `∈` on Finset requires... `x ∈ s` for Finset is just `x ∈ s` (it's a multiset/Set-like membership, works without DecidableEq). Hmm. Actually let me look at the exact error message.
+
+Let me get the full error messages.
+dsh: reasoning:
+Now I understand the errors:
+
+1. Line 1042 (inside `VertexLinkIsDisk`): The expression:
+```lean
+(∀ vc ∈ T.vertexLinkVertexClasses C,
+    ((diskOnes T C).filter (fun ec =>
+      (finsetToList ec).any (fun fc =>
+        T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+          T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 0 ∨
+    ...
+```
+There's a paren issue: `(finsetToList ec).any (fun fc => ...).card` — the `.card` is applied to the whole `(fun ec => ...)` lambda? Actually the issue is that `fun fc => ...` then `).card` applies `card` to the lambda `fun ec => (finsetToList ec).any (fun fc => ...)` because the parens are unbalanced. Actually the real problem: `((diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => P))).card = 0` — the closing paren placement is off: after `.any (fun fc => ...)` there is `)).card` — wait, `.any fun fc => P).card` — `P).card` ends the lambda, then `.card` binds to... `(diskOnes T C).filter (fun ec => ...).card` — since `filter` opens a paren, we have `(diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => P)).card` — hmm, with the exact text:
+
+```lean
+  (∀ vc ∈ T.vertexLinkVertexClasses C,
+    ((diskOnes T C).filter (fun ec =>
+      (finsetToList ec).any (fun fc =>
+        T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+          T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 0 ∨
+    ((diskOnes T C).filter (fun ec =>
+      (finsetToList ec).any (fun fc =>
+        T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+          T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 2)) ∧
+```
+
+The `)).card` closes `any` and `filter`, so `.card = 0` is on the filter — that's correct! Wait: `.any (fun fc => A ∨ B))` — parens: `(diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => A ∨ B))` — count: `(diskOnes` `(` `filter` `(` `fun ec =>` `(` `finsetToList ec` `)` `.any` `(` `fun fc =>` A ∨ B `)` `)` `.card` — the last two `)` close `fun fc` and `fun ec`. So `(diskOnes T C).filter (fun ec => ...)` then `.card`. Hmm, that seems balanced...
+
+But the error at 1042:68 says the expression is `fun ec => (finsetToList ec).any fun fc => ...` of type `Finset (FaceCorner N) → Bool`, and `.card` is projected from it. So the parser attached `.card` to the lambda. That means the paren count is off — probably there's one paren too many somewhere earlier, e.g., in `diskOnes` or `linkOnesNeighbors`... Actually wait — the error is at line 1042:68. Line 1042 is:
+
+```
+1042:     ((diskOnes T C).filter (fun ec =>
+1043:       (finsetToList ec).any (fun fc =>
+1044:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1045:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 2))
+```
+
+Hmm wait, line 1042 in the file I read is:
+```
+1042:     ((diskOnes T C).filter (fun ec =>
+1043:       (finsetToList ec).any (fun fc =>
+1044:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1045:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 2))
+```
+
+and the error message points at column 68 of line 1042 — `(diskOnes T C).filter (fun ec =>` — col 68 is right around `(fun ec`. Hmm, but the error expression shown is the whole `fun ec => ...` lambda with type `Finset (FaceCorner N) → Bool`. So the parser sees `.card` applied to `fun ec => ...`. That means the opening parens are unbalanced: something closed the `filter (` paren early.
+
+Actually, let me reconsider: maybe there's a missing `)` before `.card`. If the text is `(finsetToList ec).any (fun fc => A ∨ B)).card` — that has THREE closing parens? No...
+
+Hmm wait, I need to see the actual current text of lines 1036-1064 precisely. From my read:
+
+```
+1036: def diskBoundaryVertices (T : FacePairing3 N) (C : Finset (Corner N)) :
+1037:     Finset (Finset (CornerEdge N)) :=
+1038:   (T.vertexLinkVertexClasses C).filter (fun vc =>
+1039:     ((diskOnes T C).filter (fun ec =>
+1040:       (finsetToList ec).any (fun fc =>
+1041:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1042:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 2))
+```
+
+Paren balance: line 1038 `(T.vertexLinkVertexClasses C).filter (fun vc =>` opens: filter-paren, fun vc. Line 1039: `((diskOnes T C).filter (fun ec =>` opens: paren, filter-paren, fun ec. Line 1040: `(finsetToList ec).any (fun fc =>` balanced `(finsetToList ec)`, opens any-paren, fun fc. Line 1041-1042: expression. Line 1042 ends: `= vc)).card = 2))`. Closing: `)` closes fun fc, `)` closes any-paren... wait no: `.any (fun fc => X` needs `)` to close `fun fc` and `)` to close `any (`. Then `.card` on the filter result needs `)` to close `filter (`... 
+
+Hold on: `(diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => P))` — to get `.card` on the filtered finset, we need exactly `... P)) .card`? Let me count: parens to close: `fun fc` (1), `any (` (2)... no wait.
+
+`.filter (fun ec => EXPR)` — the argument of filter is the lambda `fun ec => EXPR`. `EXPR = (finsetToList ec).any (fun fc => P)`. So we write `(diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => P)).card` — closing sequence after P: `)` (close fun fc), `)` (close any paren `(`), `)` (close fun ec), then `.card`, then `)` (close the outer `(` opened at line 1039 before `(diskOnes`), and `)` (close filter paren opened line 1038).
+
+The text has: `= vc)).card = 2))` — that's only 3 closing parens: `))` after vc closes `fun fc` and `any (`. Then `.card = 2`. Then `))` closes... `fun ec =>` and `filter (`. But the outer `(` opened before `(diskOnes T C)` at line 1039 remains unclosed! That's the bug. We need `)))` before `.card`: one for fun fc, one for `any (`, one for `fun ec =>`. Wait:
+
+Line 1039: `((diskOnes T C).filter (fun ec =>` — parens: `(` A, `filter (` B, `fun ec =>` C.
+Line 1040: `(finsetToList ec).any (fun fc =>` — parens D `(finsetToList ec)` balanced; `any (` E, `fun fc =>` F.
+So to get `.card` applied to `(diskOnes T C).filter (fun ec => ...)`, after P we need: close F, close E, close C → `)))`. Then `.card`, then close B, close A → `))` at the end.
+
+The current text: `= vc)).card = 2))` gives after P: `))` closes F and E. Then `.card` — but C (fun ec) is still open, so `.card` applies to the lambda `fun ec => ...` — that's exactly the error! So fix: change `vc)).card = 2))` to `vc))).card = 2))`. But wait — the parser only reported the first error and gave up on the syntax. Then line 1064's `unexpected token '/--'` is a cascade.
+
+So fix line 1042: `= vc)).card = 2))` → `= vc))).card = 2))`.
+
+Hmm wait, but also the error at line 1064: `unexpected token '/--'; expected ')', ',' or ':'`. Line 1064 is in `VertexLinkIsDisk`:
+```
+1058:       (finsetToList ec).any (fun fc =>
+1059:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1060:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 2)) ∧
+```
+Same pattern: `= vc)).card = 2))` — needs `)))` before `.card`. So the diskBoundaryVertices-like predicate in VertexLinkIsDisk has the same bug. Actually looking again at lines 1051-1064:
+
+```
+1051:   (∀ ec ∈ T.vertexLinkEdgeClasses C, linkEdgeIncidence T C ec ≤ 2) ∧
+1052:   (diskOnes T C).Nonempty ∧
+1053:   (∀ vc ∈ T.vertexLinkVertexClasses C,
+1054:     ((diskOnes T C).filter (fun ec =>
+1055:       (finsetToList ec).any (fun fc =>
+1056:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1057:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 0 ∨
+1058:     ((diskOnes T C).filter (fun ec =>
+1059:       (finsetToList ec).any (fun fc =>
+1060:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1061:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 2)) ∧
+```
+
+Line 1057: `= vc)).card = 0 ∨` — same bug: need `)))` before `.card`. Also `∨` binds inside the ∀ body — `(fun vc => A).card... wait no, this is `∀ vc ∈ ..., BODY` where BODY = `((diskOnes...).filter (fun ec => ...).card = 0 ∨ ((diskOnes...).filter...).card = 2)`. The ∀ body needs parens around the `∨`? In Lean, `∀ vc ∈ s, A ∨ B` parses as `∀ vc ∈ s, (A ∨ B)` since `∀` binds loosest. OK.
+
+But also `.card = 0 ∨ ...card = 2)` — need the body parenthesized: currently `...).card = 2)) ∧` — there are two `)` before `∧`: one closes... hmm. Let me just carefully rewrite the whole `VertexLinkIsDisk` definition with correct parens.
+
+2. Line 1197 error: `Membership (Finset (Corner N)) (Finset (Corner N))` failed to synthesize. Line 1197:
+```
+1197:       ({⟨g.t, c⟩, ⟨g.t, d⟩} : Finset (Corner N)) ∈ T.edgeClassOf f.t a b)).length = 2)) ∧
+```
+`{a, b} : Finset (Corner N)` and `T.edgeClassOf f.t a b : Finset (Corner N)` — so `({..} : Finset (Corner N)) ∈ (T.edgeClassOf ... : Finset (Corner N))` requires `Membership (Finset (Corner N)) (Finset (Corner N))`. In Lean 4 mathlib, `x ∈ s` for finsets works because Finset has `Membership α (Finset α)` via `SetLike`/`Finset.instMembership`. The problem: here `∈`'s right side — `T.edgeClassOf f.t a b` — is a Finset of Corners, but the left side is also `Finset (Corner N)`. Hmm, but elsewhere in the file (e.g., line 1076 `({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E` where `E : Finset (Finset (Corner N))`) it works because `E : Finset (Finset (Corner N))` — membership `Membership (Finset (Corner N)) (Finset (Finset (Corner N)))`. So that's fine.
+
+The issue at 1197: `T.edgeClassOf f.t a b` returns `Finset (Corner N)`, and we ask `{⟨g.t, c⟩, ⟨g.t, d⟩} ∈ T.edgeClassOf f.t a b` — but wait, the error says `Membership (Finset (Corner N)) (Finset (Corner N))`. Hmm — the LHS type should be `Corner N` not `Finset (Corner N)`. Oh! The issue: `edgeClassOf` was previously defined as returning the biUnion of all `E.biUnion id`... let me check:
+
+```lean
+def edgeClassOf (T : FacePairing3 N) (t : Fin N) (a b : Fin 4) : Finset (Corner N) :=
+  (T.edgeClasses.filter (fun E => ({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E)).biUnion
+    (fun E => E.biUnion id)
+```
+
+Hmm, this returns `Finset (Corner N)` — but it's the union of the *contents* of all edge classes containing that edge — i.e., the set of corners. That seems wrong semantically: `edgeClassOf` should return the edge class itself (a Finset (Finset (Corner N))), or the set of corners? Looking at usage: in `boundaryEdgeClassesList`, `T.edgeClassOf f.t a b` is used as an edge class (list of edge classes); in `BoundaryIsClosedSurface`, `T.edgeClassOf f.t a b` is compared for equality between faces — `T.edgeClassOf f.t a b = T.edgeClassOf g.t c d` (line 1184) — fine either way if consistent; and at line 1197: `({⟨g.t, c⟩, ⟨g.t, d⟩} : Finset (Corner N)) ∈ T.edgeClassOf f.t a b` — here we ask whether the 2-element edge finset is in the edge class. If edgeClassOf returns `Finset (Corner N)` (corners), then we need `Membership (Finset (Corner N)) (Finset (Corner N))` — fails. 
+
+But in `edgeLinkFaceOccs` (line 1076), `({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E` with `E : Finset (Finset (Corner N))` — that's the actual edge class. So `edgeClassOf` should return the edge CLASS, i.e., `Finset (Finset (Corner N))`? Let's check what makes sense: An edge class E : Finset (Finset (Corner N)) is a set of edges, each edge being a 2-element finset of corners. Then `edgeClassOf t a b` should be the class E containing `{⟨t,a⟩, ⟨t,b⟩}` — but there may be multiple? No — componentsOf yields a partition, so exactly one block contains the edge. So `edgeClassOf` should return `E` itself (Finset (Finset (Corner N))). Then:
+- `boundaryEdgeClassesList`: list of `T.edgeClassOf f.t a b` — OK.
+- `BoundaryIsClosedSurface` line 1197: `({⟨g.t,c⟩, ⟨g.t,d⟩} : Finset (Corner N)) ∈ T.edgeClassOf f.t a b` — Membership (Finset (Corner N)) (Finset (Finset (Corner N))) — OK.
+- The three-distinct-edge-classes check (line 1193): `.eraseDups.length = 3` on a list of edge classes — OK.
+
+But wait — there's a subtlety: `edgeClassOf` currently returns corners, and `boundaryChi` uses `boundaryEdgeClassesList.eraseDups.length` — as long as it's consistent (bijectively maps classes), the count is right either way. But for the `∈` check at 1197 the class-of-edges version is needed. However, `filter (fun E => edge ∈ E)`.biUnion id over edgeClasses would give the union of all... no wait — exactly one E contains the edge (partition!), so `biUnion id` = that E. But it's defined as `.biUnion (fun E => E.biUnion id)` — that flattens corners. Let me just fix it to return the edge class as Finset (Finset (Corner N)):
+
+```lean
+def edgeClassOf (T : FacePairing3 N) (t : Fin N) (a b : Fin 4) : Finset (Finset (Corner N)) :=
+  (T.edgeClasses.filter (fun E => ({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E)).biUnion
+    (fun E => ({E} : Finset (Finset (Corner N))))
+```
+
+Hmm, but if the edge isn't in any class (can't happen since edgeSeed seeds all edges... wait, but the seed contains ALL `{⟨t,a⟩, ⟨t,b⟩}` including degenerate a=b? edgeSeed seeds `{⟨t,a⟩, ⟨t,b⟩}` for all a,b including a=b → singleton sets. And edgePairs only identifies edges within glued faces where a ≠ i, b ≠ i, a ≠ b. So `{t,a},{t,b}` with a=b: singleton block; with a≠b: block containing the 2-element set. For a≠b, the block contains `{⟨t,a⟩,⟨t,b⟩}`. So `filter (fun E => {⟨t,a⟩, ⟨t,b⟩} ∈ E)` — exactly one block. Fine.
+
+Actually — wait. There's a subtlety about whether the edge is seeded: edgeSeed includes all pairs (a,b) — including both orders and equal pairs. Fine, each edge `{⟨t,a⟩,⟨t,b⟩}` (a≠b) appears exactly once as a set. Good.
+
+But actually, changing the type of edgeClassOf from `Finset (Corner N)` to `Finset (Finset (Corner N))` requires checking all uses compile. Uses:
+1. Line 1171 `boundaryEdgeClassesList`: `List.map (fun b => T.edgeClassOf f.t a b)` — fine.
+2. Line 1184 `boundaryAdjacencyPairs`: `T.edgeClassOf f.t a b = T.edgeClassOf g.t c d` — fine.
+3. Line 1193: `List.map (fun b => T.edgeClassOf f.t a b) ... eraseDups.length = 3` — needs DecidableEq (Finset (Finset (Corner N))) — exists.
+4. Line 1197: `∈ T.edgeClassOf f.t a b` — fine.
+5. Line 823 definition itself.
+6. `IsBoundaryEdgeClass` (line 1158): `({⟨f.t, a⟩, ⟨f.t, b⟩} : Finset (Corner N)) ∈ E` — E is already an edge class from edgeClasses; fine.
+
+Also `edgeLinkFaceOccs` uses `∈ E` where E : Finset (Finset (Corner N)) — unchanged.
+
+OK so fix: change edgeClassOf's return type to Finset (Finset (Corner N)).
+
+Hmm wait — actually, maybe simpler: keep `edgeClassOf` returning corners but change line 1197 to check `∃ a' b', {⟨g.t,c⟩...}`? No — the class-of-edges is cleaner. Actually wait, there's another consideration: `boundaryChi` counts `boundaryEdgeClassesList.eraseDups.length` — if edgeClassOf returns the class (Finset of edges), eraseDups over classes works. OK.
+
+3. Line 711 timeout: `same_block_of_pair` proof hits heartbeat limit. Options:
+   - Increase maxHeartbeats further? Already 2M. The `deterministic timeout at whnf` suggests the proof search is looping. Perhaps add `set_option maxHeartbeats 8000000`? But this is risky for the gate (compile time).
+   - Rewrite the proof to be more direct. The proof uses `mem_split` and `grow_foldl`, `same_block_preserved`, and ends with `simpa [componentsOf, List.foldl_append]`. The heavy part might be `simpa` over `List.foldl_append` with big rw. 
+
+Let me think about `same_block_of_pair`: given `(x,y) ∈ pairs`, split `pairs = l1 ++ (x,y) :: l2`. We want: ∃ C ∈ componentsOf seed pairs, x ∈ C ∧ y ∈ C. The current approach: grow {x} and {y} through l1 into A, B in P' = foldl l1 P0; then mergePair P' x y gives C1 containing x,y; then preserved through l2. Then the final `change ...` + `simpa [componentsOf, List.foldl_append] using hC`.
+
+The issue: `List.foldl_append` — the theorem `List.foldl_append` might not exist in this form or `simpa` unfolds a lot. Alternative: restructure to use induction directly, or use `by` with `simp only [componentsOf, ...]` and `rwa`. 
+
+Actually — hold on. The theorem `same_block_of_pair` might not even be needed for the decide-based theorems! Let me check where it's used. It's used... let me grep. It's part of the "correctness of union-find" infrastructure. If it's not used anywhere downstream (only the decidability computations are used in Models.lean), I could remove it or fix it. But the file's docstring claims componentsOf_spec. Let me check usage.
+
+Actually the proof may just need a better strategy. Let me first fix the syntax errors, then look at the timeout more carefully. Actually the timeout might also be caused by the earlier syntax errors? No — errors at 1042 and 1064 come AFTER line 711 in the file, but the timeout at 711 is reported first (elaboration order). The syntax errors at 1042+ are independent of the timeout. Hmm, wait — actually could the timeout at 711 be a cascade of the syntax error at 1042? No, 711 < 1042.
+
+Let me think about why `same_block_of_pair` times out. The proof:
+
+```lean
+theorem same_block_of_pair (seed : Finset α) (pairs : List (α × α)) {x y : α}
+    (hxy : (x, y) ∈ pairs) (hx : x ∈ seed) (hy : y ∈ seed) :
+    ∃ C ∈ componentsOf seed pairs, x ∈ C ∧ y ∈ C := by
+  rcases mem_split pairs hxy with ⟨l1, l2, rfl⟩
+  let P0 : Finset (Finset α) := seed.image fun a => ({a} : Finset α)
+  let P' : Finset (Finset α) := l1.foldl (fun P ab => mergePair P ab.1 ab.2) P0
+  rcases grow_foldl P0 l1 {x} (by rw [mem_image]; exact ⟨x, hx, rfl⟩) with ⟨A, hA, hsubA⟩
+  ...
+```
+
+The `rfl` after `rcases mem_split pairs hxy with ⟨l1, l2, rfl⟩` — this substitutes `pairs = l1 ++ (x,y)::l2`. Then at the end:
+
+```lean
+  refine ⟨C, ?_, hxC, hyC⟩
+  change C ∈ (l1 ++ (x, y) :: l2).foldl (fun P ab => mergePair P ab.1 ab.2) P0
+  simpa [componentsOf, List.foldl_append] using hC
+```
+
+`hC : C ∈ l2.foldl (fun P ab => mergePair P ab.1 ab.2) (mergePair P' x y)` from `same_block_preserved`. Hmm, and `List.foldl_append` says `l1.append l2 foldl ...` — `List.foldl_append (f := fun P ab => ...)` — hmm, `List.foldl_append` might need the fold function... The `simpa` might be unfolding `mergePair` etc. and creating huge terms. A timeout at whnf suggests `change`/`simpa` is doing something explosive.
+
+Alternative proof ending: instead of `change`, use induction on l2? Actually simpler: after `hmerge`, apply `same_block_preserved (mergePair P' x y) l2 ⟨C1, hC1, hxC1, hyC1⟩`, getting `hC : ∃ C ∈ l2.foldl ... (mergePair P' x y), ...`. Then `rcases hC with ⟨C, hC, hxC, hyC⟩`, and show `C ∈ (l1 ++ (x,y) :: l2).foldl ... P0`. 
+
+`List.foldl_append`: `(l1 ++ l2).foldl f P0 = l2.foldl f (l1.foldl f P0)` — hmm, wait: `List.foldl_append` in mathlib: `(l₁ ++ l₂).foldl f b = l₂.foldl f (l₁.foldl f b)`. So `(l1 ++ (x,y)::l2).foldl f P0 = ((x,y)::l2).foldl f (l1.foldl f P0) = l2.foldl f (f (l1.foldl f P0) (x,y))` = `l2.foldl f (mergePair P' x y)`. 
+
+So `simpa [componentsOf, List.foldl_append]` — hmm, but `hC`'s type has `l2.foldl (fun P ab => mergePair P ab.1 ab.2) (mergePair P' x y)` and the goal after change has `(l1 ++ (x, y) :: l2).foldl (fun P ab => mergePair P ab.1 ab.2) P0`. With `List.foldl_append` and definitional unfolding of `P'`, should work. The timeout may be because `simp` unfolds `componentsOf` and tries to unfold `mergePair` and `foldl`... Actually the `change` itself computes whnf of `(l1 ++ (x, y) :: l2).foldl ... P0`? No — change checks definitional equality, which unfolds `P'` (a `let`)... 
+
+Hmm. Alternatively, avoid `change` and use `rfl`-style: `refine ⟨C, by rw [List.foldl_append]; exact hC, hxC, hyC⟩` — hmm but the middle fold: `(l1 ++ (x,y)::l2).foldl f P0`. 
+
+Let me write the ending as:
+```lean
+  rcases hmerge with ⟨C1, hC1, hxC1, hyC1⟩
+  rcases same_block_preserved (mergePair P' x y) l2 ⟨C1, hC1, hxC1, hyC1⟩ with
+    ⟨C, hC, hxC, hyC⟩
+  refine ⟨C, ?_, hxC, hyC⟩
+  simpa [componentsOf, P', List.foldl_append] using hC
+```
+
+Hmm, the current code is essentially that (change then simpa). The timeout... Let me look at whether `mem_split` etc. compiled. The error is at line 711:0 — the whole theorem. Maybe the `rcases mem_split pairs hxy with ⟨l1, l2, rfl⟩` is problematic: `rfl` as the third component requires `pairs = l1 ++ x :: l2` where the split gives `l = l1 ++ x :: l2` — that's exactly what mem_split gives (rfl pattern works since the equation is `l = l1 ++ x :: l2`... wait, mem_split's conclusion: `∃ l1 l2, l = l1 ++ x :: l2` — yes, so `rfl` works.
+
+Hmm, could the timeout be in `grow_foldl P0 l1 {x} (by rw [mem_image]; exact ⟨x, hx, rfl⟩)`? `grow_foldl` is a recursive proof that should apply quickly... but its implicit arguments: `grow_foldl P0 l1 {x}` — `grow_foldl : ∀ P : Finset (Finset α), ∀ l : List (α × α), ∀ C ∈ P, ∃ C' ∈ ..., C ⊆ C'`. `mem_image` — `{x} ∈ P0` — `P0 = seed.image fun a => {a}` — `rw [mem_image]` rewrites `{x} ∈ seed.image f` to `∃ a ∈ seed, f a = {x}` — wait no, `rw [mem_image]` on `{x} ∈ seed.image (fun a => {a})` — mem_image: `a ∈ s.image f ↔ ∃ b ∈ s, f b = a`. So we get `∃ a ∈ seed, {a} = {x}`. Then `exact ⟨x, hx, rfl⟩` — `{x} = {x}` rfl. Fine.
+
+The heavy part is probably the final `simpa [componentsOf, List.foldl_append]`. `List.foldl_append` is a theorem about `List.foldl` with implicit function args — simp might unfold `foldl` recursively over `l1` (a variable, so it shouldn't)... but `change` forces whnf of the goal `C ∈ (l1 ++ (x, y) :: l2).foldl f P0` where `f := fun P ab => mergePair P ab.1 ab.2` — whnf of `(l1 ++ (x,y)::l2).foldl f P0` reduces `l1 ++ ...` → `l1` is a variable so foldl recurses... `foldl f P0 (l1 ++ ...)` — `foldl` is defined by recursion on the LIST, so `foldl f P0 (l1 ++ l2)` where `l1` is a local variable — whnf computes `l1 ++ (x,y)::l2` — `append` recursion on l1, stuck. Then foldl recursion — stuck. So `change` should be fine.
+
+Hmm wait — maybe the issue is `List.foldl_append` as a simp lemma combined with `componentsOf` unfolding and the `let` bindings. `componentsOf seed pairs := pairs.foldl ... (seed.image ...)`. After rfl-subst, `pairs = l1 ++ (x,y)::l2`. So `componentsOf seed pairs` whnf → `(l1 ++ (x,y)::l2).foldl (fun P ab => mergePair P ab.1 ab.2) (seed.image fun a => {a})`. And `P0` is a let — `simpa [componentsOf, P0]`... 
+
+Honestly, rather than debugging this long proof, maybe restructure using `Relation.ReflTransGen` + induction over the split? Alternative cleaner approach: prove by induction on `pairs` directly:
+
+```lean
+theorem same_block_of_pair (seed : Finset α) (pairs : List (α × α)) {x y : α}
+    (hxy : (x, y) ∈ pairs) (hx : x ∈ seed) (hy : y ∈ seed) :
+    ∃ C ∈ componentsOf seed pairs, x ∈ C ∧ y ∈ C := by
+  induction pairs using List.reverseRecOn with
+  | H0 => cases hxy
+  | H1 l ab ih => ...
+```
+
+Hmm, `componentsOf` is `pairs.foldl` — structural induction on pairs is awkward with foldl. Reverse induction: `pairs = l ++ [ab]`; `foldl f P0 (l ++ [ab]) = f (foldl f P0 l) ab` — good: `List.foldl_append`? For `l ++ [ab]`: `(l ++ [ab]).foldl f b = [ab].foldl f (l.foldl f b) = f (l.foldl f b) ab`. Hmm wait, `List.foldl_append` gives `(l₁ ++ l₂).foldl f b = l₂.foldl f (l₁.foldl f b)`. With `l₂ = [ab]`: `[ab].foldl f ... = f ... ab` by rfl.
+
+So: if `(x,y) ∈ l ++ [ab]` then either in l (use ih: x,y in same block of foldl l P0; then `same_block_preserved (foldl l P0) [ab]`) or `= ab` (then after foldl l P0 we have f (foldl l P0) (x,y) = mergePair (foldl l P0) x y, and need x,y ∈ some block of mergePair). And for the mergePair step: x and y each are in SOME block of P (since they're in blocks — need a lemma: every seeded element is in some block of any foldl). That's `grow_foldl`-ish: for each seeded x, there's a block containing x: `∃ C ∈ l.foldl f P0, x ∈ C` — follows from grow_foldl applied to `{x}`. And then `mergePair P x y` puts them in the same block: the lemma "if a ∈ A, b ∈ B for blocks A,B ∈ P then a,b ∈ (mergePair P a b)-block". Hmm, but careful: mergePair removes blocks containing a or b and adds ca ∪ cb where ca = union of blocks containing a. Since blocks of P are disjoint (blocks_disjoint), the union of blocks containing a is exactly the unique block containing a. For the DECIDABLE computation that's true; for the proof we need disjointness — we have `blocks_disjoint_foldl`. Hmm, that's only for the final foldl, not intermediate P. But actually for `∃ C' ∈ mergePair P a b, x ∈ C' ∧ y ∈ C'` we don't need disjointness: `ca = P.biUnion (fun s => if a ∈ s then s else ∅)` contains x if some block contains both a and x... hmm no! If x is in block A ∋ a then x ∈ ca. If x ∈ A and a ∈ A, then x ∈ ca. So need x and a in the same block, and y and b in the same block. In our setting: after foldl l P0, the pair (x,y) = ab: we need x and ab.1 in the same block — x = ab.1. Yes! x ∈ {ab.1}'s block trivially. So: `mergePair P x y` with x = ab.1, y = ab.2: `ca` = union of blocks of P containing x — x is in some block (lemma), so x ∈ ca ∪ cb. Similarly y. Good, that works without disjointness.
+
+So the reverse-induction proof:
+- Lemma 1: `block_of_seed`: ∀ x ∈ seed, ∀ l, ∃ C ∈ l.foldl f P0, x ∈ C. Proof: grow_foldl P0 l {x} h — where h : {x} ∈ P0 — need `{x} ∈ seed.image ...` — `rw [mem_image]`... this was fine before.
+
+Hmm wait, but actually there's a subtlety with the `foldl` structure: `componentsOf seed pairs = pairs.foldl f (seed.image singleton)`. With reverseRecOn on pairs: `pairs = l ++ [ab]`. Then `componentsOf seed (l ++ [ab]) = (l ++ [ab]).foldl f P0`. Need `(l ++ [ab]).foldl f P0 = mergePair (l.foldl f P0) ab.1 ab.2` — by `List.foldl_append` then rfl. And induction hypothesis gives x,y in same block of `l.foldl f P0` (when (x,y) ∈ l). Then `same_block_preserved` for the tail `[ab]`.
+
+This is cleaner. But maybe the current proof only times out at the very last `simpa`. Let me try just replacing the ending with a more explicit rewrite:
+
+```lean
+  rcases hmerge with ⟨C1, hC1, hxC1, hyC1⟩
+  rcases same_block_preserved (mergePair P' x y) l2 ⟨C1, hC1, hxC1, hyC1⟩ with
+    ⟨C, hC, hxC, hyC⟩
+  refine ⟨C, ?_, hxC, hyC⟩
+  rw [componentsOf, List.foldl_append]
+  simpa [P'] using hC
+```
+
+Hmm, `rw [List.foldl_append]` — `List.foldl_append` might need explicit args: `(l₁ ++ l₂).foldl f b = l₂.foldl f (l₁.foldl f b)` — the `f` is implicit? In mathlib, `List.foldl_append {α} {β} (f : β → α → β) : ∀ (l₁ l₂ : List α) (b : β), (l₁ ++ l₂).foldl f b = l₂.foldl f (l₁.foldl f b)`. So `rw [List.foldl_append]` needs to infer f — from the goal it can. Then goal: `C ∈ ((x,y)::l2).foldl f (l1.foldl f P0)` → unfold foldl once: `C ∈ l2.foldl f (f (l1.foldl f P0) (x,y))` where `f (l1.foldl f P0) (x,y)` = `mergePair (l1.foldl f P0) x y` and `P' = l1.foldl f P0` (let). `simpa [P']` unfolds P'. Should be quick.
+
+But hmm — the current code does `change C ∈ (l1 ++ (x, y) :: l2).foldl (fun P ab => mergePair P ab.1 ab.2) P0` then `simpa [componentsOf, List.foldl_append] using hC`. The `change` itself might be the timeout source if whnf of the goal forces unfolding `P0`... wait `P0` is a `let`, and `change` — the target has explicit `P0` (a let-bound local). Whnf reduces lets. Hmm, `change` may elaborate the new goal and check defeq — defeq check of `(l1 ++ (x,y)::l2).foldl f P0` vs `componentsOf seed pairs` — `componentsOf` unfolds: `pairs.foldl f (seed.image ...)` — `pairs` = let? No, pairs is a variable, `rfl`-substituted... Actually `rcases mem_split pairs hxy with ⟨l1, l2, rfl⟩` — the `rfl` replaces `pairs` with `l1 ++ x :: l2` in the context. So `componentsOf seed pairs` → `(l1 ++ x :: l2).foldl f (seed.image ...)`. `change C ∈ (l1 ++ (x, y) :: l2).foldl (fun P ab => mergePair P ab.1 ab.2) P0` — unfold componentsOf, P0 (let): `seed.image fun a => ({a} : Finset α)` — matches. Fold function matches. This should be fast!
+
+Unless... the defeq check involves whnf of `(l1 ++ (x,y)::l2)` — no, both sides identical.
+
+Wait, actually the timeout error message says line 711:0 — the position reported for whole-command timeouts is the command start. The heavy command might be `theorem same_block_of_pair` as a whole. It's hard to tell which subproof. Let me try to fix things incrementally: first the syntax errors (1042, 1057, 1060 parens; edgeClassOf type; line 1197), then recompile and see if the timeout persists; if so, restructure that proof.
+
+Actually, hmm, wait. Let me reconsider — maybe the timeout IS caused by the syntax errors downstream: when there's a syntax error, the elaborator can get confused... no, syntax errors are reported at parse time for the whole file? Actually Lean 4 parses the whole file first (parse errors reported per command), then elaborates command by command. A parse error in a later command doesn't affect elaboration of an earlier command's timeout. Unless the parse error swallowed subsequent commands making the file shorter... The 711 timeout is real.
+
+Hmm, one more thought: could the timeout be in `mergePair_connected` (line 391) or `mergePair_connected_full` (472) or `foldl_connected` (548)? Those elaborate before 711 and apparently succeeded (no errors for them). Only 711 failed. And the heavy simpa... let me look at what `simpa [componentsOf, List.foldl_append] using hC` does when `hC : C ∈ l2.foldl (fun P ab => mergePair P ab.1 ab.2) (mergePair P' x y)` — `P'` is a let! `simp [componentsOf]` — `componentsOf` is reducible? It's a `def`, simp unfolds... Actually `simpa [componentsOf, List.foldl_append]` — the simp set unfolds `componentsOf` in the goal, then `List.foldl_append` rewrites `(l1 ++ l2).foldl f b = l2.foldl f (l1.foldl f b)`. In the GOAL (after change): `C ∈ (l1 ++ (x, y) :: l2).foldl f P0`. `rw List.foldl_append` gives `C ∈ ((x, y) :: l2).foldl f (l1.foldl f P0)` — but simp might apply foldl_append repeatedly... `(x,y)::l2` is not an append so it stops. Then goal: `C ∈ ((x,y)::l2).foldl f (l1.foldl f P0)` — whnf unfolds foldl: `C ∈ l2.foldl f (f (l1.foldl f P0) (x,y))`. Hmm — `f (l1.foldl f P0) (x,y)` = `mergePair (l1.foldl f P0) x y`. And hC has `mergePair P' x y` with `P' = l1.foldl f P0` (let). So simp needs to unfold the let `P'` in hC — simp unfolds local lets? `simpa using hC` — the `using` form: simp target = hC after applying [componentsOf, foldl_append] to both? `simpa [componentsOf, List.foldl_append] using hC` simplifies the goal and hC's type with the same simp set. For hC, `List.foldl_append` can't apply (no ++ in `l2.foldl ...`). `componentsOf` isn't in hC's type. The let P' needs zeta-reduction — simp does zeta? I believe `simp` does unfold local lets (zeta) by default... hmm, not sure.
+
+This is getting too deep. Let me just restructure the proof ending robustly with `change` and `rfl`-free rewrites. Plan for the fix:
+
+Replace the ending:
+```lean
+  refine ⟨C, ?_, hxC, hyC⟩
+  change C ∈ (l1 ++ (x, y) :: l2).foldl (fun P ab => mergePair P ab.1 ab.2) P0
+  simpa [componentsOf, List.foldl_append] using hC
+```
+with:
+```lean
+  refine ⟨C, ?_, hxC, hyC⟩
+  have hfold : (l1 ++ (x, y) :: l2).foldl (fun P ab => mergePair P ab.1 ab.2) P0 =
+      l2.foldl (fun P ab => mergePair P ab.1 ab.2) (mergePair P' x y) := by
+    rw [List.foldl_append]
+    change l2.foldl (fun P ab => mergePair P ab.1 ab.2)
+        ((fun P ab => mergePair P ab.1 ab.2) P' (x, y)) = _
+    rfl
+  simpa [componentsOf, hfold] using hC
+```
+
+Hmm — wait, `(x,y) :: l2` foldl: `((x, y) :: l2).foldl f b = l2.foldl f (f b (x, y))` — that's by rfl/whnf. So after `rw [List.foldl_append]` goal is `C ∈ ((x, y) :: l2).foldl f (l1.foldl f P0)` — then `change` to `C ∈ l2.foldl f (f (l1.foldl f P0) (x, y))` — whnf both sides, P' let unfolds. Then `simpa [componentsOf, hfold] using hC` — hmm, hfold is an equation in the LHS `(l1 ++ ...).foldl ...` which appears in the goal's `componentsOf` unfold.
+
+Actually cleaner: avoid `change` by rewriting:
+
+```lean
+  refine ⟨C, ?_, hxC, hyC⟩
+  simp only [componentsOf, List.foldl_append]
+  change C ∈ l2.foldl (fun P ab => mergePair P ab.1 ab.2) (mergePair P' x y)
+  exact hC
+```
+
+But `change` with `mergePair P' x y` — the goal after `simp only [componentsOf, List.foldl_append]` is `C ∈ ((x, y) :: l2).foldl f (l1.foldl f P0)`. The change target `l2.foldl f (mergePair P' x y)` — defeq: whnf of goal: foldl f (l1.foldl f P0) ((x,y)::l2) → since foldl recurses on list: `(x,y)::l2` whnf → `l2.foldl f (f (l1.foldl f P0) (x,y))` — f = mergePair application — `mergePair (l1.foldl f P0) x y` — and `P' = l1.foldl f P0` (let, unfolds in defeq). So `change` succeeds. Then `exact hC`. This avoids all the simpa machinery. 
+
+Actually hold on — is `foldl` for `(x,y) :: l2` definitionally `l2.foldl f (f b (x,y))`? `List.foldl : (β → α → β) → β → List α → β`, `| f, b, [] => b | f, b, x :: xs => foldl f (f b x) xs`. So `((x,y)::l2).foldl f b` whnf → `l2.foldl f (f b (x,y))`. Yes.
+
+OK. Also the same theorem might have other slow parts. Let me also consider that the timeout may actually be `grow_foldl` application... no, errors would point differently. Let me just fix and recompile, iterating.
+
+Now, error 4 at line 1197 — wait, let me reconsider. Maybe simpler than changing `edgeClassOf`'s type: line 1197 checks that boundary edge `{g.t,c},{g.t,d}` belongs to the same edge class as `{f.t,a},{f.t,b}`. Actually simpler: since `edgeClassOf` is used in 3 places for equality/counting and 1 place for membership, changing the type to the class (Finset (Finset (Corner N))) fixes 1197 naturally. But then boundaryChi: `boundaryEdgeClassesList` = list of classes; eraseDups — DecidableEq (Finset (Finset (Corner N))) — instances exist. OK.
+
+But careful — `BoundaryIsClosedSurface` line 1193: for each boundary face f, the three edge classes of f are distinct: `(List.finRange 4) =>> fun a => List.map (fun b => T.edgeClassOf f.t a b) ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))` — for a = each of the 3 corners... wait `List.finRange 4 =>> fun a` iterates ALL a including a = f.i, then filters b ≠ f.i ∧ a ≠ b. For a = f.i: b ranges over all b ≠ f.i — that's the three edges of face f... no wait, the edges of face f (opposite corner f.i) are pairs (a,b) with a,b ≠ f.i. For a = f.i, b ≠ f.i: edge {f.t, f.i},{f.t, b} — that's an edge THROUGH corner f.i, not in the face! Hmm, that looks wrong: the three edges of face (f.t, f.i) are {a,b} for a,b ∈ face corners = {0,1,2,3} \ {f.i}. The code iterates all a (including f.i) and all b with b ≠ f.i, a ≠ b. So it collects 9 edges: for a = f.i, 3 edges through corner f.i (not in the face); for a ≠ f.i, 2 edges each in the face. Total 9, with the 3 face edges appearing twice. eraseDups would give 6 distinct edge classes in general... and the check requires length = 3! That would FAIL for ball3 unless... hmm wait, for the boundary faces of ball3 (single tetrahedron): all 6 edges are on the boundary. Face (0, i) has edges {a,b} for a,b ≠ i — 3 edges. The extra edges through corner i: {i, b} for b ≠ i — 3 more edges, disjoint from the face edges (which don't involve i). So eraseDups gives 6 ≠ 3. The check would fail!
+
+But the checkpoint says ball3 was verified in Python as ok. The Python checker is a separate implementation (search.py). The Lean `BoundaryIsClosedSurface` at line 1192-1193 might be buggy. Hmm wait — let me re-read:
+
+```lean
+def BoundaryIsClosedSurface (T : FacePairing3 N) : Prop :=
+  let bfs := T.boundaryFaces
+  (∀ f ∈ bfs, (((List.finRange 4) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧
+```
+
+Yeah, for each boundary face f, this computes for all a, all b ≠ f.i, a ≠ b — the edge classes of edges {t,a},{t,b}. For a = f.i: edges through corner f.i — WRONG, these aren't edges of the face. For a ≠ f.i: edges of the face (each counted twice: once from a, once from b swapped). So the intended computation is: the face (t, f.i) has edges {a,b} with a,b ≠ f.i — i.e., filter a ≠ f.i too. The current code has a bug: missing `a ≠ f.i` filter (or rather should be `a ≠ f.i ∧ b ≠ f.i ∧ a ≠ b`).
+
+Let me double check by counting for ball3: For f = (0, i): 4 a-values; b-values: for a = i: b ∈ {0,1,2,3}\{i} — 3 values: edges {i,b}. For a ≠ i: b ∈ complement of {f.i, a} — 2 values. Total edges counted: 3 + 3*2 = 9, distinct classes: {i,b} (3 of them) ∪ {a,b} for a,b ≠ i (3) = 6. eraseDups.length = 6 ≠ 3 → false. So `ball3_boundary : ball3.BoundaryIsClosedSurface := by decide` would fail!
+
+Hmm wait, but maybe `edgeClassOf` returns CORNERS (the current buggy definition returns `Finset (Corner N)` = union of corners in the class). With corners: edge class {i,b} → corners {c_i, c_b}; {a,b} → {c_a, c_b}. Still 6 distinct. So still fails.
+
+So there are bugs to fix in `BoundaryIsClosedSurface`: the per-face edge check should filter `a ≠ f.i` as well (or use the face's 3 edges only). Let me fix:
+
+```lean
+  (∀ f ∈ bfs, (((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧
+```
+
+For a ≠ f.i, b ∈ {0..3} \ {f.i, a}: 2 b's → edges {a,b} — the 3 edges of the face, each counted twice → eraseDups = 3. Good.
+
+Similarly `boundaryEdgeClassesList` (line 1167-1171): 
+```lean
+def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Corner N)) :=
+  (finsetToList T.boundaryFaces) =>> fun f =>
+    ((List.finRange 4) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))
+```
+Same issue: includes a = f.i (edges through the corner, not on the face). For boundaryChi = V∂ - E∂ + F∂, we want the boundary surface's edges: edges of boundary faces. Edges through corner f.i of face f are NOT boundary edges (they're interior to the tetrahedron — wait, no! In ball3, ALL 6 edges are boundary edges? Hmm — the boundary of the tetrahedron is its whole surface; all 6 edges lie on the boundary surface; each edge is in exactly 2 boundary faces. Edge {i, b} through corner i of face (0,i) IS in the boundary surface (it's shared by faces (0,j) and (0,k)). So for the boundary surface, the edges are all 6, each lying in 2 faces. The list `boundaryEdgeClassesList` should count each boundary edge class once — if we include a = f.i with 3 extra edges {i,b}, we'd double count: edge {i,b} appears in face f=(0,i) via a=i, and in faces (0,j),(0,k) via a ≠ i. Total appearances: edge {i,b}: face (0,i): a=i,b → once; face (0,j) (j∉{i,b}): a=b,b=i → once... wait face (0,j): edges {a,b} for a ≠ j, b ≠ j, a ≠ b: {i,b} appears when a=i,b=b (if i≠j ✓) and a=b... a=b? {b,i} when a=b, b=i — hmm b ≠ j ✓, a ≠ b ✓ → yes second time. So edge {i,b} appears in faces (0,j),(0,k) twice each... total: face(0,i): once (a=i). face(0,j): twice. face(0,k): twice. Total 5 appearances. Whereas a genuine boundary-edge-class list should have each edge class exactly... well, with duplicates allowed it depends; eraseDups gives the count of distinct classes. The bug: does including a = f.i add edges NOT in the boundary surface? No — for a boundary face of a manifold-with-boundary, edges {f.t, f.i}, {f.t, b} where b ≠ f.i — is this edge on the boundary surface? The edge through corner f.i and corner b of face f — the edge {f.t i}, {f.t b} — is it contained in some OTHER boundary face? In ball3: yes, faces (0,j),(0,k) for {j,k} = complement of {i,b}. In general, for a boundary face f, the edge through corner f.i (opposite corner) — hmm, actually every edge of the tetrahedron f.t is in exactly 2 faces of f.t; if face f is a boundary face, the other face containing edge {i,b} may be interior (glued). E.g., in solidTorus3, is there a boundary face f and an edge through f.i that is NOT a boundary edge? The boundary of solidTorus3 consists of 2 triangles? Checkpoint says boundaryChi=0 with (V∂=3? E∂=3, F∂=2): V=3,E=3,F=2 → χ=2? No wait: 3-3+2=2. Hmm, but checkpoint says boundary chi=0 for solidTorus3. Hmm: boundary of solid torus is a torus: χ=0. V∂ - E∂ + F∂ = 0 with F∂ = 2 faces? Then V∂ - E∂ = -2. The boundary is the top triangle glued to bottom triangle by twist: 2 faces, 3 edges (a↔b' etc: edges become classes: top edges (a,b),(b,c),(c,a) ↔ bottom edges... after twist: top edge (a,b) ↔ (b',c')... the 6 edges form 3 classes), vertices: a~b', b~c', c~a' → 3 classes. So V∂=3, E∂=3, F∂=2 → 3-3+2 = 2? Hmm that gives χ=2, not 0!
+
+Wait, that can't be right. Let me recount. Top triangle (a,b,c), bottom (a',b',c'), glued by a↦b', b↦c', c↦a'. Vertices: classes {a,b'}? a is identified with b'... wait the twist maps top face to bottom face: top corner a ↦ bottom b', top b ↦ bottom c', top c ↦ bottom a'. So vertex classes: {a, b'}? Hmm no: a ~ b' means class {a, b'}; b ~ c' → {b, c'}; c ~ a' → {c, a'}. 3 vertex classes on the boundary surface. Edges: top edges: ab, bc, ca; bottom: a'b', b'c', c'a'. Gluing identifies: ab ↦ b'c'; bc ↦ c'a'; ca ↦ a'b'. So edge classes: {ab, b'c'}, {bc, c'a'}, {ca, a'b'} — 3 classes. Faces: 2 (top, bottom). χ = 3 - 3 + 2 = 2??? But a torus has χ=0! The surface with 2 triangles, 3 edge classes, 3 vertex classes: V-E+F = 3-3+2 = 2. But that's a SPHERE (2 triangles glued = sphere: 2 faces, 3 edges, 3 vertices → χ=2). Hmm!! So the solid torus boundary as described would be a SPHERE, not a torus?!
+
+Hold on — the solid torus: the boundary of the prism-with-twist. The 3-tetrahedron triangulation of the solid torus: tets: 0 = (a,b,c,c'), 1 = (a,b,c',b'), 2 = (a,c',a',b'). Interior faces glued: (a,b,c') — face of tet 0 and tet 1; (a,c',b') — face of tet 1 and tet 2. Top face (a,b,c) of tet 0 and bottom face (a',b',c') of tet 2 are glued by the twist. But the OTHER faces: tet 0: faces opposite 0,1 are (b,c,c') and (a,c,c')... let me enumerate: tet 0 = [a,b,c,c'], faces: opp 0: (b,c,c'); opp 1: (a,c,c'); opp 2: (a,b,c'); opp 3: (a,b,c). Gluings: (0,2)↔(1,?) swap 2 3: maps tet 0 face opp 2 = (a,b,c') corners [a,b,c'] to tet 1 face... g = swap 2 3, g(2) = 3: face (1,3) = (a,b,c') ✓. (0,3) ↔ (2, g(3)=0): face (2,0) = (c',a',b') ✓. (1,1) ↔ (2, g(1)=2): face (2,2) = (a,a',b') ✓. So interior: (0,2)~(1,3), (0,3)~(2,0), (1,1)~(2,2). Boundary: faces (0,0)=(b,c,c'), (0,1)=(a,c,c'), (1,0)=(b,c',b'), (1,2)=(a,b,b'), (2,1)=(c',a',b'... wait face (2,1) = corners other than 1: [c', a', b']... tet 2 = [a,c',a',b']: opp 1 = (a,a',b'); opp 3 = (a,c',a'). Boundary faces: (0,0), (0,1), (1,0), (1,2), (2,1), (2,3). That's 6 boundary faces! And the solid torus boundary is a torus with χ = V∂ - E∂ + F∂ = 0. 6 faces... E∂ = ? V∂? χ=0 → V∂ - E∂ = -6 → E∂ = V∂ + 6. Hmm — with the twist: top triangle glued to bottom triangle — but wait, in THIS construction the top (a,b,c) and bottom (a',b',c') are GLUED together (interior), and the boundary is the OTHER 6 faces: (0,0),(0,1),(1,0),(1,2),(2,1),(2,3). The boundary torus: the annulus of the prism side. OK so boundaryChi = 0 means V∂ - E∂ + F∂ = 0 with F∂ = 6. From checkpoint: solidTorus3 f-vector (3,9,9,3), chi=0, boundary chi=0. V∂: the vertex classes on boundary: a, b, b', c, c', a' — how many classes? The gluing a↦b', b↦c', c↦a' (twist on top/bottom). So classes: {a,b'}, {b,c'}, {c,a'} — 3. V∂ = 3. E∂ = 9? Boundary edges: (0,0) edges: bc, cc', bc'; (0,1): ac, cc', ac'; (1,0): bc', bb', b'c'; (1,2): ab, ab', bb'; (2,1): aa', a'b', ab'... let me list distinct edge classes — with the twist identifications: top edges (a,b)~(b',c'), (b,c)~(c',a'), (c,a)~(a',b') are INTERIOR now (both top and bottom faces are glued... wait NO. Top face (0,3)=(a,b,c) is glued to bottom face (2,0)=(c',a',b') — those faces are interior, their edges are interior edges (each in exactly 2 glued faces... hmm, in the triangulation each edge of the top face is identified with an edge of the bottom face, and each such edge appears in 2 other boundary faces? Let me count boundary edges on the 6 boundary faces:
+
+Face (0,0)=(b,c,c'): edges bc, cc', c'b
+Face (0,1)=(a,c,c'): edges ac, cc', c'a
+Face (1,0)=(b,c',b'): edges bc', c'b', b'b
+Face (1,2)=(a,b,b'): edges ab, bb', b'a
+Face (2,1)=(a,a',b'): edges aa', a'b', b'a
+Face (2,3)=(a,c',a'): edges ac', c'a', a'a
+
+Boundary edge classes (after gluing): aa'~? (2,1) has aa'; ac' in (0,1) and (2,3): same class {a,c'}; ac in (0,1) only? — wait ac: corners a,c of tet 0: is edge ac glued? Top face (0,3) = (a,b,c) — edge ab, bc, ca are on the top face → glued to bottom edges. ac is NOT a top edge (top face has a,b,c; edges ab, bc, ca — yes ac = ca IS a top edge!). Hmm: face (0,3) = (a,b,c) — the corners opposite 3 are 0,1,2 = a,b,c. Edges of that face: ab, bc, ca. So ac IS on the top face. But wait — face (0,1) = (a,c,c') also contains edge ac?? Face (0,1) = corners {0,2,3} = a, c, c'. Its edges: ac, cc', c'a. So edge ac is shared by faces (0,1) and (0,3) — both faces of tet 0 — fine, that's the tetrahedron's edge {0,2} = ac. In the gluing, (0,3)~(2,0) maps ac = {0,2}... g = swap 0 3: g(0)=3, g(2)=2 → {3,2} of tet 2 = {b', a'} = a'b'. So ac ~ a'b'. Is a'b' a boundary edge? a'b' appears in faces (2,1) and (2,0)... (2,0) is interior. (2,1) = (a,a',b') contains a'b'. So edge class {ac, a'b'} appears on boundary faces (0,1) and (2,1) — 2 occurrences → it IS a boundary edge class (lying in exactly 2 boundary faces ✓).
+
+OK so the boundary surface has 6 faces and the edge classes of it: each boundary edge lies in exactly 2 boundary faces: total (face,edge) incidences = 18 → 9 boundary edge classes. V∂=3, E∂=9, F∂=6 → χ = 0 ✓ torus. 
+
+So `boundaryEdgeClassesList` should produce 9 distinct classes. With the current buggy iteration: for each boundary face f, iterate a over ALL 4 corners, b ≠ f.i, a ≠ b. Count appearances of each boundary edge class: boundary edge class E — total appearances over all (f, a, b) with a ≠ b, b ≠ f.i: for a fixed boundary face f containing edge e = {x,y}, e appears as (a=x,b=y) and (a=y,b=x) → 2 times; PLUS if the face f's corner f.i equals x (f.i = x): (a=x... no wait a = f.i is allowed: (a=f.i, b=y): edge {f.i, y} — that's the edge through corner f.i — for face f, the edge {f.i, y} is NOT an edge of f (since edges of f avoid f.i). So each boundary face contributes 3 extra (non-face) edges: {f.i, b} for b ≠ f.i. Total list length = 6 faces × 9 = 54; distinct classes: boundary edge classes 9 ∪ extra edge classes. The extra edges {f.t, f.i}, {f.t, b}: for ball3-like all faces boundary: e.g. solidTorus3 face (0,0), f.i = 0 (corner a): edges ab, ac, ac' — ab is top-face edge (interior class {ab, b'c'}), ac ~ a'b' (boundary class), ac' boundary class. So extra edges can be interior classes! The count V∂-E∂+F∂ would then be wrong: distinct classes in the list = 9 boundary + extra interior ones (ab, bc, ca classes: {ab,b'c'},{bc,c'a'},{ca,a'b'}) = 12? And the eraseDups length would be 12, giving χ = 3 - 12 + 6 = -3 ≠ 0. So `boundaryChi` would be -3 for solidTorus3, and the theorem `solidTorus3_boundaryChi : solidTorus3.boundaryChi = 0` would FAIL with the current definitions!
+
+Hmm wait — but checkpoint says "examples_verified_python ok". The Python is separate. The Lean defs have bugs that must be fixed so the decide checks match the true math:
+
+Fix for `boundaryEdgeClassesList`: iterate only over the face's actual edges: a ≠ f.i, b ≠ f.i, a ≠ b (and maybe a < b to avoid duplicates; eraseDups handles it):
+
+```lean
+def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Finset (Corner N))) :=
+  (finsetToList T.boundaryFaces) =>> fun f =>
+    ((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))
+```
+
+(and change the type from Finset (Corner N) to the edge-class type.)
+
+Similarly fix `BoundaryIsClosedSurface`'s first conjunct (the three-distinct-edge-classes check) and the second conjunct (line 1195-1197: `∀ f ∈ bfs, ∀ a, a ≠ f.i → ∀ b, b ≠ f.i → a ≠ b →` — that one already filters a ≠ f.i ✓, and checks that the edge class of {f.t,a},{f.t,b} appears in exactly 2 boundary faces: `((finsetToList bfs).filter (fun g => ∃ c, c ≠ g.i ∧ ∃ d, d ≠ g.i ∧ c ≠ d ∧ ({⟨g.t, c⟩, ⟨g.t, d⟩} : Finset (Corner N)) ∈ T.edgeClassOf f.t a b)).length = 2` — with edgeClassOf returning the class, `{g.t,c},{g.t,d} ∈ class` works. But c,d ≠ g.i — good, actual edges of g. ✓.
+
+And the third conjunct: componentsOf bfs (boundaryAdjacencyPairs T)).card = 1 — boundaryAdjacencyPairs pairs faces sharing an edge class — fine with class-valued edgeClassOf. ✓. Fourth: boundaryChi = 0 ∨ = 2 ✓.
+
+Also for a boundary face f of a valid manifold-with-boundary, each edge of f lies in exactly 2 boundary faces — the second conjunct checks that. ✓.
+
+Now — also check `VertexLinkIsDisk`'s `diskOnes` usage, and `IsBoundaryVertexClass`/`IsBoundaryEdgeClass` look fine.
+
+Next, `edgeClassOf` type change to `Finset (Finset (Corner N))`:
+
+```lean
+def edgeClassOf (T : FacePairing3 N) (t : Fin N) (a b : Fin 4) : Finset (Finset (Corner N)) :=
+  (T.edgeClasses.filter (fun E => ({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E)).biUnion
+    (fun E => ({E} : Finset (Finset (Corner N))))
+```
+
+Simpler: `(T.edgeClasses.filter (fun E => ... ∈ E)).biUnion (fun E => {E})`. Hmm, or just keep filter and take `.image id`? biUnion with singleton is fine.
+
+Hmm wait, actually — maybe cleaner: since edgeSeed seeds EVERY pair (a,b) (including degenerate), the block containing `{⟨t,a⟩,⟨t,b⟩}` exists uniquely; but is the block containing the edge exactly `edgeClassOf`'s result? Yes by partition. Fine.
+
+But also `vertexLinkVertices` (line 899) has unused T warning — fine (warnings OK, just noise).
+
+Also `linkFaceIsTriangle` etc. — used in decide. 
+
+Now — hmm, wait. Let me reconsider `boundaryChi`'s vertices: `boundaryVertexClassesList`:
+```lean
+def boundaryVertexClassesList (T : FacePairing3 N) : List (Finset (Corner N)) :=
+  (finsetToList T.boundaryFaces) =>> fun f =>
+    List.map (fun a => T.vertexClassOf f.t a)
+      ((List.finRange 4).filter (fun a => a ≠ f.i))
+```
+For each boundary face f, the 3 corners a ≠ f.i — their vertex classes. ✓ correct (V∂ = vertex classes incident to boundary faces).
+
+OK. Now the earlier `VertexLinkIsDisk` paren fixes. Let me rewrite the block:
+
+```lean
+@[reducible] def VertexLinkIsDisk (T : FacePairing3 N) (C : Finset (Corner N)) : Prop :=
+  (∀ c ∈ vertexLinkCorners T C, linkFaceIsTriangle T C c) ∧
+  (∀ ec ∈ T.vertexLinkEdgeClasses C, linkEdgeIncidence T C ec ≤ 2) ∧
+  (diskOnes T C).Nonempty ∧
+  (∀ vc ∈ T.vertexLinkVertexClasses C,
+    ((diskOnes T C).filter (fun ec =>
+      (finsetToList ec).any (fun fc =>
+        T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+          T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc))).card = 0 ∨
+    ((diskOnes T C).filter (fun ec =>
+      (finsetToList ec).any (fun fc =>
+        T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+          T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc))).card = 2) ∧
+  ...
+```
+
+Let me count parens carefully for the pattern:
+`((diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => A ∨ B))).card = 0`
+- `(` open1: `(diskOnes T C)` — balanced.
+- `.filter (` open2.
+- `fun ec =>` open3.
+- `(finsetToList ec)` — balanced.
+- `.any (` open4.
+- `fun fc =>` open5.
+- A ∨ B.
+- `)` close5... wait: `.any (fun fc => X)` — the `(` before `fun fc` (open4) is closed after X: `X)`. And `fun fc =>` needs `)`. Order: after A ∨ B: `)` closes open5 (the lambda body), then `)` closes open4 (any's arg). So `A ∨ B))`. Then `.card` — but we need open3 (fun ec body) closed: `)))`. Then `.card`, then close open2: `)`, close open1: `)`.
+
+So: `((diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => A ∨ B))).card = 0` — let me count the parens in this exact string: `(` `(` `diskOnes T C` `)` `.filter` `(` `fun ec =>` `(` `finsetToList ec` `)` `.any` `(` `fun fc =>` `A ∨ B` `)` `)` `)` `.card = 0`. The closing run after B: `) ) )` = close open5, open4, open3. Then `.card`. Then need close open2 and open1 — MISSING in my string! Let me recount the opening: open1 `(` before `(diskOnes`... hold on:
+
+The intended AST: `((diskOnes T C).filter (fun ec => ...)).card = 0` — outermost: `(EXPR.card = 0)` where EXPR = `(diskOnes T C).filter (fun ec => ...)`. To write `(diskOnes T C).filter (fun ec => BODY)` — `filter`'s argument is `(fun ec => BODY)` — needs parens around the lambda: `.filter (fun ec => BODY)`. Then the whole filtered thing parenthesized: `((diskOnes T C).filter (fun ec => BODY)).card`.
+
+So: open1: `(`; then `(diskOnes T C)` balanced; `.filter (` open2; `fun ec =>` open3; BODY = `(finsetToList ec).any (fun fc => A ∨ B)`; `)` close3; `)` close2; `)` close1; `.card = 0`.
+
+So the closing run after B: BODY's internal `A ∨ B))` closes open5 (lambda fc) and open4 (any paren). Then `)` close3 (fun ec), `)` close2 (filter paren), `)` close1 (outer paren). So total `)))` before `.card`, and BODY ends with `))`. Full: `= vc))).card = 0`.
+
+Current text has `= vc)).card = 0` — 2 parens before .card; need 3. ✓ my earlier analysis. So replace all three occurrences (`vc)).card = 0 ∨` at line 1057, `vc)).card = 2))` at line 1042 (in diskBoundaryVertices) and `vc)).card = 2))` at line 1061 (in VertexLinkIsDisk).
+
+Wait — diskBoundaryVertices (line 1042): `((diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => A ∨ B)).card = 2))` — the final `))` after `= 2`: close2 (filter paren), close1 (outer paren `(`). And before `.card`: `= vc))` closes open5, open4 — but open3 (fun ec) unclosed → same bug → `vc))).card = 2))`.
+
+Hmm, wait, diskBoundaryVertices lines 1038-1042:
+```
+1038:   (T.vertexLinkVertexClasses C).filter (fun vc =>
+1039:     ((diskOnes T C).filter (fun ec =>
+1040:       (finsetToList ec).any (fun fc =>
+1041:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1042:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 2))
+```
+open: `.filter (fun vc =>` (F1, F2); `((diskOnes` (O1); `.filter (fun ec =>` (F3, F4); `(finsetToList ec).any (fun fc =>` (O5, F6). Closing at 1042: `= vc))` closes F6, O5. `.card` — needs F4 closed: `)))`. Then `.card = 2`, then `))` closes F3, O1... but F2 (fun vc) and F1 (filter paren of vertexLinkVertexClasses) unclosed — those close at line 1042's `))`? The final `))`: F3? Let me recount: after `.card = 2` we need: close F4 (fun ec =>), close F3 (filter paren of diskOnes... wait I mislabeled. Let me redo:
+
+- Line 1038: `(T.vertexLinkVertexClasses C).filter (fun vc =>` — parens A: `(` before `(T.vertexLink...` hmm no: `(T.vertexLinkVertexClasses C)` balanced. `.filter (` → P1. `fun vc =>` → P2.
+- Line 1039: `((diskOnes T C)` → P3; `.filter (` → P4; `fun ec =>` → P5.
+- Line 1040: `(finsetToList ec)` balanced; `.any (` → P6; `fun fc =>` → P7.
+- Line 1041-42: A ∨ B.
+- After B: close P7, close P6: `))`. Close P5: `)`. → `)))`. `.card = 2`. Close P4: `)`. Close P3: `)`. Close P2: `)`. Close P1: `)`. → `))))`.
+
+Current: `= vc)).card = 2))` — after B: `))` closes P7, P6; `.card = 2` (P5 unclosed — bug); `))` closes... P5? P4? — leaving P3, P2, P1 open → cascade. Fix: `= vc))).card = 2))))`.
+
+For VertexLinkIsDisk lines 1053-1061:
+```
+1053:   (∀ vc ∈ T.vertexLinkVertexClasses C,
+1054:     ((diskOnes T C).filter (fun ec =>
+1055:       (finsetToList ec).any (fun fc =>
+1056:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1057:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 0 ∨
+1058:     ((diskOnes T C).filter (fun ec =>
+1059:       (finsetToList ec).any (fun fc =>
+1060:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1061:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 2)) ∧
+```
+Line 1057: after B: `))` (P7,P6), `.card` needs P5: `)))`, `.card = 0`, then close P4, P3: `))` then `∨`. So `= vc))).card = 0 ∨`... wait need closing for P4 and P3 after `.card = 0`: `((diskOnes T C).filter (fun ec => ...)).card = 0 ∨` — after `= 0` close P4 `)`, P3 `)`: so `... = vc))).card = 0)) ∨`? Hmm: full first disjunct: `((diskOnes T C).filter (fun ec => (finsetToList ec).any (fun fc => A ∨ B))).card = 0` then `∨`. Closing after B: P7 `)`, P6 `)`, P5 `)` = `)))`; `.card = 0`; close P4 `)`, close P3 `)`. So: `= vc))).card = 0)) ∨` — wait P4 and P3: P3 is the outer `(` before `(diskOnes`, P4 is `.filter (`. After `.card = 0` → `)` closes P4, `)` closes P3 → `)) ∨`. Hmm — but hold on: P2 (fun vc) must also close before `∨`?? NO — the ∨ is INSIDE the ∀ body: `∀ vc ∈ s, (DISJ1 ∨ DISJ2)` — the ∀ body is `DISJ1 ∨ DISJ2`, so `∨` is at the top level of the body, and DISJ1 closes fully before ∨. But P2 (`fun vc =>`'s body) closes only at the end of the whole body — after DISJ2, before the final `∧`. And `∀ vc ∈ C, BODY` — the `∀` binder: `(∀ vc ∈ T.vertexLinkVertexClasses C, BODY)` — the `(` after `∀ vc ∈ ...,` on line 1053 — hmm, is there a `(`? Line 1053: `(∀ vc ∈ T.vertexLinkVertexClasses C,` then line 1054 DISJ1. So the ∀-paren opens on line 1053 and closes... after DISJ2 at line 1061: `...card = 2))` then `∧`. DISJ2: `((diskOnes T C).filter (fun ec => ...)).card = 2` close P4', P3' → `))`, then close ∀-paren → `)`, then `∧`. So line 1061: `= vc))).card = 2))) ∧` — closings after B: `)))` (P7,P6,P5), `.card = 2`, then `))` (P4,P3), `)` (∀ paren) → total after `.card = 2`: `)))` then `∧`. So line 1061 becomes `= vc))).card = 2))) ∧`.
+
+Hmm wait, but the second disjunct's P3/P4 and the ∀-paren: line 1061 currently `= vc)).card = 2)) ∧`. Fix to `= vc))).card = 2))) ∧`. Let me recount: after `.card = 2` we need: close P4' (filter paren) `)`, close P3' (outer paren of disjunct 2) `)`, close the ∀ paren `)`. → `)))`. Total line: `          T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc))).card = 2))) ∧`. ✓.
+
+And the rest of VertexLinkIsDisk after line 1061 continues with `(componentsOf ...).card = 1 ∧` etc. — those look balanced already (line 1061 ends with `∧` then line 1062 `(componentsOf (diskBoundaryVertices T C) (diskBoundaryPairs T C)).card = 1 ∧` ✓, 1063 `vertexLinkConnected T C ∧` ✓, 1064-1065 the χ = 1 ✓).
+
+Similarly diskBoundaryVertices line 1042: `= vc))).card = 2))))` — after `.card = 2`: close P4, P3, P2 (fun vc body), P1 (filter paren) → `))))`. So line 1042: `          T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc))).card = 2))))`. Hmm wait — P1 is `.filter (` of the outer `(T.vertexLinkVertexClasses C).filter (fun vc => ...)` and that's the whole def body, so `))))` — closes P4 `)`, P3 `)`, P2 `)`, P1 `)`. ✓.
+
+OK. Now the remaining question: will the decide computations be fast enough? These are heavy: `vertexLinkConnected` computes componentsOf over corner lists with nested any-checks; `edgeLinkConnected` similar. The checkpoint said Models.lean was "compile pending" — we don't know if the decide proofs in Models.lean work. The examples were verified in Python. The Lean decide might time out on heartbeats (2M). We'll see.
+
+Also error 4 (line 1197): after changing edgeClassOf's return type to Finset (Finset (Corner N)), membership `{g.t,c},{g.t,d} : Finset (Corner N) ∈ edgeClassOf ... : Finset (Finset (Corner N))` synthesizes via `Finset.instMembership`? For `x ∈ s` with s : Finset (Finset (Corner N)) — `Membership (Finset (Corner N)) (Finset (Finset (Corner N)))` — mathlib has `Finset.instMembershipFinset`? Membership on Finset comes from `Finset.instMembership` via `s.1`... Actually Finset has a `Membership α (Finset α)` instance (it's `SetLike`-free; Finset defines `instance : Membership α (Finset α) := ⟨fun a s => a ∈ s.1⟩`). So `Membership (Finset (Corner N)) (Finset (Finset (Corner N)))` resolves with α = Finset (Corner N). ✓ — and indeed the file already uses `({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E` at line 1076 with E : Finset (Finset (Corner N)) — works.
+
+Now about the timeout at 711 — the same_block_of_pair ending. Also possible culprit: `rcases mem_split pairs hxy with ⟨l1, l2, rfl⟩` — hmm, mem_split is defined in this file with `∃ l1 l2, l = l1 ++ x :: l2`. OK.
+
+Let me also double check `mergePair_connected`/`mergePair_connected_full`/`foldl_connected`/`componentsOf_blocks_connected`/`blocks_disjoint`/`blocks_disjoint_foldl`/`grow_foldl`/`same_block_preserved` — these all elaborated OK (no errors reported for them). Only the timeout at 711.
+
+The heavy operations in 711's proof: applications of `grow_foldl P0 l1 {x} (by ...)`. grow_foldl's conclusion: `∃ C' ∈ l.foldl f P, C ⊆ C'`. For `{x}`: `{x} ⊆ C'`. Fine.
+
+`hmerge : ∃ C1 ∈ mergePair P' x y, x ∈ C1 ∧ y ∈ C1` — constructed via refine with biUnion membership proofs. Those `by_cases hh : x ∈ A <;> simp [hh]` bits are fine.
+
+`same_block_preserved (mergePair P' x y) l2` — applies grow_foldl again. Fine.
+
+Final `change ... + simpa [componentsOf, List.foldl_append] using hC`. The `simpa` — hmm, `List.foldl_append` as a simp lemma — it might rewrite in the WRONG direction or loop? `(l1 ++ (x,y)::l2).foldl f P0` → `((x,y)::l2).foldl f (l1.foldl f P0)` → whnf → `l2.foldl f (f (l1.foldl f P0) (x,y))` = `l2.foldl f (mergePair (l1.foldl f P0) x y)`. And hC: `C ∈ l2.foldl f (mergePair P' x y)` where P' is let → zeta → `l1.foldl f P0`. So the two types are defeq after zeta. `simpa using hC` should discharge. Unless simp doesn't zeta local lets in the goal side of `using`... Honestly the simplest robust fix: replace the whole ending with:
+
+```lean
+  rcases hmerge with ⟨C1, hC1, hxC1, hyC1⟩
+  rcases same_block_preserved (mergePair P' x y) l2 ⟨C1, hC1, hxC1, hyC1⟩ with
+    ⟨C, hC, hxC, hyC⟩
+  refine ⟨C, ?_, hxC, hyC⟩
+  dsimp only [componentsOf, P0, P'] at hC ⊢
+  rw [List.foldl_append] at hC ⊢
+  exact hC
+```
+
+Hmm, `rw [List.foldl_append]` on hC won't fire (no append in hC's type). On the goal: goal is `C ∈ componentsOf seed pairs` → dsimp [componentsOf] → `C ∈ pairs.foldl f (seed.image ...)` — pairs was rfl-substituted? After `rcases mem_split pairs hxy with ⟨l1, l2, rfl⟩` — does the rfl substitute pairs everywhere? `rfl` as a pattern for the equation `pairs = l1 ++ x :: l2`? mem_split: `∃ l1 l2, l = l1 ++ x :: l2` — with rfl pattern, `pairs` gets replaced by `l1 ++ x :: l2`? Hmm — `rfl` as a pattern in rcases requires the equation to be of the form `lhs = rhs` where... `mem_split pairs hxy : ∃ l1 l2, pairs = l1 ++ x :: l2`. rcases ⟨l1, l2, rfl⟩ — the third is a proof of `pairs = l1 ++ x :: l2` matched against rfl → this substitutes... in Lean 4, pattern matching with rfl in rcases substitutes the equation: `pairs := l1 ++ x :: l2`. Yes, `subst`.
+
+So after that, goal `C ∈ componentsOf seed (l1 ++ (x,y)::l2)`. Hmm wait — careful: mem_split with x := the pair (x,y)? `mem_split pairs hxy` — `hxy : (x, y) ∈ pairs`, and mem_split l {x := (x,y)} h gives `∃ l1 l2, pairs = l1 ++ (x,y) :: l2`. OK.
+
+Goal: `∃ C ∈ componentsOf seed (l1 ++ (x, y) :: l2), ...`. hC: `C ∈ l2.foldl f (mergePair P' x y)` with P' = l1.foldl f P0 (let), P0 = seed.image ... (let).
+
+Ending:
+```lean
+  refine ⟨C, ?_, hxC, hyC⟩
+  simp only [componentsOf, List.foldl_append] 
+  -- goal: C ∈ ((x, y) :: l2).foldl f (l1.foldl f P0)
+  change C ∈ l2.foldl (fun P ab => mergePair P ab.1 ab.2) (mergePair P' x y)
+  exact hC
+```
+
+But `simp only [componentsOf, List.foldl_append]` — componentsOf unfolds to `(l1 ++ (x,y)::l2).foldl f (seed.image ...)` — P0 is let in the target? The target after refine: `C ∈ componentsOf seed (l1 ++ (x, y) :: l2)` — no P0 involved. simp only [componentsOf] → `C ∈ (l1 ++ (x, y) :: l2).foldl f (seed.image fun a => {a})`. Then foldl_append rewrites to `C ∈ ((x, y) :: l2).foldl f (l1.foldl f (seed.image ...))`. Then `change C ∈ l2.foldl f (mergePair P' x y)` — needs P' and P0 zeta (change does zeta? defeq includes let reduction — yes, definitional equality reduces lets). `((x,y)::l2).foldl f (l1.foldl f P0)` whnf → `l2.foldl f (f (l1.foldl f P0) (x,y))` → f = `mergePair (l1.foldl f P0) x y` — mergePair takes (P)(a)(b) — `f (P) ab := mergePair P ab.1 ab.2` — so `f (l1.foldl f P0) (x,y) = mergePair (l1.foldl f P0) x y` and `P' = l1.foldl f P0`. change does whnf both sides → matches. Then `exact hC`. 
+
+This should be quick. But actually — maybe even simpler to avoid the whole issue: since this theorem `same_block_of_pair` is only needed for the infrastructure narrative (not used by decide computations), I could keep it but with the fixed ending. Let me check if it's used anywhere: grep for same_block_of_pair. It's probably not used downstream at all. Still, keep it (no sorry allowed) with fixed proof.
+
+Actually, hmm, wait. Let me reconsider whether `componentsOf_spec` (the claimed correctness) even matters for the task. The task requires: face-pairing consistency, Euler char, vertex-link sphere checks — all by computation with `decide`. The union-find proofs are internal scaffolding to justify the checker. Keeping them is good but I must ensure they compile.
+
+Let me also think about whether `change` at the end could itself be slow: `change` calls whnf on the goal — goal is `C ∈ l2.foldl f (f b (x,y))` where... after `simp only [componentsOf, List.foldl_append]`, goal is `C ∈ ((x, y) :: l2).foldl f (l1.foldl f P0)` — `((x,y)::l2)` — whnf: foldl recurses: `((x,y)::l2).foldl f b` → `l2.foldl f (f b (x,y))` — f b (x,y) → `mergePair b x y`. P0 is a let — appears in goal — whnf reduces lets fine. OK quick.
+
+Alternatively use `rfl` directly:
+```lean
+  refine ⟨C, ?_, hxC, hyC⟩
+  change C ∈ l2.foldl (fun P ab => mergePair P ab.1 ab.2) (mergePair P' x y) after ... 
+```
+Hmm, `change` requires the two to be defeq — from `C ∈ componentsOf seed (l1 ++ (x,y)::l2)` — componentsOf unfolds; foldl_append is a THEOREM not defeq! So need the rw first. Right, my plan has simp only [componentsOf, List.foldl_append] then change then exact. Good.
+
+Now, also check: are there other uses of `edgeClassOf` that assume it returns corners? Line 823 def. Line 1171 (boundaryEdgeClassesList). Line 1184 (boundaryAdjacencyPairs equality — fine). Line 1193, 1197 (BoundaryIsClosedSurface — fix iteration). That's it. Also `IsBoundaryEdgeClass` uses E directly from edgeClasses. OK.
+
+Now let me also double-check `vertexLinkConnected`'s correctness semantics: pairs corners c1,c2 if they share a link-edge class: `T.vertexLinkEdgeClassOf C fc = T.vertexLinkEdgeClassOf C fc2` where fc = ((t1, i), j) for i ≠ c1.j and fc2 = ((t2, i2), j) for i2 ≠ c2.j — checks if any link-edge of c1 equals any link-edge of c2 — that means the corners c1, c2 are "adjacent" via a shared link edge. Then componentsOf corners.toFinset pairs — the link is connected iff 1 component. ✓ semantics fine.
+
+`linkEdgeIncidence`: number of corners c ∈ C such that some face-edge of c (i ≠ c.j) belongs to ec. For a triangle link, each edge class has exactly 2 link faces... wait: linkEdgeIncidence counts corners adjacent to the link-edge class. Each link face is a triangle with 3 edges; each edge belongs to exactly 2 faces (for sphere). The "link edge class" ec is a class of (face, corner-of-face) pairs; the corners adjacent: corner c such that (⟨c.t, i⟩, c.j) ∈ ec for some i ≠ c.j — i.e., the face (c.t, i) has corner c.j in the link of C, and the link-edge (face, corner) is in class ec. For each link face (triangle), the edge ec bounds 2 faces iff... hmm, `linkEdgeIncidence` counts corners whose link faces are adjacent to ec. Each face adjacent to ec is a link face of some corner c... each link face (triangle of corner c) is adjacent to exactly... The face (⟨c.t,i⟩, c.j)-based edge classes: for a fixed corner c, its link face has 3 edges: (⟨c.t,i⟩, c.j) for the 3 i ≠ c.j — each contributes... `linkEdgeIncidence ec` = # corners c such that ec is one of the 3 edge classes of c's link face. Since each edge class bounds exactly 2 link faces, and each link face is counted once per... hmm — the link face of corner c is a triangle with edge classes E1,E2,E3 (the 3 face-edge classes of c). If ec ∈ {E1,E2,E3}, c is counted. Each link triangle has 3 edges, each edge class is in 2 triangles → incidence count = 2 per edge class ✓ (for a sphere link). So `linkEdgeIncidence ec = 2` is right. And the Python checker confirmed the same structure. OK, I trust it; the Python search.py mirrors this.
+
+Now, `BoundaryIsClosedSurface` conjunct 2 (line 1195): for each boundary face f and each of its 3 edges (a,b), exactly 2 boundary faces g contain the class: `((finsetToList bfs).filter (fun g => ∃ c, c ≠ g.i ∧ ∃ d, d ≠ g.i ∧ c ≠ d ∧ ({g.t,c},{g.t,d}) ∈ edgeClassOf f.t a b)).length = 2`. Note: this counts g = f itself too (f contains its own edge class ✓) — so 2 total: f and the adjacent one. ✓. (For ball3: each edge is in exactly 2 faces ✓.)
+
+Conjunct 1 (line 1192): for each boundary face f, its 3 edge classes are distinct — with the fixed iteration (a ≠ f.i). ✓.
+
+`boundaryChi` for ball3: V∂ = 4 (each corner class on boundary: all 4), E∂ = 6, F∂ = 4 → 4-6+4 = 2 ✓ sphere. solidTorus3: 3 - 9 + 6 = 0 ✓ torus.
+
+Now — the decide proofs in Models.lean. The big worry: heartbeats. `ball3_manifold : ball3.IsCombinatorialManifoldWithBoundary := by decide` — IsCombinatorialManifoldWithBoundary includes Orientable (∃ σ : Fin 1 → Bool, ...) — decide can handle bounded ∃ over Fin 1 → Bool? `∃ σ : Fin 1 → Bool, P σ` — decide works on propositions with decidable instances: `Decidable (∃ σ : Fin 1 → Bool, P)` — exists over a Fintype with DecidableEq and decidable predicate → decidable via Fintype.decidableExists? Hmm — `(σ : Fin 1 → Bool)` is a function type — Fintype (Fin 1 → Bool) exists (it's finite, mathlib has Fintype for function types with finite domain/codomain). Decidable instances for bounded quantifiers over Fintype exist (`Fintype.decidableExistsFintype`). So `decide` can handle it — slowly maybe, but N small.
+
+Also `∀ C ∈ T.vertexClasses, ...` — vertexClasses is a finset — `∀ C ∈ s, P C` — Decidable ∀ over finset ✓. With `if T.IsBoundaryVertexClass C then ...` — decidable ✓.
+
+`decide` reduces the proposition to Bool via kernel computation — the computation itself (componentsOf over corners, etc.) is pure reduction. Corner count: N*4 corners, pairs lists... For s3Simplex (N=5): corners 20, edgeSeed: 5 tets × 4 a × 4 b = 80 edges... edgeClasses: componentsOf with pairs: 5×4×4×4 = 320 pair entries... foldl over lists with mergePair doing biUnion over the partition... The partition has ≤ 80 blocks; mergePair does P.biUnion (fun s => if a ∈ s then s else ∅) — O(|P|) per pair — total O(pairs × blocks) = 320 × 80 = 25k membership checks — fine. faceClasses: 20 faces, 20 pairs ✓. vertex link: vertexLinkVertexClasses per vertex class: seeds = corners×3, pairs = 5×4×3×2 = 120. fine. `vertexLinkConnected`: componentsOf over corners with pairs = corners² × (nested any over i,i2) — corners per class ≤ 20 → pairs ≤ 400 × ... each pair does `.any` over 3×3 with vertexLinkEdgeClassOf (which does filter over vertexLinkEdgeClasses + biUnion) — vertexLinkEdgeClasses has ≤ 60 blocks... so per pair ~ 9 × 60 checks, 400 pairs → 216k per vertex class — × 5 classes → 1M — OK-ish. `decide` uses kernel reduction (native computation? `decide` = `of_decide_eq_true` with kernel `decide` — it reduces via kernel but uses fast nat/int? The kernel uses VM reduction for #eval-style but decide in a proof goes through the kernel's evaluator which handles Nat reasonably fast). With maxHeartbeats 2M it should be OK. `lens21` N=4: similar.
+
+`EdgeLinkIsCycle`: for each edge class E: edgeLinkFaceClasses: seeds = face occs through E (each edge occurrence has 2 adjacent faces... wait `edgeLinkFaceOccs`: for each (t,a,b) with {t,a},{t,b} ∈ E — each edge occurrence has 2 faces i ∉ {a,b} → 2 face occs; pairs = face gluing identifications (5×4×2×1=40 for N=5). edgeLinkDegree per face class: sum over arcs... fine. edgeLinkConnected: componentsOf fcs pairs where pairs from arcs — each arc contributes pair of adjacent face classes. Fine.
+
+Overall, plausibly within 2M heartbeats, but the `decide` + `#print axioms` gate... The main risk: `decide` on these big Props — heartbeat 2M. If it times out, I can add per-theorem `set_option maxHeartbeats` or restructure. Alternatively, note that `decide` does full kernel reduction of the Prop — the Prop has huge terms (componentsOf unfolded with foldl etc.). The kernel evaluates efficiently though.
+
+Hmm, one important consideration: `by decide` with propositions containing `∃ σ : Fin 1 → Bool` — the Decidable instance for exists over a function type: does Lean synthesize `Fintype (Fin 1 → Bool)`? mathlib has `Pi.fintype` for finite domain/codomain: `Fintype (Fin 1 → Bool)` — requires `[Fintype Bool]` ✓. OK.
+
+Also `Orientable` for ball3: `∃ σ : Fin 1 → Bool, ∀ t i, match T.glue t i with none => True | ...` — ∀ t i over Fin 1, Fin 4 with match — fine.
+
+Alright. Also — potential issue: `s3Double` uses `some (if t = 0 then 1 else 0, 1)` — `1 : Fin 2` — `if t = 0 then 1 else 0` : Fin 2 ✓. `g = 1` : Equiv.Perm (Fin 4) — identity permutation `1` ✓.
+
+Wait — s3Double orientation: gluing face i of tet 0 to face i of tet 1 by identity g. `facePermSign i (identity) = +1` (identity preserves increasing order of face corners). OrientationReversing requires `facePermSign i g = (-1)^(i + g i + 1) = (-1)^(2i+1) = -1`. So s3Double is NOT OrientationReversing — but the file only claims `s3Double_orientable` (not orientationReversing) ✓ — and `Orientable` requires ∃ σ: with σ = (true, false): σ0 = true; check: for gluing (0,i)→(1,identity): `σ 0 = (if decide (facePermSign ≠ (-1)^(...)) then !(σ 1) else σ 1)` — facePermSign = 1 ≠ -1 → decide true → `σ 0 = !(σ 1)` = !false = true ✓. And for (1,i)→(0,identity): `σ 1 = if decide (1 ≠ (-1)^(i + i + 1)) then !(σ 0) else σ 0` — 1 ≠ -1 → `σ 1 = !(σ 0)` = !true = false ✓. So Orientable holds ✓. IsCombinatorialManifold requires Orientable (not OrientationReversing) ✓ good.
+
+Hmm wait — but is s3Double with identity gluings on both sides consistent? `Consistent`: `T.glue t' (g i) = some (t, g.symm)` — glue 1 i = some (0, 1); g.symm = 1 ✓; `(t', g i) ≠ (t, i)` — (1,i) ≠ (0,i) ✓. OK.
+
+But hmm — s3Double as "two tetrahedra glued face-to-face by identity" — is that really S³? Two tetrahedra glued along all 4 faces by the identity map — the double of a tetrahedron = S³ ✓ (boundary of 4-ball... well, the double of the 3-ball is S³). Vertex links: each vertex class has a link that's the double of a triangle = 2-sphere ✓. Python check says ok (4,6,4,2) chi=0 closed manifold H1=0 ✓.
+
+Now `s3Simplex`: tet i = facet opposite vertex i of Δ⁴; corners 0..3 map to Δ⁴ vertices via facetVertex i j. Face of tet i opposite corner j glued to tet (facetVertex i j) — the shared facet of Δ⁴ = opposite pair {i, facetVertex i j} — the face of facet-i opposite j has Δ⁴-corners = facetVertex i k, k ≠ j. The target: tet facetVertex i j — which corner of it is "opposite the position of i"? The facet opposite i' = facetVertex i j contains all vertices except i'; its corners: positionInFacet i' v for v ≠ i'. The corner of facet-i' corresponding to vertex i is positionInFacet i' i — so the face opposite that corner is the intersection {Δ⁴ \ {i', i}} — and the gluing maps corner k ↦ positionInFacet i' (facetVertex i k) ✓ (for k ≠ j), and corner j ↦ positionInFacet i' i ✓. So `facetGlueFun i j k = if k = j then positionInFacet (facetVertex i j) i h else positionInFacet (facetVertex i j) (facetVertex i k) h'` ✓. `facetGluePerm := Equiv.ofBijective (facetGlueFun i j) ⟨by decide, by decide⟩` — hmm, `by decide` for injective/surjective of facetGlueFun i j where i : Fin 5, j : Fin 4 are VARIABLES — `decide` on `Function.Injective (facetGlueFun i j)` for free variables i,j — can decide handle it? `facetGlueFun i j` is defined with if-then-else on `k = j` — for free i,j the computation is symbolic but decidability holds syntactically (Decidable instances for =, ∀ over Fin, etc.). `decide` reduces the Prop... `Function.Injective (facetGlueFun i j)` = `∀ ⦃a₁ a₂⦄, f a₁ = f a₂ → a₁ = a₂` — a ∀ over Fin 4 with → — the decidable instance would unfold f's definition: `if hk : k = j then ... else ...` — `decide` can evaluate `if hk : k = j` when k is a literal? When k : Fin 4 is bound by the ∀-instance — the Decidable (∀ x : Fin 4, P x) instance is defined via Fintype enumeration — so k gets enumerated to literals, and `hk : k = j` — comparing literal k to FREE variable j — `decide (k = j)`? The Decidable (k = j) instance for Fin — `decEq` — computing equality of Fin literals against a free variable — the kernel's reduction: `k = j` reduces via `decide` → `of_decide_eq_true`... For a free variable j, `decide (⟨1, _⟩ = j)` — the `=` of Fin unfolds to `val = val` and proofs — `decide` on `⟨1, h⟩ = j` where j is free — this is a proof obligation that can't reduce! Hmm — wait, but `decide` here is being used as a proof term `by decide` for the Prop `Function.Injective (facetGlueFun i j)` with i,j free. The kernel reduction of `Decidable (⟨1,h⟩ = j)` — the instance `instDecidableEqFin` is defined as... `Fin.decEq` → `if h : a.val = b.val then isTrue ... else isFalse ...` — with b.val free, `h : a.val = b.val` — can't decide without more info → the decision procedure gets STUCK on a free-variable equality: `dite` on `h : 1 = j.val` — `decide (1 = j.val)` → stuck (it's a variable). Actually `decide` evaluates `(instDecidableEqFin ...).isTrue`? No — `decide p : Bool` requires `[Decidable p]` and evaluates. For `p = (⟨1, h⟩ = j)`, the instance is `Fin.instDecidableEq` := `fun a b => decidable_of_iff (a.val = b.val) ⟨...⟩...`? Let me recall: mathlib's `instDecidableEqFin` is defined by `a = b ↔ a.val = b.val` and uses `decEq` on Nat: `⟨fun a b => match a, b with ⟨a,h₁⟩, ⟨b,h₂⟩ => dite (a = b) ...` — the `dite (a = b)` uses `Nat.decEq 1 j.val` — with j.val a FREE variable, `Nat.decEq 1 j.val` reduces to `dite (1 = j.val)`? Nat.decEq is by structural recursion: `Nat.decEq (n+1) 0 = isFalse ...`; `Nat.decEq 1 j.val` — recursion on the first arg: 1 = 0+1 → `match j.val` — j.val is a variable → STUCK. So `decide (⟨1, h⟩ = j)` is stuck — meaning `by decide` on the injectivity Prop would FAIL to produce a proof? No wait — `by decide` elaborates as `of_decide_eq_true rfl` where `decide p` must reduce to `true` — the kernel would get stuck with an unreduced `decide ...` term — actually `of_decide_eq_true` has type `decide p = true → p`; the proof `rfl` requires `decide p` to reduce to `true` definitionally. If `decide p` is stuck (contains free-var matches), `rfl` FAILS — elaboration error "failed to synthesize Decidable" or "type mismatch".
+
+Hmm, but wait — the file has `facetGluePerm` with `⟨by decide, by decide⟩` — Equiv.ofBijective : (f : α → β) → f.Bijective → α ≃ β; `f.Bijective = Injective f ∧ Surjective f`. For i,j free variables — hmm, will `by decide` work? `Injective (facetGlueFun i j)` — its Decidable instance comes from `Fintype` enumeration: `Decidable (∀ a : Fin 4, ...)` — the Fintype ∀-instance unfolds to a finite conjunction — for Fin 4: `P 0 ∧ P 1 ∧ P 2 ∧ P 3` where each P k = `∀ a₂, f k = f a₂ → k = a₂` — again ∀ over Fin 4 → conjunction; each conjunct: `f 0 = f 0 → 0 = 0` — `f 0` = `if hk : 0 = j then ... else ...` — stuck on `hk : 0 = j`?? The `dite (0 = j)` — decidability instance for `0 = j` : Fin — stuck as shown. BUT — `decide` of `A → B`: `Decidable (A → B)` unfolds to `if hA : A then B-impl else isTrue ...` — the kernel evaluates `decide (A → B)` — which first checks `decide A`... for `A = (f 0 = f 0)` — `f 0 = f 0` — rfl-true? `decide (f 0 = f 0)` reduces to true without evaluating f ✓ (decEq on identical closed terms → isTrue by rfl after reduction? `Nat.decEq (f 0).val (f 0).val` — same expression → `dite (e = e)` — hmm, `Nat.decEq e e` — structural recursion on e — e is `(facetGlueFun i j 0).val` — a closed-ish term with free i,j — recursion on the val — stuck again?? Ugh, `Nat.decEq a b` recurses on a: if a is `x + something` it needs to know if a is 0 or succ — for a free-variable-containing term, stuck. Hmm, BUT the kernel has a fast path? No.
+
+Hold on — actually `by decide` for propositions with free variables: Lean synthesizes `Decidable (Injective f)` — the instance uses `Fintype.decidableForallFintype`? Hmm, actually for `∀ a : Fin 4, P a` the instance `Fintype.decidableForallFintype` is defined via `Finset.univ` fold with `decidable_and` — it reduces to a big nested `if h : decide P 0 then if h : decide P 1 then ...` — each `decide (P k)` where `P k = ∀ a₂ : Fin 4, f k = f a₂ → k = a₂` → 4-way conjunction → each `f k = f a₂ → k = a₂` → `if h : f k = f a₂ then isTrue (k=a₂ proof?) else isFalse`. Hmm — `Decidable (A → B)` := `if h : A then match decidable B ... else isTrue (by intro; contradiction)`. So the kernel reduces `decide (f k = f a₂ → k = a₂)` = `match decidable (f k = f a₂) with | isTrue h => match decidable (k = a₂) ...` — wait no, `decide` of implication: `decide (A → B)` where the instance is `if h : A then (match (inferInstance : Decidable B) with isTrue => isTrue (fun _ => hB) | isFalse hB' => isFalse ...) else isTrue ...`. To evaluate `decide (f k = f a₂ → k = a₂)` the kernel evaluates `(f k = f a₂)`'s decider first: `Fin.decEq f k f a₂` — `f k` = `if hk : k = j then positionInFacet ... else ...` — reducing `f k` needs `hk : k = j`'s decider with k literal, j free — `decide (k = j)` — Fin equality → Nat equality `decide (k.val = j.val)` — `Nat.decEq k.val j.val` — recursion on k.val (a literal!) — k.val = 0: `Nat.decEq 0 j.val` → `match j.val` — j.val FREE → STUCK!
+
+So `by decide` on `Function.Injective (facetGlueFun i j)` with free i j would fail (kernel stuck, rfl fails). Hmm. But wait — maybe it doesn't fail: `of_decide_eq_true rfl` — the goal is `Function.Injective (facetGlueFun i j)`; `of_decide_eq_true` : `decide p = true → p`. `rfl` : `decide p = true` — requires `decide p` ≡ `true` — stuck term ≠ true → rfl FAILS with "type mismatch, expected `decide p = true`". So it WOULD fail. Unless... hmm, but the checkpoint says these files were written but "compile pending" — so this was never verified! s3Simplex might not compile.
+
+Hmm wait — actually, does Lean's `decide` tactic for stuck cases fall back? No. So I need to fix `facetGluePerm` — provide actual proofs instead of `by decide`. E.g.:
+
+```lean
+def facetGluePerm (i : Fin 5) (j : Fin 4) : Equiv.Perm (Fin 4) :=
+  Equiv.ofBijective (facetGlueFun i j) ⟨?inj, ?surj⟩
+```
+
+with injectivity/surjectivity proven from the structure. That's doable but requires real math proofs (case analysis on k = j). Alternatively, define facetGlueFun as a composition of known permutations? Alternative: define the gluing map differently — directly as a permutation by listing: The map: corner k of facet i (k ≠ j) ↦ position of Δ⁴-vertex (facetVertex i k) in facet (facetVertex i j); corner j ↦ position of i in facet (facetVertex i j). Define via `Equiv.Perm` construction: `Equiv.ofBijective` with real proofs.
+
+Actually — alternative: I can use `by decide` with `(i : Fin 5) (j : Fin 4)` — hmm no. What about making it `facetGluePerm` a plain function + `facetGluePerm_isPerm : Function.Bijective ...` proven by `decide` at CONCRETE values? No — s3Simplex needs it for ALL i : Fin 5, j : Fin 4 (N=5). The glue function must be a Perm for all t,i — the structure FacePairing3 requires `Equiv.Perm (Fin 4)` per face. So I need a proof of bijectivity for symbolic i,j. Options:
+
+Option A: case analysis proof: `by classical; apply Equiv.ofBijective ...; constructor <;> intro ...` — doable: injectivity: given k1 k2 : Fin 4 with `facetGlueFun i j k1 = facetGlueFun i j k2`, show k1 = k2: case k1 = j: then k2 = j? If k1 = j: f k1 = positionInFacet (fv i j) i; f k2 = positionInFacet (fv i j) (facetVertex i k2) (for k2 ≠ j) — could positionInFacet(fv i j) i = positionInFacet(fv i j)(facetVertex i k2)? By positionInFacet_injective: i = facetVertex i k2 — impossible since facetVertex i k2 ≠ i. So k2 = j as well. Similar. Surjectivity: given m : Fin 4, find k: if `facetVertex (facetVertex i j) m = i` — hmm wait surjectivity: for m : Fin 4, need k with facetGlueFun i j k = m. `facetVertex (facetVertex i j) m` is a Δ⁴-vertex ≠ facetVertex i j. If it = i, then k = j works (positionInFacet i' i = m via positionInFacet_facetVertex with v = i: hmm `positionInFacet (facetVertex i j) i h = m` — need `facetVertex (facetVertex i j) m = i` — then `positionInFacet i' (facetVertex i' m) = m` ✓). If ≠ i: k = positionInFacet i (facetVertex (facetVertex i j) m) h — then k ≠ j? If k = j then facetVertex i k = facetVertex i j = facetVertex... contradiction with facetVertex (fv i j) m ≠ fv i j... hmm — wait need `facetVertex i j` itself: `facetVertex i k where k = positionInFacet i (facetVertex (facetVertex i j) m)` — by facetVertex_positionInFacet: = facetVertex (facetVertex i j) m ≠ facetVertex i j (since m ranges over positions of facet i' — facetVertex i' m ≠ i') — so k ≠ j ✓, then facetGlueFun i j k = positionInFacet i' (facetVertex i k) = positionInFacet i' (facetVertex i' m) = m ✓.
+
+That's real work but fine. ~40 lines with existing lemmas (facetVertex_positionInFacet, positionInFacet_facetVertex, positionInFacet_injective, facetVertex_injective, facetVertex_ne).
+
+Option B: define the permutation constructively via permutation composition and prove it equals the facet gluing — also work.
+
+Option C: avoid symbolic `by decide` by defining `facetGluePerm` via a `dite` on `k = j`-free construction using `Equiv.Perm` API... still needs bijectivity proofs.
+
+Let me go with Option A.
+
+Also — check other `by decide` occurrences with free variables in Models.lean: `facetGluePerm` is the only one (line 198). Everything else is on concrete closed terms (the models) — fine.
+
+Wait, actually — one more consideration. In `s3Simplex : FacePairing3 5 := ⟨fun t i => some (facetVertex t i, facetGluePerm t i)⟩` — `facetVertex t i : Fin 5` ✓. Fine.
+
+Now let me also think about whether `decide` on the big manifold theorems will terminate in reasonable time/heartbeats. The `Consistent` check is cheap. `OrientationReversing` for s3Simplex: ∀ t i over 5×4, each facePermSign computes positions — cheap. `Connected`: componentsOf over Fin 5 — cheap. `Closed` cheap. `vertexClasses`: componentsOf with cornerPairs: 5×4×4×3 = 240 pairs over 20 corners — mergePair per pair: biUnion over ≤20 blocks — fine. `VertexLinkIsSphere` per vertex class: vertexLinkVertexClasses: seeds 20×3=60, pairs 120; vertexLinkEdgeClasses: seeds 60, pairs 60... wait vertexLinkEdgePairs: for each gluing (t,i): 3 pairs (j ≠ i) → 5×4×3 = 60 pairs. vertexLinkConnected: componentsOf over ≤20 corners, pairs ≤ 400 × nested checks (3×3 any with edge class of: filter over ≤60 blocks + biUnion) — hmm, vertexLinkEdgeClassOf: `((T.vertexLinkEdgeClasses C).filter (fun B => fc ∈ B)).biUnion id` — filter over ~40 blocks each with ≤ few elements — cheap-ish. 400 pairs × 9 × (40 filters × 4 elements)... ~ 400×9×160 = 576k kernel operations per vertex class — ×5 classes ≈ 3M — kernel `decide` might take a few seconds per class — total maybe 30-60s for s3Simplex_manifold. Heartbeat limit 2M per command — the `decide` tactic counts heartbeats for ELABORATION not kernel reduction? Kernel reduction (evaluation of the decide proof) — heartbeats are counted during elaboration including kernel typechecking... In recent Lean, `by decide` uses `native_decide`-style kernel reduction with heartbeats counted. 2M might be tight but the checkpoint set maxHeartbeats 2000000 — if timeout occurs, bump to higher for specific theorems or use `decide +kernel` hmm. Alternatively reduce `IsCombinatorialManifold`'s cost by proving sub-theorems separately (the file already proves e.g. consistent, fvector separately — but manifold is one big decide). If heartbeats blow up, I can add `set_option maxHeartbeats 10000000` before the manifold theorems — allowed (no ban on maxHeartbeats).
+
+Edge links: for each edge class E: edgeLinkFaceOccs: iterate 5×4×3 (a,b ordered) × check ∈ E × map 2 faces — seeds ~ (#edge occs in E)×2; pairs 60... wait edgeLinkFaceOccPairs: 5×4×2×1 = 40 pairs. edgeLinkArcs: 5×6=30 arcs total; per E filter — `edgeLinkArcs T E` recomputed per E — 5×4×2... `List.finRange 4 =>> fun a => (filter b ≠ a ∧ a<b) =>> fun b => if ...` — 5×6 checks per E — fine. edgeLinkDegree per face class: sum over arcs × (filter 4 × checks) — fine. edgeLinkConnected: componentsOf over face classes (~small) with pairs from arcs (2 per arc) — each does edgeLinkFaceClassOf — filter over edgeLinkFaceClasses (~8 blocks) — fine.
+
+OK — probably fine. Time will tell. And there's a 4-hour budget; compile times matter for the gate (every .lean file must compile). The whole release tree also includes D7-D10 files — the gate walks ALL .lean files in the worktree! That's a lot of files (D7 has many). The local_gate.py walks everything. Total compile time could be ~30-60 min. I should run the gate at the end (in background) while writing results.
+
+Now, plan of action:
+1. Fix DeltaComplex.lean:
+   a. `edgeClassOf` return type → Finset (Finset (Corner N)).
+   b. Fix `boundaryEdgeClassesList` type + iteration filter (a ≠ f.i).
+   c. Fix `BoundaryIsClosedSurface` first conjunct (a ≠ f.i filter).
+   d. Fix parens in `diskBoundaryVertices` (line 1042) and `VertexLinkIsDisk` (lines 1057, 1061).
+   e. Fix `same_block_of_pair` ending (timeout).
+   f. Maybe silence unused-variable warnings (rename T → _T or leave — warnings don't fail the gate; gate checks exit code; linter warnings don't fail. But cleanliness... leave for now).
+2. Fix Models.lean `facetGluePerm` with real bijectivity proofs.
+3. Compile DeltaComplex.lean, then Models.lean, then Audit.lean.
+4. Run local gate over all files (background, long).
+5. Write results md+json, update checkpoint.json.
+6. Final line TASK_DONE.
+
+Wait — one more thing about `same_block_of_pair`: is it even used? Let me grep. If unused, I could just leave a fixed simpler proof. Let me check usages of same_block_of_pair, mergePair_connected, componentsOf_blocks_connected, blocks_disjoint... in the file and Models. If truly unused, I might consider trimming, but they're part of the "checker correctness" narrative. Keep with fixes.
+
+Also check `mem_split` name clash: mathlib has `List.mem_split`? The file defines its own `mem_split` in namespace FacePairing3 — wait, it's defined at namespace Poincare.D11.Triangulation3D.FacePairing3? Line 317: `theorem mem_split ...` — inside namespace FacePairing3 (opened at line 225). OK.
+
+Let me now make the edits. First, read exact current text around the edit points to construct precise replacements.
+
+Actually let me first fix and recompile DeltaComplex to iterate. I'll do the edits now.
+
+Edit 1 — edgeClassOf (line 820-823):
+```
+/-- The edge class of the edge `{(t,a), (t,b)}`. -/
+def edgeClassOf (T : FacePairing3 N) (t : Fin N) (a b : Fin 4) : Finset (Corner N) :=
+  (T.edgeClasses.filter (fun E => ({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E)).biUnion
+    (fun E => E.biUnion id)
+```
+→
+```
+/-- The edge class of the edge `{(t,a), (t,b)}`: the (unique) class of edges containing it. -/
+def edgeClassOf (T : FacePairing3 N) (t : Fin N) (a b : Fin 4) : Finset (Finset (Corner N)) :=
+  (T.edgeClasses.filter (fun E => ({⟨t, a⟩, ⟨t, b⟩} : Finset (Corner N)) ∈ E)).biUnion
+    (fun E => ({E} : Finset (Finset (Corner N))))
+```
+
+Edit 2 — boundaryEdgeClassesList (1166-1171):
+```
+def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Corner N)) :=
+  (finsetToList T.boundaryFaces) =>> fun f =>
+    ((List.finRange 4) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))
+```
+→
+```
+def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Finset (Corner N))) :=
+  (finsetToList T.boundaryFaces) =>> fun f =>
+    ((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))
+```
+
+Edit 3 — BoundaryIsClosedSurface (1190-1199): fix first conjunct:
+```
+  (∀ f ∈ bfs, (((List.finRange 4) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧
+```
+→
+```
+  (∀ f ∈ bfs, (((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧
+```
+
+Edit 4 — diskBoundaryVertices line 1042: `= vc)).card = 2))` → `= vc))).card = 2))))`.
+
+Edit 5 — VertexLinkIsDisk lines 1057 & 1061:
+line 1057: `= vc)).card = 0 ∨` → `= vc))).card = 0)) ∨`
+line 1061: `= vc)).card = 2)) ∧` → `= vc))).card = 2))) ∧`
+
+Wait — check line 1057's context: 
+```
+1054:     ((diskOnes T C).filter (fun ec =>
+1055:       (finsetToList ec).any (fun fc =>
+1056:         T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+1057:           T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)).card = 0 ∨
+```
+After B: `))` closes P7 (fun fc), P6 (any). Then P5 (fun ec body) must close before `.card`: `)))`. `.card = 0`. Then close P4 (filter) and P3 (disjunct outer): `))`. So: `= vc))).card = 0)) ∨`. Hmm wait — P4 is `.filter (` on line 1054; P3 is `(` on line 1054. After `.card = 0`: close P4 `)`, close P3 `)`. So text: `= vc))).card = 0)) ∨`. ✓.
+
+Line 1061: same but after `.card = 2` close P4' `)`, P3' `)`, and the ∀-paren `(` from line 1053: `)))` then `∧`. So `= vc))).card = 2))) ∧`. ✓.
+
+Edit 6 — same_block_of_pair ending. Current:
+```lean
+  rcases hmerge with ⟨C1, hC1, hxC1, hyC1⟩
+  rcases same_block_preserved (mergePair P' x y) l2 ⟨C1, hC1, hxC1, hyC1⟩ with
+    ⟨C, hC, hxC, hyC⟩
+  refine ⟨C, ?_, hxC, hyC⟩
+  change C ∈ (l1 ++ (x, y) :: l2).foldl (fun P ab => mergePair P ab.1 ab.2) P0
+  simpa [componentsOf, List.foldl_append] using hC
+```
+→
+```lean
+  rcases hmerge with ⟨C1, hC1, hxC1, hyC1⟩
+  rcases same_block_preserved (mergePair P' x y) l2 ⟨C1, hC1, hxC1, hyC1⟩ with
+    ⟨C, hC, hxC, hyC⟩
+  refine ⟨C, ?_, hxC, hyC⟩
+  simp only [componentsOf, List.foldl_append]
+  change C ∈ l2.foldl (fun P ab => mergePair P ab.1 ab.2) (mergePair P' x y)
+  exact hC
+```
+
+Hmm — wait, `List.foldl_append` — is that the mathlib name? In mathlib4: `List.foldl_append` : `(l₁ ++ l₂).foldl f b = l₂.foldl f (l₁.foldl f b)`? Let me check: mathlib has `List.foldl_append` with exactly that statement (in Init/Data/List/Basic? or Mathlib.Data.List.Basic). I recall `List.foldl_append : (l₁ ++ l₂).foldl f b = l₂.foldl f (l₁.foldl f b)`. Yes it exists (simp lemma in mathlib, `[simp]`). If `simp only [List.foldl_append]` — the goal `C ∈ (l1 ++ (x,y)::l2).foldl f P0` — foldl_append rewrites ✓. If the name differs, I'll check. Actually since foldl_append is a [simp] lemma, plain `simp only [componentsOf]` would also apply it? No — `simp only` limits to listed lemmas... `simp only [componentsOf]` uses only componentsOf. Include List.foldl_append. If the lemma is named differently I'll see the error and adjust.
+
+But hmm — one concern: `same_block_preserved` conclusion: `∃ C ∈ l.foldl f P, x ∈ C ∧ y ∈ C` — applied with `(mergePair P' x y)` and `l2`. Then `hC : C ∈ l2.foldl f (mergePair P' x y)`. After my ending: goal after simp: `C ∈ ((x, y) :: l2).foldl f (l1.foldl f P0)` — change to `C ∈ l2.foldl f (mergePair P' x y)`: whnf of `((x,y)::l2).foldl f (l1.foldl f P0)` → `l2.foldl f (f (l1.foldl f P0) (x,y))` → `l2.foldl f (mergePair (l1.foldl f P0) x y)`; P' zeta → `l1.foldl f P0`; P0 zeta → `seed.image ...`. change does whnf — should match. ✓.
+
+Also, the `decide (p1 < p0)` bits in facePermSign — `decide (p1 < p0) : Bool` — `.toNat` — Bool.toNat ✓.
+
+Now Models.lean edit — facetGluePerm. Replace lines 196-198:
+
+```lean
+/-- `facetGlueFun i j` is a permutation of the corners. -/
+def facetGluePerm (i : Fin 5) (j : Fin 4) : Equiv.Perm (Fin 4) :=
+  Equiv.ofBijective (facetGlueFun i j) ⟨by decide, by decide⟩
+```
+
+with real proofs. Let me write:
+
+```lean
+/-- `facetGlueFun i j` is injective. -/
+theorem facetGlueFun_injective (i : Fin 5) (j : Fin 4) :
+    Function.Injective (facetGlueFun i j) := by
+  intro k1 k2 h
+  by_cases hk1 : k1 = j
+  · subst hk1
+    by_cases hk2 : k2 = j
+    · rfl
+    · exfalso
+      have hpos := congrArg Fin.val h
+      have hv1 : (facetGlueFun i j j).val = (positionInFacet (facetVertex i j) i (by intro h'; exact facetVertex_ne i j h'.symm)).val := by rfl
+      have hv2 : (facetGlueFun i j k2).val = (positionInFacet (facetVertex i j) (facetVertex i k2) (by intro h'; exact hk2 (facetVertex_injective i h'))).val := by
+        simp [facetGlueFun, hk2]
+      rw [hv1, hv2] at hpos
+      have hvv : (positionInFacet (facetVertex i j) i (by intro h'; exact facetVertex_ne i j h'.symm)).val =
+          (positionInFacet (facetVertex i j) (facetVertex i k2) (by intro h'; exact hk2 (facetVertex_injective i h'))).val := hpos
+      have heq : i = facetVertex i k2 := positionInFacet_injective (facetVertex i j) (by intro h'; exact facetVertex_ne i j h'.symm) (by intro h'; exact hk2 (facetVertex_injective i h')) (Fin.ext hvv)
+      exact facetVertex_ne i k2 heq.symm
+  · by_cases hk2 : k2 = j
+    · subst hk2
+      -- symmetric
+      ...
+    · -- both ≠ j
+      ...
+```
+
+Hmm, this is getting long. Alternative cleaner approach: prove via the helper `positionInFacet` equations. Let me simplify using the lemmas:
+
+facetGlueFun i j k = positionInFacet (facetVertex i j) (if k = j then i else facetVertex i k) (proof). Actually define the vertex part:
+
+```lean
+def facetGlueVertex (i : Fin 5) (j : Fin 4) (k : Fin 4) : Fin 5 :=
+  if hk : k = j then i else facetVertex i k
+```
+
+then facetGlueFun i j k = positionInFacet (facetVertex i j) (facetGlueVertex i j k) (facetGlueVertex_ne ...). With a lemma `facetGlueVertex_ne : facetGlueVertex i j k ≠ facetVertex i j` — hmm need: if k = j: i ≠ facetVertex i j ✓ (facetVertex_ne i j: facetVertex i j ≠ i — so i ≠ fv i j by symm). If k ≠ j: facetVertex i k ≠ facetVertex i j by injectivity of facetVertex i. ✓.
+
+Injective: facetGlueFun i j k1 = facetGlueFun i j k2 → positionInFacet i' (facetGlueVertex i j k1) _ = positionInFacet i' (facetGlueVertex i j k2) _ → by positionInFacet_injective: facetGlueVertex i j k1 = facetGlueVertex i j k2. Then case analysis on hk1 : k1 = j, hk2 : k2 = j: if both: rfl. If hk1 and not hk2: facetGlueVertex k1 = i, facetGlueVertex k2 = facetVertex i k2 → i = facetVertex i k2 → contradiction with facetVertex_ne. If not hk1 and hk2: symmetric. If neither: facetVertex i k1 = facetVertex i k2 → k1 = k2 by facetVertex_injective. ✓.
+
+Surjective: for m : Fin 4, let v := facetVertex (facetVertex i j) m — v ≠ facetVertex i j (facetVertex_ne i' m). by_cases hv : v = i:
+- if v = i: k := j; facetGlueVertex i j j = i = v; facetGlueFun i j j = positionInFacet (facetVertex i j) i h = positionInFacet (facetVertex i j) (facetVertex (facetVertex i j) m) h'' = m — using `positionInFacet_facetVertex (facetVertex i j) m`: `positionInFacet i' (facetVertex i' m) (facetVertex_ne i' m) = m`. So need the two positionInFacet args equal: `positionInFacet i' v h1 = positionInFacet i' (facetVertex i' m) h2` — since v = facetVertex i' m by hv (v = i = ... wait v := facetVertex i' m; hv : v = i → i = facetVertex i' m). So positionInFacet i' i h = positionInFacet i' (facetVertex i' m) h2 = m via [simp] positionInFacet_facetVertex. Need `facetGlueFun i j j = m`: facetGlueFun i j j unfolds (dite hk : j = j → isTrue branch → positionInFacet (facetVertex i j) i (proof)) — and the simp lemma positionInFacet_facetVertex needs the argument EXACTLY `facetVertex i' m` with m — here we have `i` and know `i = facetVertex i' m` (hv : v = i, v = facetVertex i' m, so hv.symm... hv : facetVertex i' m = i). So `rw [← hv]`... hmm hv : v = i where v := facetVertex i' m — so hv : facetVertex i' m = i. `simpa [facetGlueFun, hv]` hmm — `facetGlueFun i j j` reduces: `if hk : j = j then positionInFacet (facetVertex i j) i (by ...) else ...` — the dite reduces via rfl proof? `if hk : j = j then A else B` — hk : j = j — decidability: `decide (j = j)` → true → reduces to A (the if with decidable_eq j j → isTrue rfl → A). Kernel reduces. So facetGlueFun i j j = positionInFacet (facetVertex i j) i _. Then `positionInFacet (facetVertex i j) i _ = m`: rw [hv] → positionInFacet i' (facetVertex i' m) (h) = m → by simp [positionInFacet_facetVertex]. The proof arg h : i ≠ facetVertex i j — after rw [hv] h : facetVertex i' m ≠ i' ✓ matches facetVertex_ne i' m — but the proof terms are irrelevant (proof irrelevance) — `simp [positionInFacet_facetVertex]` — the lemma is @[simp]: `positionInFacet i' (facetVertex i' m) (facetVertex_ne i' m) = m` — matches with the hypothesis proof due to proof irrelevance ✓ (simp handles that).
+
+- if v ≠ i: k := positionInFacet i v hne. Then facetGlueVertex i j k: hk : k = j? If k = j then facetVertex i k = facetVertex i j — but k = positionInFacet i v — facetVertex i k = v (facetVertex_positionInFacet) — v = facetVertex i j → contradiction with v ≠ facetVertex i j. So k ≠ j. Need to prove k ≠ j to unfold: 
+```lean
+    have hkj : k ≠ j := by
+      intro hkj
+      have : facetVertex i k = facetVertex i j := by rw [hkj]
+      have : v = facetVertex i j := by
+        simpa [k] using this  -- hmm k := positionInFacet i v hne
+```
+Hmm, `k` is a let. Let me structure:
+
+```lean
+  · let k : Fin 4 := positionInFacet i v hne
+    have hkj : k ≠ j := by
+      intro hk'
+      have hv' : v = facetVertex i j := by
+        have h1 : facetVertex i k = v := by simp [k, facetVertex_positionInFacet] -- need v's proof term
+        have h2 : facetVertex i k = facetVertex i j := by rw [hk']
+        exact h1.symm.trans h2
+      exact hne' hv'  -- v ≠ i'... wait
+```
+
+Hmm wait — hne' : v ≠ facetVertex i j? Let me re-set: v := facetVertex i' m where i' := facetVertex i j; v ≠ i' by facetVertex_ne i' m. And we're in branch hv : v ≠ i — the second branch: v ≠ i. So hne : v ≠ i for positionInFacet i v. If k = j: facetVertex i k = facetVertex i j = i' — and facetVertex i k = v (by facetVertex_positionInFacet) → v = i' → contradiction with v ≠ i'. ✓.
+
+Then facetGlueFun i j k = positionInFacet i' (facetVertex i k) _ = positionInFacet i' v _ (by rw facetVertex_positionInFacet) = positionInFacet i' (facetVertex i' m) _ = m (by positionInFacet_facetVertex). ✓.
+
+These are manageable. Let me now write the Models.lean replacement for facetGlueFun/facetGluePerm section, using a helper for the vertex.
+
+Actually — to minimize risk, let me restructure with the helper `facetGlueVertex`:
+
+```lean
+/-- The vertex of `Δ⁴` that the corner `k` of the facet opposite `i` is sent to by the gluing
+of the face opposite corner `j`. -/
+def facetGlueVertex (i : Fin 5) (j : Fin 4) (k : Fin 4) : Fin 5 :=
+  if hk : k = j then i else facetVertex i k
+
+theorem facetGlueVertex_ne (i : Fin 5) (j : Fin 4) (k : Fin 4) :
+    facetGlueVertex i j k ≠ facetVertex i j := by
+  by_cases hk : k = j
+  · subst hk
+    simp [facetGlueVertex]
+    exact fun h => facetVertex_ne i j h.symm
+  · simp [facetGlueVertex, hk]
+    intro h
+    exact hk (facetVertex_injective i h)
+```
+
+Hmm — `facetVertex_injective i h` : k = j given facetVertex i k = facetVertex i j ✓.
+
+Then redefine facetGlueFun:
+```lean
+def facetGlueFun (i : Fin 5) (j : Fin 4) (k : Fin 4) : Fin 4 :=
+  positionInFacet (facetVertex i j) (facetGlueVertex i j k) (facetGlueVertex_ne i j k)
+```
+(And delete the old facetGlueFun? It's used only in facetGluePerm. Simpler to REPLACE its definition — but it's referenced in docstring of facetGluePerm... The old facetGlueFun has an explicit definition with dite — replacing the def body is fine. But then theorem `facetGlueVertex_ne` must come before. OK.)
+
+Hmm, wait — is new facetGlueFun defeq-equivalent to the old for decide computations? Doesn't matter — nothing depends on the old shape except facetGluePerm. And the consistency/orientation checks for s3Simplex use `facetGluePerm` as the glue map — the decide computations will unfold whatever definition. Fine.
+
+Then:
+```lean
+theorem facetGlueFun_injective (i : Fin 5) (j : Fin 4) :
+    Function.Injective (facetGlueFun i j) := by
+  intro k1 k2 h
+  have h' : facetGlueVertex i j k1 = facetGlueVertex i j k2 :=
+    positionInFacet_injective (facetVertex i j) (facetGlueVertex_ne i j k1)
+      (facetGlueVertex_ne i j k2) h
+  by_cases hk1 : k1 = j
+  · subst hk1
+    by_cases hk2 : k2 = j
+    · rfl
+    · exfalso
+      have : facetGlueVertex i j j = facetGlueVertex i j k2 := h'
+      -- facetGlueVertex i j j = i; facetGlueVertex i j k2 = facetVertex i k2
+      have hi : i = facetVertex i k2 := by
+        simpa [facetGlueVertex, hk2] using this
+      exact facetVertex_ne i k2 hi.symm
+  · by_cases hk2 : k2 = j
+    · subst hk2
+      exfalso
+      have : facetGlueVertex i j k1 = facetGlueVertex i j j := h'
+      have hi : facetVertex i k1 = i := by
+        simpa [facetGlueVertex, hk1] using this
+      exact facetVertex_ne i k1 hi
+    · have hv : facetVertex i k1 = facetVertex i k2 := by
+        simpa [facetGlueVertex, hk1, hk2] using h'
+      exact facetVertex_injective i hv
+```
+
+Hmm — `simpa [facetGlueVertex, hk2] using this` where `this : facetGlueVertex i j j = facetGlueVertex i j k2` — LHS unfolds to `if hk : j = j then i else ...` → i; RHS with hk2 : k2 ≠ j... hk2 is a proof of `k2 = j → False`? `by_cases hk2 : k2 = j` gives hk2 : ¬ k2 = j. Unfolding `facetGlueVertex i j k2` = `if hk : k2 = j then i else facetVertex i k2` — with hk2 : ¬(k2 = j) — the dite: `dite (k2 = j) (fun _ => i) (fun _ => facetVertex i k2)` — simp with hk2 rewrites to facetVertex i k2 ✓. So goal: `i = facetVertex i k2` — exact that; then `facetVertex_ne i k2 : facetVertex i k2 ≠ i` — `hi.symm : facetVertex i k2 = i` — `exact facetVertex_ne i k2 hi.symm` ✓.
+
+Then surjectivity:
+```lean
+theorem facetGlueFun_surjective (i : Fin 5) (j : Fin 4) :
+    Function.Surjective (facetGlueFun i j) := by
+  intro m
+  let i' : Fin 5 := facetVertex i j
+  let v : Fin 5 := facetVertex i' m
+  have hvi' : v ≠ i' := facetVertex_ne i' m
+  by_cases hvi : v = i
+  · refine ⟨j, ?_⟩
+    have hv' : i = facetVertex i' m := hvi.symm.trans ... 
+```
+Hmm — v = facetVertex i' m (definitional); hvi : v = i → i = v = facetVertex i' m: `hvi.symm : i = v`; v defeq facetVertex i' m → i = facetVertex i' m: have hiv : i = facetVertex i' m := hvi.symm. Then:
+```lean
+    change positionInFacet (facetVertex i j) (facetGlueVertex i j j) (facetGlueVertex_ne i j j) = m
+    have : facetGlueVertex i j j = i := by simp [facetGlueVertex]
+    rw [this]
+    -- goal: positionInFacet (facetVertex i j) i _ = m
+    rw [hiv]
+    -- goal: positionInFacet i' (facetVertex i' m) _ = m
+    simp
+```
+`positionInFacet_facetVertex` is @[simp] ✓.
+
+  · let k : Fin 4 := positionInFacet i v hvi
+    refine ⟨k, ?_⟩
+    have hkj : k ≠ j := by
+      intro h'
+      have h1 : facetVertex i k = v := by
+        simpa [k, facetVertex_positionInFacet] -- facetVertex_positionInFacet : facetVertex i (positionInFacet i v h) = v
+      have h2 : facetVertex i k = i' := by rw [h']
+      have : v = i' := h1.symm.trans h2
+      exact hvi' this
+    have hgv : facetGlueVertex i j k = v := by
+      simp [facetGlueVertex, hkj]
+      simpa [k] using (facetVertex_positionInFacet i v hvi)
+```
+Hmm wait — `facetGlueVertex i j k = if hk : k = j then i else facetVertex i k` — with hkj : ¬ k = j → simp [facetGlueVertex, hkj] → `facetVertex i k = v` → simp [k] → `facetVertex i (positionInFacet i v hvi) = v` → by facetVertex_positionInFacet (which is @[simp] on `facetVertex i (positionInFacet i v h) = v` ✓ — it's marked @[simp] in the file ✓).
+
+```lean
+    change positionInFacet i' (facetGlueVertex i j k) (facetGlueVertex_ne i j k) = m
+    rw [hgv]
+    -- goal: positionInFacet i' v h2 = m — v defeq facetVertex i' m → simp [positionInFacet_facetVertex]
+    simpa [v] using (positionInFacet_facetVertex i' m)
+```
+Hmm — `positionInFacet_facetVertex i' m : positionInFacet i' (facetVertex i' m) (facetVertex_ne i' m) = m`. Goal: `positionInFacet i' v (facetGlueVertex_ne i j k) = m` — v defeq facetVertex i' m — simpa [v] unfolds let → goal `positionInFacet i' (facetVertex i' m) h = m` — proof arg differs but proof irrelevance — `exact positionInFacet_facetVertex i' m`? The proof args: `(facetVertex_ne i' m)` vs after rw the h from facetGlueVertex_ne — simp can close using the @[simp] lemma with proof irrelevance ✓ (`simpa` handles). Let me write `simpa [v] using positionInFacet_facetVertex i' m`... wait `simpa [v]` — v is a let; `dsimp [v]`? simpa [v] unfolds v ✓.
+
+Hmm — careful with `i'` let: I defined `let i' : Fin 5 := facetVertex i j`. The goal `facetGlueFun i j k = m` unfolds to `positionInFacet (facetVertex i j) (facetGlueVertex i j k) (...) = m` — `change positionInFacet i' ... ` — hmm, change needs defeq with i' zeta ✓.
+
+Then:
+```lean
+/-- `facetGlueFun i j` is a permutation of the corners. -/
+def facetGluePerm (i : Fin 5) (j : Fin 4) : Equiv.Perm (Fin 4) :=
+  Equiv.ofBijective (facetGlueFun i j) ⟨facetGlueFun_injective i j, facetGlueFun_surjective i j⟩
+```
+
+This should compile — maybe with some fiddling. Total ~80 lines replacing the old facetGlueFun + facetGluePerm. Note the old facetGlueFun is used nowhere else (grep to confirm). s3Simplex uses facetGluePerm ✓.
+
+Actually wait — I realize I should double-check the old facetGlueFun isn't referenced in the doc comment of s3Simplex or elsewhere. grep later.
+
+Now — bigger risk: do the `by decide` manifold proofs actually succeed? And heartbeats? Let me get the file fixed and compile, iterating on errors.
+
+Let me also reconsider `Orientable` for lens21/lens31 (closed lens spaces): L(3,1) is orientable ✓ (odd p). RP³ orientable ✓ (L(2,1) is orientable). Python check said ok. The Orientable check in Lean: `∃ σ : Fin N → Bool, ∀ t i, match ...` — decide enumerates σ : Fin N → Bool — 2^N candidates × faces — 2^4=16 for lens21 — fine.
+
+But note: `IsCombinatorialManifold` requires Orientable — for lens spaces fine.
+
+One more check — `lens31`: N=3, glue maps: `Equiv.swap 0 1` and `Equiv.swap 2 3` — `some (⟨(t.val + 2) % 3, Nat.mod_lt _ (by decide : 0 < 3)⟩, Equiv.swap 0 1)` — ✓.
+
+Hmm, and lens31 Consistency: for face (t, 0): glued to (t+2, swap 0 1): partner face = (g 0 = 1): check T.glue (t+2) 1 = some (t, swap 0 1) — (t+2)+1 = t+3 ≡ t mod 3 ✓ with swap 0 1 ✓ symmetric (swap.symm = swap) ✓. And (t', g i) ≠ (t, i): t+2 ≠ t ✓. Face (t,1) → (t+1, swap 0 1): partner (g 1 = 0): T.glue (t+1) 0 = some (t+3 ≡ t, swap 0 1) ✓. Face (t,2) → (t+1, swap 2 3): partner (g 2 = 3): T.glue (t+1) 3 = some (t+3, swap 2 3) ✓. Face (t,3) → (t+2, swap 2 3): partner (g 3 = 2): T.glue (t+2) 2 = some (t+3... wait (t+2)+1 = t+3 ≡ t ✓. ✓ consistent.
+
+OrientationReversing for lens31: `facePermSign i g = (-1)^(i + g i + 1)`: Python verified — trust.
+
+OK — now also the `search.py`/`h1check.py` and `search4.log` files — they're leftover helper files. The gate only checks .lean files. Keep them (fine).
+
+Let me also check the D10 TriangulationLowDim files compile (they're part of the worktree and gate!). They presumably compiled before (results exist for D10). But the gate walks ALL files — D7/D8/D9/D10 — all compiled at some point. I'll run the full gate at the end.
+
+Let me now make the edits to DeltaComplex.lean.
+dsh: reasoning:
+The second edit failed. Let me look at the exact text of boundaryEdgeClassesList again.
+dsh: reasoning:
+Ah — the file was modified by a concurrent process? Wait — line 1171 now has `(fun b => b ≠ f.i ∧ a ≠ b ∧ a < b)` — it includes `a < b`! And line 1192 has the filter `a ≠ f.i` — but my edit #3 already applied to line 1192 (it succeeded!). And the boundaryEdgeClassesList at 1167 still has the old iteration (line 1169: `((List.finRange 4) =>> fun a =>` — no `a ≠ f.i` filter) but with `a < b` in the b filter. Hmm — the file I read at the start (my first read) showed line 1171 as `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))` without `a < b`... Let me re-check: my initial read line 1171: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))`. Now it shows `a < b` added. Did something modify the file between my reads? Hmm — maybe the "current" file differs from my initial read. Wait, my edit #3 succeeded, which modified line 1192-1194. My edit #2 failed because the text has `a < b` now.
+
+Hold on — did MY edit #3 introduce `a < b`? No, edit #3 only changed line 1192's flatMap to filter. Let me re-read my initial read of lines 1166-1171:
+
+```
+1166: /-- The edge classes on the boundary, as a list (with repetitions). -/
+1167: def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Corner N)) :=
+1168:   (finsetToList T.boundaryFaces) =>> fun f =>
+1169:     ((List.finRange 4) =>> fun a =>
+1170:       List.map (fun b => T.edgeClassOf f.t a b)
+1171:         ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))
+```
+
+and now:
+```
+1169:     ((List.finRange 4) =>> fun a =>
+1170:       List.map (fun b => T.edgeClassOf f.t a b)
+1171:         ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b)))
+```
+
+The `∧ a < b` is new. So the file changed between reads — someone/something else is editing? The checkpoint said "compile in progress" — maybe a previous agent session is still running?? Or the "harness relay" process. Hmm — there might be a concurrent process modifying files. Actually wait — maybe I misread initially. My initial read shows line 1171 without `a < b`. The current read shows with. Hmm, also line 1192 now HAS my filter edit ✓ (that was my edit). So possibly another agent/session is concurrently working on this worktree? That would be dangerous.
+
+Let me check file mtime and look for any recent changes. Also check `ps` for lean processes.
+
+Actually — thinking about it more: the `a < b` addition makes the edge list have each edge once per face (a<b ordering) — that's a reasonable "fix" another process might have made. And maybe more changes. Let me diff against what I saw... I don't have the old file saved. Let me check mtime.
+dsh: reasoning:
+OK, the situation: the DeltaComplex.lean mtime is 12:28 (just modified — by ME via my edits, at 12:28). The initial read I did was of the file at ~12:26. So the "a < b" discrepancy... hmm, my first read DID show line 1171 as `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))` — let me look at the first read output again:
+
+```
+1166: /-- The edge classes on the boundary, as a list (with repetitions). -/
+1167: def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Corner N)) :=
+1168:   (finsetToList T.boundaryFaces) =>> fun f =>
+1169:     ((List.finRange 4) =>> fun a =>
+1170:       List.map (fun b => T.edgeClassOf f.t a b)
+1171:         ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))
+```
+
+vs now:
+```
+1169:     ((List.finRange 4) =>> fun a =>
+1170:       List.map (fun b => T.edgeClassOf f.t a b)
+1171:         ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b)))
+```
+
+Hmm, that's odd. Maybe my first read was of a stale cached version? No — actually, wait. Look at the first read output once more... Line 1171: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))` — I see. And the read tool now shows `a < b`. There's no other worker on this worktree (the other workers are D12). The only process editing is me. So maybe the first read was served from a cache? Or... my edit #3? No, edit #3 changed line 1192. Hmm, edit #2 FAILED (old_string not found) — meaning the file already had `a < b` at the time of edit #2 — consistent with the file having `a < b` from the start, and my FIRST read being from a slightly stale snapshot? The first read was at 12:26-ish and showed the old text. The checkpoint.json mentions the rewrite was in progress at 07:14. So the file at 12:26 should have been the 07:14 version... unless the initial read hit a cached copy. Whatever — the file NOW has `a < b`, which is actually a fine variant (each edge once per face: a<b restricts). Since `a < b` with a,b ≠ f.i: for a boundary face, edges {a,b} with a<b, a,b≠f.i — the 3 edges of the face, each exactly once ✓. 
+
+But the iteration still lacks `a ≠ f.i` on the outer `a` — wait, with `a < b` filter inside: for a = f.i: b ranges over b ≠ f.i, a≠b, a<b → b > f.i → edges {f.i, b} — STILL the wrong edges through corner f.i! So the bug remains: line 1169 needs `a ≠ f.i` too. Let me fix with the current text (including a < b).
+
+Actually — with `a < b` in the inner filter, the correct fix: outer filter `a ≠ f.i` (then inner `b ≠ f.i ∧ a ≠ b` — but then b could be < a; with a<b we get each edge once ✓). So:
+
+```lean
+def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Finset (Corner N))) :=
+  (finsetToList T.boundaryFaces) =>> fun f =>
+    ((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b))
+```
+
+Hmm wait — but hold on. Why did edit #3 succeed on line 1192 — the BoundaryIsClosedSurface first conjunct — which in the first read was `(((List.finRange 4) =>> fun a =>` and my edit replaced it with `.filter (fun a => a ≠ f.i)` — it succeeded, so the file matched. And in the current read, line 1192 shows my edit ✓. So between the first read and edit #3, the file gained `a < b` in boundaryEdgeClassesList only?? That's bizarre. UNLESS the first read itself was inconsistent... whatever. Actually — hmm, wait. Maybe the file was being written by the PREVIOUS D11 session that ran 08:00-12:00 (before me, checkpoint at 07:14 says "compile in progress")! No wait, mtime of DeltaComplex.lean was 07:14 per checkpoint... but the stat now shows 12:28 (my edits). The initial read at ~12:26 of a 07:14-written file showed no `a < b`; then at 12:28 edit #2 failed because `a < b` present. Contradiction... unless the read tool's first output was stale/cached from... hmm.
+
+OK whatever — files may be being touched by a relay/backup process. The safest approach: read the CURRENT file fully, understand its current state, and make all fixes against the current content. Let me re-read the whole DeltaComplex.lean now to be sure of its exact current content (I'll re-read the areas I haven't verified). Actually I read most of it at the start; only line 1167-1171 showed a change. Let me re-read the entire file quickly to make sure nothing else differs from my first read — especially since a concurrent-ish modification happened. Let me diff key sections: I'll re-read the file in two chunks and compare mentally with my earlier reading.
+dsh: reasoning:
+OK the file content matches my edits so far. Now let me fix the remaining issues in the current file:
+
+1. `boundaryEdgeClassesList` — need `a ≠ f.i` filter and type change to `List (Finset (Finset (Corner N)))`. Current text (with `a < b`):
+```
+1167: def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Corner N)) :=
+1168:   (finsetToList T.boundaryFaces) =>> fun f =>
+1169:     ((List.finRange 4) =>> fun a =>
+1170:       List.map (fun b => T.edgeClassOf f.t a b)
+1171:         ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b)))
+```
+Replace with:
+```
+def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Finset (Corner N))) :=
+  (finsetToList T.boundaryFaces) =>> fun f =>
+    ((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b))
+```
+
+2. `same_block_of_pair` ending (lines 745-747).
+
+3. diskBoundaryVertices line 1042 and VertexLinkIsDisk lines 1057, 1061 parens.
+
+Let me check the current exact text of those paren areas (lines 1035-1065) — read them.
+dsh: reasoning:
+Now I'll rewrite the `VertexLinkIsDisk` block and `diskBoundaryVertices` with correct parentheses. To keep things readable and avoid paren-counting errors, I'll extract a helper `adjacentToOneEdge` predicate:
+
+```lean
+/-- Whether the link vertex class `vc` is an endpoint of the one-edge class `ec`. -/
+@[reducible] def oneEdgeTouches (T : FacePairing3 N) (C : Finset (Corner N))
+    (ec : Finset (FaceCorner N)) (vc : Finset (CornerEdge N)) : Prop :=
+  (finsetToList ec).any (fun fc =>
+    T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+      T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc)
+```
+
+Then:
+```lean
+def diskBoundaryVertices (T : FacePairing3 N) (C : Finset (Corner N)) :
+    Finset (Finset (CornerEdge N)) :=
+  (T.vertexLinkVertexClasses C).filter (fun vc =>
+    ((diskOnes T C).filter (fun ec => T.oneEdgeTouches C ec vc)).card = 2)
+```
+
+and in VertexLinkIsDisk:
+```lean
+  (∀ vc ∈ T.vertexLinkVertexClasses C,
+    (((diskOnes T C).filter (fun ec => T.oneEdgeTouches C ec vc)).card = 0 ∨
+     ((diskOnes T C).filter (fun ec => T.oneEdgeTouches C ec vc)).card = 2)) ∧
+```
+
+This is cleaner. Note `oneEdgeTouches` is `@[reducible] def ... : Prop`? It returns Bool via `.any` — hmm, `.any (fun fc => ...)` returns Bool. The card comparison `= 0` — fine with Bool-valued filter predicate: `filter (fun ec => Bool)` — Finset.filter takes a predicate `α → Prop` with DecidablePred; `fun ec => T.oneEdgeTouches C ec vc` : Finset (FaceCorner N) → Bool — Bool coerces to Prop via `CoeSort`? `filter` needs `α → Prop`; a Bool-valued function coerces via `Bool → Prop` coercion (coe from Bool to Prop exists — `instCoeSortBool`? Yes: Bool coerces to Prop). Actually simpler to make oneEdgeTouches return Prop: `... : Prop := (finsetToList ec).any (fun fc => ...)` — `.any` returns Bool; to make it Prop I'd need `= true`. Hmm: `decide ... = true`? Actually cleaner:
+
+```lean
+def oneEdgeTouches ... : Prop :=
+  ∃ fc ∈ (finsetToList ec), T.vertexLinkVertexClassOf C (linkEdgeEndpoint1 fc) = vc ∨
+    T.vertexLinkVertexClassOf C (linkEdgeEndpoint2 fc) = vc
+```
+
+Then filter predicate: `fun ec => T.oneEdgeTouches C ec vc` : Prop with Decidable instance ✓ (decidable exists for ∃ over list with decidable equality — Finset (CornerEdge N) has DecidableEq ✓).
+
+In diskBoundaryVertices: `((diskOnes T C).filter (fun ec => T.oneEdgeTouches C ec vc)).card = 2` — clean.
+
+OK let me now make these edits:
+
+Edit A: replace lines 1035-1042 (diskBoundaryVertices) and insert the helper before it.
+
+Edit B: replace the ∀ vc clause in VertexLinkIsDisk (lines 1052-1060).
+
+Edit C: boundaryEdgeClassesList.
+
+Edit D: same_block_of_pair ending.
+
+Then compile.
+dsh: reasoning:
+Wait — I made an important mistake in the first edit: `diskBoundaryVertices` is defined BEFORE `oneEdgeTouches`? No — I put `oneEdgeTouches` first, then `diskBoundaryVertices`. But `oneEdgeTouches` references `linkEdgeEndpoint1/2` — those are defined earlier (lines 958-967) ✓. And `oneEdgeTouches` is inserted at line ~1035, before `diskOnes`? No wait — `diskOnes` is at line 1019-1020, before line 1035 ✓. And `diskBoundaryPairs`/`linkOnesNeighbors` are at 1022-1033, before ✓. Good.
+
+But hmm — `oneEdgeTouches` uses `finsetToList ec` and `∃ fc ∈ list, ...` — Decidable: `∃ fc ∈ l, P` — decidable ✓ (Finite enumeration).
+
+Now compile DeltaComplex.lean again.
+dsh: reasoning:
+While that compiles, let me work on the Models.lean `facetGluePerm` fix. Let me first check the current Models.lean state around the facet section (I read it earlier at 07:04 mtime — it showed `⟨by decide, by decide⟩`). Let me verify current content and whether it has changed.
+dsh: reasoning:
+The Models.lean file still has `⟨by decide, by decide⟩`. Replace `facetGlueFun` + `facetGluePerm` (lines 183-198) with the vertex-based version and real proofs. Note the current `facetGlueFun` has a `dite` on `k = j` with proof `hk : k = j`. My new version uses `facetGlueVertex` and `positionInFacet`. Let me write the replacement carefully.
+
+Also important: the `s3Simplex_orientationReversing`/consistency `by decide` will unfold `facetGluePerm` — since it's now `Equiv.ofBijective ...` with proofs, the permutation's `toFun` is `facetGlueFun` — decide computations on `facetGluePerm t i` will reduce through `ofBijective` (its toFun is the function) — but the PROOFS inside are opaque-ish? Equiv.ofBijective stores the bijectivity proof; `(facetGluePerm t i) k` reduces to `facetGlueFun t i k` — the proof part is irrelevant. But decidability of the whole thing needs `decide` to compute `facePermSign i g` where `g = facetGluePerm t i` — `g (faceCorner i 0)` reduces via ofBijective's toFun ✓ (Equiv.ofBijective f ⟨..⟩ : α ≃ β with toFun = f). Good.
+
+But WAIT — a concern: `decide` computing consistency for s3Simplex needs `facetGluePerm t i` to reduce — `Equiv.ofBijective f h` — the `toFun` projection unfolds to `f` ✓ (definitionally). And equality of perms `g = g.symm` etc. uses ext over Fin 4 — the symm of ofBijective — `Equiv.symm` uses invFun = Classical.choose? NO — Equiv.ofBijective uses `Equiv.ofBijective f h` := { toFun := f, invFun := Classical.choose ... , left_inv := ..., right_inv := ... }! The invFun is a `Classical.choose` — noncomputable! That means `(facetGluePerm i j).symm` involves Classical.choice — computing `g.symm j` for decide would get STUCK (Classical.choose doesn't reduce)!
+
+Hmm — does `Consistent` need g.symm? Yes: `T.glue t' (g i) = some (t, g.symm)` — the decide computation compares `T.glue t' (g i)` with `some (t, g.symm)` — equality of Options — needs g.symm = the actual stored perm — with g.symm stuck on Classical.choose, `decide` gets stuck!
+
+Wait — but the same issue applies to `Equiv.swap`? `Equiv.swap a b : Equiv.Perm α` — its definition: `Equiv.swap a b := ⟨swap a b, swap a b, ...⟩` with explicit invFun = swap a b (self-inverse) — computable ✓. And `Equiv.ofBijective` — mathlib def: 
+```
+def ofBijective (f : α → β) (hf : Bijective f) : α ≃ β where
+  toFun := f
+  invFun y := hf.2 y |>.choose
+  left_inv x := hf.2 (f x) |>.choose_spec.1
+  right_inv y := hf.2 (f y) |>.choose_spec.2
+```
+Hmm — actually in current mathlib, `Equiv.ofBijective` uses `hf.surjective.choose`... it's noncomputable? Let me recall — mathlib's `Equiv.ofBijective` is marked `noncomputable`? In mathlib 4, `Equiv.ofBijective`:
+```lean
+noncomputable def ofBijective (f : α → β) (hf : Bijective f) : α ≃ β where
+  toFun := f
+  invFun y := hf.2.choose ...
+```
+Hmm, I believe modern mathlib (since the computability cleanup) has `Equiv.ofBijective` as noncomputable OR defined with `Classical.choose`. Either way — `g.symm` would not reduce definitionally to a computable function.
+
+This matters for `Consistent`'s decide: `s3Simplex.Consistent` — `T.glue t' (g i) = some (t, g.symm)` — this is equality of `Option (Fin 5 × Equiv.Perm (Fin 4))` — the DECIDABILITY instance for equality of Equiv.Perm: DecidableEq (Equiv.Perm (Fin 4)) — defined via ext: `g1 = g2 ↔ ∀ x, g1 x = g2 x` — computable. So decide compares `facetGluePerm t' (facetVertex t i) (g i)... wait: `T.glue t' (g i)` computes to `some (facetVertex t' (g i), facetGluePerm t' (g i))`; compare with `some (t, g.symm)` — equality of pairs: `facetVertex t' (g i) = t` ✓ computable; `facetGluePerm t' (g i) = g.symm` — DecidableEq for perms: `∀ k, (facetGluePerm t' (g i)) k = (g.symm) k` — RHS: `(facetGluePerm t i).symm k` — invFun = Classical.choose — STUCK. The decidability instance would unfold to `∀ k, ... = Classical.choose ... k` — the kernel can't reduce `Classical.choose _` (it's a noncomputable constant with no reduction rule — well, it reduces to itself). So `decide` FAILS: rfl can't prove `decide P = true` because the computation is stuck at `Classical.choose`.
+
+Hmm — so `Equiv.ofBijective` is unusable here. I need a COMPUTABLE permutation with computable inverse.
+
+Options:
+- Define facetGluePerm directly as `{ toFun := facetGlueFun i j, invFun := facetGlueInv i j, left_inv := ..., right_inv := ... }` with explicit inverse function. The inverse: `facetGlueInv i j m = if facetVertex (facetVertex i j) m = i then j else positionInFacet i (facetVertex (facetVertex i j) m) (proof)`. Computable ✓ (dite on decidable equality of Fin 5 with concrete args — during decide, args become literals and it reduces; in general it's still a computable function ✓).
+
+Then left_inv/right_inv proofs: real math proofs (as planned). This is the robust route.
+
+Let me write it:
+
+```lean
+/-- The corner map of the gluing of the face of tet `i` opposite corner `j` of `∂Δ⁴`: a
+corner `k` of the facet opposite `i` is sent to the position of the corresponding vertex in
+the facet opposite `facetVertex i j`; the corner `j` itself is sent to the position of `i`. -/
+def facetGlueFun (i : Fin 5) (j : Fin 4) (k : Fin 4) : Fin 4 :=
+  if hk : k = j then
+    positionInFacet (facetVertex i j) i (by
+      intro h
+      exact facetVertex_ne i j h.symm)
+  else
+    positionInFacet (facetVertex i j) (facetVertex i k) (by
+      intro h
+      exact hk (facetVertex_injective i h))
+
+/-- The inverse corner map: the position `m` in the facet opposite `facetVertex i j` is sent
+back to `j` if the corresponding vertex of `Δ⁴` is `i`, and to the position of that vertex in
+the facet opposite `i` otherwise. -/
+def facetGlueInv (i : Fin 5) (j : Fin 4) (m : Fin 4) : Fin 4 :=
+  if h : facetVertex (facetVertex i j) m = i then
+    j
+  else
+    positionInFacet i (facetVertex (facetVertex i j) m) (by
+      intro h'
+      exact h h'.symm)
+```
+
+Hmm wait — the positionInFacet i v needs h : v ≠ i — `positionInFacet i (facetVertex (facetVertex i j) m) (by intro h'; exact h h'.symm)` — h' : facetVertex (facetVertex i j) m = i — contradicts h ✓.
+
+Now left_inv: `∀ k, facetGlueInv i j (facetGlueFun i j k) = k`:
+
+```lean
+theorem facetGlueInv_leftInverse (i : Fin 5) (j : Fin 4) (k : Fin 4) :
+    facetGlueInv i j (facetGlueFun i j k) = k := by
+  by_cases hk : k = j
+  · subst hk
+    unfold facetGlueFun facetGlueInv
+    have hdec : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i (by intro h; exact facetVertex_ne i j h.symm)) = i := by
+      simpa using (facetVertex_positionInFacet (facetVertex i j) i (by intro h; exact facetVertex_ne i j h.symm))
+    -- hmm wait: facetVertex_positionInFacet i v h : facetVertex i (positionInFacet i v h) = v
+    simp [hdec]
+```
+
+Hmm — `facetVertex_positionInFacet (facetVertex i j) i h : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i h) = i` ✓. So after unfolding, facetGlueInv i j (positionInFacet ... i ...) = `if h : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i _) = i then j else ...` — with the simpa'd hypothesis `hdec`, reduce to j ✓.
+
+```
+  · -- k ≠ j
+    have hv : facetVertex i k ≠ i := by
+      intro h
+      exact hk (facetVertex_injective i h)  -- hmm: facetVertex i k = facetVertex i j? 
+```
+Hmm wait — facetVertex i k = i — is that possible? facetVertex i k ≠ i by facetVertex_ne i k. So `hv : facetVertex i k ≠ i` comes directly from facetVertex_ne i k (no need for hk):
+```
+    have hv : facetVertex i k ≠ i := facetVertex_ne i k
+    unfold facetGlueFun
+    simp [hk]
+```
+Wait — facetGlueFun i j k with hk : ¬ k = j → `positionInFacet (facetVertex i j) (facetVertex i k) (proof)`. Then facetGlueInv i j of that = `if h : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) (facetVertex i k) _) = i then j else positionInFacet i (facetVertex (facetVertex i j) (...)) (proof)`. By `facetVertex_positionInFacet (facetVertex i j) (facetVertex i k) _ : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) (facetVertex i k) _) = facetVertex i k`. So the condition reduces to `facetVertex i k = i` — false by facetVertex_ne i k → goes to else branch: `positionInFacet i (facetVertex (facetVertex i j) (positionInFacet ...)) _` → rw facetVertex_positionInFacet → `positionInFacet i (facetVertex i k) _` → by `positionInFacet_facetVertex i k : positionInFacet i (facetVertex i k) (facetVertex_ne i k) = k` ✓.
+
+So:
+```
+  · have hv : facetVertex i k ≠ i := facetVertex_ne i k
+    have hpos := facetVertex_positionInFacet (facetVertex i j) (facetVertex i k)
+      (by intro h; exact hk (facetVertex_injective i h))
+    unfold facetGlueFun facetGlueInv
+    simp [hk, hpos, hv]
+```
+Hmm — `simp [hk, hpos, hv]` — the goal after unfold: `(if h : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) (facetVertex i k) _) = i then j else positionInFacet i (facetVertex (facetVertex i j) (positionInFacet ...)) _) = k`. simp with hpos rewrites `facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) (facetVertex i k) _)` → `facetVertex i k` — then the if condition `facetVertex i k = i` — with hv : facetVertex i k ≠ i → else branch: `positionInFacet i (facetVertex i k) _ = k` → simp [positionInFacet_facetVertex] (it's @[simp] ✓). Also the `hk` in the proof arg of positionInFacet — irrelevant. And `if hk : k = j then ...` in facetGlueFun unfolds with hk ✓. Should work; I'll iterate on errors.
+
+right_inv: `∀ m, facetGlueFun i j (facetGlueInv i j m) = m`:
+
+```lean
+theorem facetGlueFun_rightInverse (i : Fin 5) (j : Fin 4) (m : Fin 4) :
+    facetGlueFun i j (facetGlueInv i j m) = m := by
+  by_cases h : facetVertex (facetVertex i j) m = i
+  · -- facetGlueInv i j m = j
+    have hpos := facetVertex_positionInFacet (facetVertex i j) m (facetVertex_ne (facetVertex i j) m)
+    -- facetVertex (facetVertex i j) m ≠ facetVertex i j ✓
+    unfold facetGlueInv facetGlueFun
+    simp [h, hpos]
+    -- goal: positionInFacet (facetVertex i j) i _ = m with h : facetVertex (facetVertex i j) m = i
+    -- rw [h] → positionInFacet (facetVertex i j) (facetVertex (facetVertex i j) m) _ = m → positionInFacet_facetVertex
+```
+Hmm — after simp [h]: `if hk : j = j then positionInFacet (facetVertex i j) i _ else ... = m` → `positionInFacet (facetVertex i j) i _ = m` — then `rw [h]` turns `i` into `facetVertex (facetVertex i j) m` → `positionInFacet (facetVertex i j) (facetVertex (facetVertex i j) m) _ = m` → by positionInFacet_facetVertex ✓ (proof arg — the facetVertex_ne proof vs the inline proof — proof irrelevance — simp handles).
+Actually `simp [h]` might already close the goal via positionInFacet_facetVertex since h rewrites `facetVertex (facetVertex i j) m = i`... h : facetVertex (facetVertex i j) m = i — simp [h] rewrites LHS→RHS i... goal has `positionInFacet (facetVertex i j) i` — h has RHS i — need `rw [← h]` or simp [← h]. Hmm. Let me be careful:
+
+```
+  · unfold facetGlueInv
+    simp only [h]
+    -- now: facetGlueFun i j j = m
+    unfold facetGlueFun
+    simp only
+    -- positionInFacet (facetVertex i j) i _ = m
+    rw [← h]  -- h : facetVertex (facetVertex i j) m = i — rw [←h] replaces i with facetVertex (facetVertex i j) m
+    exact positionInFacet_facetVertex (facetVertex i j) m
+```
+Wait `positionInFacet_facetVertex i' m : positionInFacet i' (facetVertex i' m) (facetVertex_ne i' m) = m` — the goal after rw [←h]: `positionInFacet (facetVertex i j) (facetVertex (facetVertex i j) m) (by ...) = m` — the third arg differs from facetVertex_ne — but `exact positionInFacet_facetVertex (facetVertex i j) m` requires exact match? Since Prop is proof-irrelevant, Lean treats them as defeq? Proof irrelevance is definitional for Prop in Lean — YES, all proofs of a Prop are definitionally equal (proof irrelevance is built into the kernel for Prop). So `exact positionInFacet_facetVertex ...` works ✓.
+
+  · -- facetVertex (facetVertex i j) m ≠ i → facetGlueInv i j m = positionInFacet i (facetVertex (facetVertex i j) m) _
+    let v : Fin 5 := facetVertex (facetVertex i j) m
+    have hv' : v ≠ i := h
+    unfold facetGlueInv
+    simp only [h]
+    -- goal: facetGlueFun i j (positionInFacet i (facetVertex (facetVertex i j) m) _) = m
+    have hposi : facetVertex i (positionInFacet i (facetVertex (facetVertex i j) m) hv') = facetVertex (facetVertex i j) m :=
+      facetVertex_positionInFacet i (facetVertex (facetVertex i j) m) hv'
+    have hkj : positionInFacet i (facetVertex (facetVertex i j) m) hv' ≠ j := by
+      intro h'
+      have : facetVertex i (positionInFacet i (facetVertex (facetVertex i j) m) hv') = facetVertex i j := by rw [h']
+      have : facetVertex (facetVertex i j) m = facetVertex i j := hposi.symm.trans this
+      exact facetVertex_ne (facetVertex i j) m this
+    unfold facetGlueFun
+    simp only [hkj]
+    -- goal: positionInFacet (facetVertex i j) (facetVertex i (positionInFacet i (facetVertex (facetVertex i j) m) hv')) _ = m
+    rw [hposi]
+    -- goal: positionInFacet (facetVertex i j) (facetVertex (facetVertex i j) m) _ = m
+    exact positionInFacet_facetVertex (facetVertex i j) m
+```
+
+Hmm — `facetGlueFun i j (positionInFacet ...)` unfolds: `if hk : (positionInFacet ...) = j then ... else positionInFacet (facetVertex i j) (facetVertex i (positionInFacet ...)) _` — with hkj : ¬(... = j) → else branch ✓.
+
+Then:
+```lean
+/-- `facetGlueFun i j` is a permutation of the corners, with `facetGlueInv i j` as inverse. -/
+def facetGluePerm (i : Fin 5) (j : Fin 4) : Equiv.Perm (Fin 4) where
+  toFun := facetGlueFun i j
+  invFun := facetGlueInv i j
+  left_inv := facetGlueInv_leftInverse i j
+  right_inv := facetGlueFun_rightInverse i j
+```
+
+This gives a computable perm with computable inverse ✓. decide on consistency will work.
+
+One concern: `simp only [h]` where h : `facetVertex (facetVertex i j) m = i` — in the dite `if h' : facetVertex (facetVertex i j) m = i then j else ...` — the decidability reduces via the decider; simp only [h] rewrites the condition to `i = i` → true → reduces? simp only [h] on `dite (facetVertex (facetVertex i j) m = i)` — the condition in the if is a PROP with the instance — simp rewrites `facetVertex (facetVertex i j) m = i` → `i = i` → `True` → then `if True then j else ...` → j? `simp only [h]` does rewrite the if-condition and then simplifies `if True then j else b` → j? `simp only` with h — after rewriting the condition becomes `i = i`, which reduces... hmm `if True then a else b` — is there a simp lemma `if_True`? `if_True` is a simp lemma but with `simp only [h]` it's NOT in the set! `simp only [h]` uses ONLY h. So the `if True then j else _` stays unfolded? No — `if c then a else b` with c := True — the elaborator/whnf: `dite`/`ite` with known condition reduces by rfl? The kernel's reduction: `ite True a b` — `ite` is defined via `dite` with decidable instance `isTrue` — reduces definitionally when the Decidable instance is `isTrue ...` — `Decidable.rec`... For a PROP condition `facetVertex ... = i` — the instance is `instDecidableEq` — the condition doesn't reduce to True definitionally unless the decider reduces — the decider for `facetVertex (facetVertex i j) m = i` — Fin equality decider — `facetVertex (facetVertex i j) m` — m is a free variable! Stuck!! Wait — but `by_cases h : ...` — the decidability in by_cases uses classical — h is a hypothesis, not a computation. The DEFINITION `facetGlueInv i j m = if h : facetVertex (facetVertex i j) m = i then j else ...` — this is a `dite` whose condition's Decidable instance is synthesized at DEFINITION time — for `facetVertex (facetVertex i j) m = i` the instance is `instDecidableEqFin` — which is `decidable_of_iff` style: `Decidable (a = b) := if h : a.val = b.val then ...` — hmm, `instDecidableEqFin` in mathlib: 
+
+```lean
+instance (n : ℕ) : DecidableEq (Fin n) :=
+  fun a b => decidable_of_iff (a.val = b.val) <| Fin.ext_iff.symm  -- or similar
+```
+Hmm — `decidable_of_iff (a.val = b.val) h` — Decidable via `if h : a.val = b.val then isTrue ... else isFalse ...` — with a.val = (facetVertex (facetVertex i j) m).val — a closed term with free i,j,m — can the kernel decide `(facetVertex (facetVertex i j) m).val = i.val`? The Nat decider recurses on the first argument's VALUE — `(facetVertex (facetVertex i j) m).val` is not a literal (it has free variables) → STUCK.
+
+So even with the dite-based definition, the function itself is fine (it's a function — no reduction needed until applied to literals), and when decide applies it to concrete literals (m := ⟨0,h⟩ etc. — no wait, in decide computations the ∀-decidability instance enumerates m over the 4 literals, so m becomes a literal and everything reduces ✓).
+
+The issue is only with my THEOREM PROOFS above: `simp only [h]` on a goal with a stuck dite? In theorem proofs, the goal `facetGlueInv i j m = ...` — unfolding facetGlueInv: `(if h : facetVertex (facetVertex i j) m = i then j else positionInFacet ...) = m` — `simp only [h]` — h : facetVertex (facetVertex i j) m = i — simp rewrites the condition in the if to `i = i` — but does simp rewrite inside `if h : c then` — the `if` is `dite c (fun _ => j) (fun _ => ...)` — c is an argument — simp rewrites c → `dite (i = i) (fun _ => j) (fun _ => ...)` — then `i = i` → simp reduces to `True`? With simp only [h] — only h — `i = i` stays as `i = i`?? Hmm — but `i = i` is still a Prop — the dite with condition `i = i` — the DECIDABLE instance — `if_True` needs the condition to reduce to True definitionally... `decide (i = i)` — Fin decider: `if h : i.val = i.val` — Nat decider on `i.val = i.val` — recursion on i.val — i is a free VARIABLE → stuck again!!
+
+Hmm wait — but `i.val = i.val` — Nat.decEq i.val i.val — recursion on the first arg i.val — i.val is a variable → stuck. BUT — decidability for equality of identical closed terms: is there a smarter instance? The instance `instDecidableEqNat` is structural. So `decide (i = i)` with free i — stuck. Hence `by_cases h : k = j` in my proofs — with k free — uses the same instance — `by_cases` works because classical logic provides the instance via `Classical.propDecidable`?? NO — by_cases uses the DECIDABLE instance — for `k = j` the instance is DecidableEq Fin — stuck?? But by_cases doesn't EVALUATE the instance — it case-splits on the instance `dite`-style: `by_cases h : P` = `if h : P then ... else ...` with classical inference: `by_cases` uses `Classical.decEq`? Actually `by_cases h : p` elaborates to `if hp : p then tac1 else tac2` where the instance is `Classical.propDecidable p`?? No — by_cases requires Decidable p — it uses `inferInstance` — but `k = j` — k free variable — the instance `DecidableEq (Fin 4)` = `instDecidableEqFin` — which is a FUNCTION — applying it to k, j gives `if h : k.val = j.val then isTrue _ else isFalse _` — using the Nat instance on `k.val = j.val` — Nat.decEq k.val j.val — recursion on k.val (free) → the DECISION PROCEDURE is a well-defined term (it's just `Nat.decEq k.val j.val` — stuck but valid). by_cases case-splits on THIS term — `cases (instDecidableEqFin ... )`? by_cases: `if h : P then ...` — the if branches on the decider term — for a stuck decider term (Nat.decEq k.val j.val = dite ...), `if h : P` elaborates via `dite P (fun h => tac1) (fun h => tac2)` where h has the right type regardless of the decider term ✓. The proof obligations in each branch get hypothesis h : k = j (or ¬). Then the tactics use h. The final proof term contains the stuck decider — but that's FINE: the theorem is valid for all i,j,k — the stuck decider term is a valid `Decidable (k = j)` (e.g. `if h : k.val = j.val then isTrue (Fin.ext h) else isFalse (fun h' => h (congrArg Fin.val h'))` — a closed well-typed term, no computation needed at typecheck time). ✓ Proofs work.
+
+The problem was ONLY for `decide`-based PROOFS with free variables (of_decide_eq_true rfl needs the decider to reduce to true). My facetGluePerm with explicit invFun avoids all decide-on-free-vars.
+
+But one more subtlety — in my left_inv proof above, I wrote `simp [hk, hpos, hv]` and earlier `by_cases hk : k = j` then `subst hk` — subst is fine. And `unfold facetGlueFun facetGlueInv` then simp — with simp lemmas [hdec] where hdec is derived via `simpa using (facetVertex_positionInFacet ...)`. The if-condition in facetGlueInv: `facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i (proof)) = i` — simp [hdec] rewrites the LHS of the condition to i → `i = i` → hmm, with `simp [hdec]` (not only) — the default simp set includes `eq_self_iff_true`-ish? `i = i` — simp has `eq_self_iff_true`? Actually simp proves `a = a` by rfl using the built-in `rfl` simplification? `simp` handles `x = x` → True via its internal rfl handling? I think `simp` can close `x = x` goals and rewrite `x = x` to `True` — yes, simp treats reflexive equality via `Eq.ndrec`? Hmm, I believe simp has no special handling — but `decide`-free: after the condition becomes `i = i` (definitionally equal args), the dite `if h : i = i then j else b` — hmm — the KERNEL reduces `dite (i = i)`? `dite` requires Decidable (i = i) — instance = instDecidableEqFin — the if-then-else on a Prop condition: `dite c t e` reduces when the DECIDABLE term is isTrue/isFalse — the decidable term is `if h : i.val = i.val then ...` — Nat.decEq i.val i.val — recursion on i.val — FREE → STUCK → the if doesn't reduce → simp can't finish?? BUT — `if h : c then a else b` in LEAN 4 for propositions: when c is a proposition, `if h : c then a else b` is elaborated as `dite c (fun h => a) (fun h => b)` — and there's a special reduction: if c is definitionally `True`... c = `i = i` — hmm.
+
+Hold on — actually in Lean 4, `i = i` — hmm, `Eq i i` — and `decide (Eq i i)` — the kernel whnf of `instDecidableEqFin ... (Eq.refl i)`? The decidable term: `instDecidableEqFin i i = decidable_of_iff (i.val = i.val) ...`? Let me look at actual mathlib def:
+
+```lean
+instance (n : ℕ) : DecidableEq (Fin n) :=
+  fun i j => decidable_of_iff (i.val = j.val) ⟨Fin.ext, congrArg Fin.val⟩
+```
+Hmm roughly. `decidable_of_iff h e : Decidable b := if h : a then isTrue (e.1 h) else isFalse (e.2 h)` — no wait: `decidable_of_iff (h : a ↔ b) [Decidable a] : Decidable b := if ha : a then isTrue (h.1 ha) else isFalse (fun hb => ha (h.2 hb))`. With a = (i.val = i.val): `if ha : i.val = i.val then ...` — the Nat instance for `i.val = i.val`: `Nat.decEq i.val i.val` — recursion: `Nat.decEq` is defined by well-founded recursion? Actually `Nat.decEq`:
+
+```lean
+def Nat.decEq (a b : Nat) : Decidable (a = b) :=
+  match a with ... 
+```
+or via `decEq` derived — recurses on a — a = i.val free → stuck.
+
+Hmm — BUT, the kernel has a special case? No. However — `if ha : a then t else e` where a is a proposition — Lean elaborates `if ha : a then t else e` as `dite a (fun ha => t) (fun ha => e)`, and `dite`'s reduction: `dite True t e` reduces only if the condition reduces to True SORT-LEVEL — here condition is the Prop `i = i` — hmm, dite's recursor: `dite c t e` reduces via the Decidable — `Decidable.casesOn (inferInstance) ...`. The instance for `i = i` — `instDecidableEq` — is `if ha : i.val = i.val then isTrue ... else ...` — `if ha : a` with a : Prop — `if ha : a then x else y` — hmm, this is again dite on a Prop — with ITS decidable instance for `i.val = i.val` — Nat.decEq i.val i.val — recursion on free variable → the whole thing does NOT reduce to isTrue. So `if ha : i = i then isTrue _ else ...` — actually wait, the OUTER if: `if ha : i.val = i.val then isTrue (Fin.ext ha) else isFalse ...` — `if ha : a then b else c` for propositions is `dite a ...` — reduction: `dite c t e` — hmm, actually in Lean 4, `if h : c then t else e` where `c : Prop` — this is `dite c (fun h => t) (fun h => e)`. The reduction rule of dite: `dite c t e` reduces only if `c` is definitionally true/false? The kernel's reduction for dite: `dite c t e ↦ t (Classical...)`? No — dite has a recursor: `dite.dite c t e` with the decidability instance built into `dite` via `@dite α c inst t e` — `dite` is defined as `(fun ... => if inst is isTrue h then t h else e h) (inferInstance)`. `if inst is isTrue h then ...` — `if` on the DECIDABLE term — matching on `Decidable` — reduces when the Decidable term whnf's to a constructor. The Decidable term is `if ha : i.val = i.val then isTrue ... else ...` — hmm — this nested if (on Prop `i.val = i.val`) is itself a dite with Decidable (i.val = i.val) = Nat.decEq i.val i.val — `Nat.decEq i.val i.val` — recurses on i.val — free — STUCK. So `dite (i = i) ...` does NOT reduce when i is free?? 
+
+Hmm wait, but that can't be — `by_cases h : x = x` style stuff... In practice, `simp` handles `if h : a = a then t else e` — hmm, actually let me think about what `simp [hdec]` does: it rewrites the CONDITION of the if: the goal is `facetGlueInv i j (...) = j` — after unfold: `(if h : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i _) = i then j else positionInFacet ... _) = j`. simp [hdec] — hdec : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i _) = i — rewrites the condition to `i = i`. Then... is there a simp lemma `if_True`/reduces? With `simp [hdec]` (default simp set + hdec) — the condition `i = i` — hmm simp does NOT generally reduce `i = i` to True unless... Actually it does! `simp` has `eq_self_iff_true`... hmm no. Hmm, in the default simp set there's `[simp] theorem eq_self_iff_true {α} (a : α) : a = a ↔ True := ⟨fun _ => trivial, fun _ => rfl⟩`? I don't think that's a simp lemma (it would be dangerous?). Hmm.
+
+Actually — I recall simp DOES simplify `x = x` to `True`: there's a built-in "simp proves x = x by rfl" behavior? Yes! `simp` has special support: it uses `Eq.refl` to close goals of the form `a = a` — and when a hypothesis-matching pattern `a = a` appears, it rewrites to `True` via `eq_self_iff_true`... hmm — I believe simp reduces `a = a` in the middle of a term — let me not rely on it. SAFER: structure the proofs to avoid `if h : v = i` stuck-condition issues by using `split_ifs` or `by_cases` INSIDE the proof:
+
+For left_inv:
+```lean
+theorem facetGlueInv_leftInverse (i : Fin 5) (j : Fin 4) (k : Fin 4) :
+    facetGlueInv i j (facetGlueFun i j k) = k := by
+  by_cases hk : k = j
+  · subst hk
+    dsimp [facetGlueFun, facetGlueInv]
+    by_cases h : facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i (by intro h'; exact facetVertex_ne i j h'.symm)) = i
+    · rfl
+    · exfalso
+      exact h (facetVertex_positionInFacet (facetVertex i j) i (by intro h'; exact facetVertex_ne i j h'.symm))
+```
+Hmm — `dsimp [facetGlueFun, facetGlueInv]` then `by_cases h : ...` — the goal is `(if h' : COND then j else ...) = j` — by_cases h : COND — hmm, by_cases creates h : COND and h : ¬COND — but the goal's if uses a possibly different decidable term — when I case on h : COND, does the if reduce? The if in the goal: `if h' : COND then j else b` — hmm, h' is the bound name in the dite — `dite COND (fun h' => j) (fun h' => b)` — to reduce it I'd use `simp [h]` or `rw [dif_pos h]` / `rw [dif_neg h]`. `dif_pos h : (if h' : p then t else e) = t` given h : p ✓ — `rw [dif_pos h]` then rfl. And in the negative branch: `rw [dif_neg h]` — then the goal becomes `positionInFacet i (facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i _)) _ = j` — hmm wait — after subst hk, k = j — the goal: `facetGlueInv i j (facetGlueFun i j j) = j` — facetGlueFun i j j = positionInFacet (facetVertex i j) i (proof). Then facetGlueInv i j that — in the dif_neg branch: `positionInFacet i (facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i (proof))) (proof) = j` — rw facetVertex_positionInFacet: → `positionInFacet i i (proof : i ≠ i)` — wait: facetVertex (facetVertex i j) (positionInFacet (facetVertex i j) i h) = i — so the argument becomes `i` — `positionInFacet i i (by ...)` — the third arg: proof of `i ≠ i` — contradiction! exfalso from the proof: `exact False.elim ((by intro h''; ...) rfl)` — hmm: the proof `h' : facetVertex (facetVertex i j) (positionInFacet ...) ≠ i` — and we have h : ¬COND — so `h (facetVertex_positionInFacet ...)` : False → exfalso ✓.
+
+This is getting messy — the cleanest: prove these with the higher-level lemmas (facetVertex_positionInFacet, positionInFacet_facetVertex) as equalities of the dite branches, avoiding dite reduction puzzles:
+
+Actually — simpler idea: make `facetGlueInv` and `facetGlueFun` EQUATION lemmas instead of dites... OR — simplest robust approach: define the perm via `Equiv.ofBijective` BUT with a computable inverse by overriding... no.
+
+ALTERNATIVE BIG IDEA: avoid symbolic proofs entirely. Define the permutation DATA for s3Simplex by explicit case analysis — a function of (t,i) → glue data where each facetGluePerm is chosen from a FINITE table of 60 perms? The face pairing for ∂Δ⁴: 5 tets × 4 faces = 20 gluings, each with a perm. Instead of computing facetGluePerm symbolically, I could define the 20 gluing entries directly as literals: for each (t,i), the target tet and the perm as a table: `match t.val, i.val with ... => some (t', perm)`. The perms as literal Equiv.Perm compositions (swap products) — computable ✓. But I'd need the CORRECT 20 entries — error-prone by hand, but I can COMPUTE them with Python (search.py has the machinery) and paste. That avoids ALL the symbolic proof work (facetVertex etc. could be deleted entirely — but they're already there and compile fine... they'd become unused; unused defs are OK).
+
+Hmm — but hand-generated tables of 20 gluing entries with perms are bulky (the lens21 table is already like that, 16 entries). And I'd need to double-check each perm is right. With Python I can generate the table and the expected verification results. The Python h1check.py already verified s3Simplex? checkpoint says "s3Simplex: pending python check". Let me use Python to: (1) build the s3Simplex gluing from the facet formulas, (2) verify consistent/orientation-reversing/closed/manifold/H1=0, (3) print a Lean table.
+
+Actually — wait. Before committing to the table approach, reconsider: is the `by_cases`-free approach workable with `dif_pos`/`dif_neg`? It's doable but fiddly; the table approach is mechanical and reliable — Python generates the table from the SAME facetVertex formulas (so correctness of the table w.r.t. the math is checked in Python, and consistency etc. verified in Python, then Lean decide independently verifies everything). The Lean file then contains: the table (computed, self-contained literals) + decide theorems. The facetVertex/facetGlueFun infrastructure could be kept (it compiles — wait, does it? Models.lean never compiled successfully! Only facetGluePerm's `by decide` is broken; the rest of the facet section might compile fine). If I drop facetGluePerm, the facet lemmas become dead code — but they're needed to DERIVE the table via Python only, not in Lean. Keeping dead code is fine, but if the task reviewers want the construction "checkable", the table IS the construction (with all checks by decide). The docstring should explain the table is the ∂Δ⁴ pairing (can be checked against the formulas by unfolding — actually I could add a theorem `facetGlue_table_correct : facetGlueFun t i k = (table perm) k` for all t,i,k BY DECIDE on... hmm, free variables again — no. But I could prove it for each of the 20 entries with concrete t,i: `by decide`? facetGlueFun 0 0 k — k free — stuck. Hmm — prove `∀ k : Fin 4, facetGlueFun ⟨0,_⟩ ⟨0,_⟩ k = perm00 k` by decide? The ∀-decidable instance enumerates k ✓ — but facetGlueFun ⟨0,..⟩ ⟨0,..⟩ k with k a free var in the PROOF TERM — the decidable instance for ∀ k enumerates k into literals, then facetGlueFun unfolds: `if hk : k = j then ...` with k literal, j literal → reduces ✓. And the dite in facetGlueFun has condition `k = j` with the Fin decider — k,j literals → reduces ✓. So YES: `theorem facetGlue_00 : (facetGlueFun ⟨0, by decide⟩ ⟨0, by decide⟩) = (perm00 : Fin 4 → Fin 4) := by funext k; decide` — works! That gives a checkable link between the formulas and the table without symbolic bijectivity proofs!
+
+So plan:
+1. Python: compute the 20-entry table for s3Simplex (target tet + perm as product-of-swaps), verify consistency, orientation-reversing, closed, connected, f-vector (5,10,10), euler 0, manifold checks, H1 = 0.
+2. Models.lean: replace `s3Simplex` def (and drop `facetGluePerm`; keep facetVertex/facetGlueFun lemmas) with the table. Add theorem `s3Simplex_matches_simplex : ∀ t i, s3Simplex.glue t i = some (facetVertex t i, ⟨facetGlueFun t i, ...⟩)`? Hmm — can't easily construct the Perm with facetGlueFun without bijectivity... Alternative: prove per-entry: for each concrete (t,i), `(s3Simplex.glue ⟨t,h⟩ ⟨i,h⟩).2 k = facetGlueFun ⟨t,h⟩ ⟨i,h⟩ k` for all k — by decide. 20 small theorems or one big ∧ theorem by decide. That documents that the table equals the ∂Δ⁴ facet gluing.
+
+Wait — hmm, actually is even that needed? The table + decide-manifold-checks IS the construction. The task says "S³ (boundary of the 4-simplex...)". The s3Simplex table generated from the facet formulas, verified by decide to be a closed combinatorial manifold — plus the H1 check in Python (H1=0 ⇒ homeomorphic to S³ by Perelman-free classical... actually H1=0 + simply connected... hmm, without Poincaré conjecture we can't conclude S³ from H1=0 alone! Classical: a closed 3-manifold with π1 trivial is S³ — but we don't compute π1, we compute H1=0. H1 = π1^ab = 0 doesn't imply π1 = 0. So the claim "s3Simplex is S³" needs more justification — standard fact: ∂Δ⁴ is homeomorphic to S³ (the boundary of the standard 4-simplex is PL-homeomorphic to the boundary of the 4-ball = S³). That's classical and elementary: the standard 4-simplex is homeomorphic to the 4-ball, so its boundary is homeomorphic to S³. For a result card claim, "s3Simplex is the boundary of Δ⁴" is a MATHEMATICAL identification we make by construction (the face pairing IS the facet gluing pattern of ∂Δ⁴ — checkable entry-by-entry against facetVertex formulas), and the Lean-decided checks confirm it's a closed combinatorial 3-manifold with the right f-vector; the identification with S³ is via the classical elementary homeomorphism Δ⁴ ≅ B⁴. Similarly s3Double = double of a tetrahedron ≅ S³. These are standard topological identifications, honest as stated, and the decide checks make the combinatorial claims unconditional. The result card should be careful to phrase: combinatorial certificate proved unconditionally; identification with S³/L(p,q) by classical elementary homeomorphisms (also verified computationally via H1 in Python as sanity checks).
+
+Hmm — but the task asks "Construct and verify unconditionally". The verification that's decidable and checkable in Lean: consistency, closedness, orientability, Euler char, vertex-link spheres, edge-link cycles, boundary torus — all unconditional in Lean. The TOPOLOGICAL identification is classical (documented). That's the honest scope. For lens spaces: H1 = Z/p distinguishes them; and L(3,1) with p=3: H1=Z/3 — plus classical theory. Python h1check.py gives H1. I can also compute fundamental group presentations? H1 = Z/p is a good checkable invariant. OK.
+
+Also — the task mentions "lens space L(p,q) via face-pairing on a bipyramid for small (p,q) like (2,1)=RP³ and (3,1)" — have lens21, lens31 ✓.
+
+Now — for the table generation, let me write a Python script that:
+- defines facetVertex(i,j), facetGlueFun(i,j,k) exactly as Lean,
+- builds s3Simplex glue: for t in 0..4, i in 0..3: g = [facetGlueFun(t,i,k) for k in 0..3] (assert it's a perm), t' = facetVertex(t,i); glue[(t,i)] = (t', g).
+- runs search.Tri checks: consistent, orientation-reversing, closed, connected, vertex/edge/face classes, f-vector, euler, vertex links sphere, edge links cycle (mirroring Lean), H1 via h1check.
+- prints Lean table entries: for each (t,i): `| t, i => some (⟨t', by decide⟩, PERM)` where PERM as product of swaps — generate minimal swap decomposition of each perm.
+
+Also do the same for lens31, lens21, solidTorus3, s3Double, ball3 to re-verify (already claimed ok in checkpoint but re-verify with current search.py).
+
+Wait — but hold on. Is `facetVertex` in Python matching Lean? Lean: `facetVertex i j = ⟨if j.val < i.val then j.val else j.val + 1, ...⟩`. ✓ easy.
+
+facetGlueFun in Lean:
+```
+def facetGlueFun (i : Fin 5) (j : Fin 4) (k : Fin 4) : Fin 4 :=
+  if hk : k = j then
+    positionInFacet (facetVertex i j) i (proof)
+  else
+    positionInFacet (facetVertex i j) (facetVertex i k) (proof)
+```
+Python: 
+```
+def position_in_facet(i5, v5): return v5 if v5 < i5 else v5-1  # for v != i
+def facet_vertex(i, j): return j if j < i else j+1
+def facet_glue_fun(i, j, k):
+    i2 = facet_vertex(i, j)
+    if k == j: v = i
+    else: v = facet_vertex(i, k)
+    return position_in_facet(i2, v)
+```
+✓.
+
+Then the Lean table: for each (t, i): target t' = facetVertex t i, perm = [facetGlueFun(t,i,k) for k]. Convert perm to Equiv.Perm expression: decomposition into swaps. Any perm is a product of disjoint cycles → product of swaps. I'll write a cycle-to-swaps converter and print e.g. `Equiv.swap 0 1 * Equiv.swap 1 2` — check Lean's swap composition convention: `Equiv.swap a b * Equiv.swap c d` — Perm is a group; `g * h` means g ∘ h (apply h first? In Lean, `(g * h) x = g (h x)`. Yes, function composition order: `(f * g) x = f (g x)`. Hmm — let me verify with the existing lens21: `lens21CycleA := Equiv.swap 1 2 * Equiv.swap 2 3` — "The 3-cycle (1 2 3)" — `(swap 1 2 * swap 2 3) x = swap 1 2 (swap 2 3 x)` — apply swap 2 3 first: 1→1→2; 2→3→3; 3→2→1: so maps 1↦2, 2↦3, 3↦1 = cycle (1 2 3) ✓. So in Lean `(A * B) x = A (B x)` — right-to-left application. In my table representation perm[k] = image of k — I need to find swaps s1..sn with `s1 * s2 * ... * sn` applying sn first: image of k = s1(s2(...sn(k))). I'll compute a sequence of swaps (applied right-to-left) producing the perm. Easiest: generate candidate sequences by brute force over small sets of swaps? The perms here are cycles of length 2-3 or identity. Let me just construct: decompose perm into cycles, then for a cycle (a1 a2 ... am) write `swap a1 am * ... * swap a1 a2`? `(swap a b * swap a c) : x ↦ swap a b (swap a c x)` — apply swap a c first, then swap a b: c→a→b, b→b→a, a→c→c: so maps a↦c, b↦a, c↦b = cycle (a c b)?? Let me verify: x = a: swap a c (a) = c; swap a b (c) = c. So a ↦ c. x = c: swap a c c = a; swap a b a = b. So c ↦ b. x = b: swap a c b = b; swap a b b = a. b ↦ a. So `swap a b * swap a c` = (a b c) as a↦b, b↦c, c↦a? We got a↦c, c↦b, b↦a — cycle (a c b) = a→c→b→a ✓ — as cycle notation (a c b) means a↦c, c↦b, b↦a ✓. So `swap a b * swap a c` = cycle (a c b) i.e. a→c→b. To get cycle (a b c) (a→b→c→a): `swap a c * swap a b`: x=a: swap a b a = b; swap a c b = b → a↦b ✓; x=b: swap a b b = a; swap a c a = c → b↦c ✓; x=c: swap a c c = a; swap a b a = b?? wait x=c: apply swap a b first: c→c; then swap a c: c→a → c↦a ✓. So `swap a c * swap a b` = cycle (a b c) ✓.
+
+I'll write Python to decompose: given perm as list of images, find swap sequence by greedy bubble-sort style: use swaps to build the inverse... Actually simplest: compute inverse perm, and express inverse via adjacent transposition sort (bubble sort: any permutation is a product of transpositions (i i+1) — bubble sort gives the sequence; in Lean: `Equiv.swap a b` for adjacent a,b — hmm, or I can hardcode the small set of needed perms. Let me just write the Python decomposer and output Lean code; then Lean decide verifies correctness — if my decomposition is wrong, Lean's consistency check will FAIL, so it's self-correcting.
+
+Actually even simpler and fully safe: verify in Python that the decomposition `s1 * s2 * ... * sn` (Lean order) equals the perm; then Lean checks everything independently anyway.
+
+Let me also plan: does s3Simplex pass OrientationReversing (strict)? checkpoint said s3Simplex "pending python check". The ∂Δ⁴ with the standard orientation should be orientation-reversing at every gluing — with appropriate corner orders. facetVertex order: face of tet i opposite corner j — the corners are ordered by facetVertex (increasing Δ⁴ vertices). The orientation of tet i (increasing corners 0<1<2<3 = increasing Δ⁴ vertices v0<...<v3). The boundary orientation induced on face opposite corner j: (-1)^j times the increasing order of the face corners. Gluing face (t,i) → (t', g i): orientation-reversing iff facePermSign = (-1)^(i + g i + 1). Python will check; if some entry fails, I can flip corner orders... but changing the convention breaks other things. Let me just check in Python. If it fails, alternatives: use Orientable instead (with the ∃ σ — decide handles it). Actually — hmm, does ∂Δ⁴ have a consistent orientation such that all gluings are orientation-reversing? For a combinatorial sphere that's the orientable case: ORIENTABLE means ∃ σ such that everything is orientation-reversing after flipping tets with σ t = false. For ∂Δ⁴ with the natural vertex order, I'd EXPECT it to be orientation-reversing with all σ = true — a positively oriented Δ⁴ induces positively oriented facets with (-1)^i... The facet of ∂Δ⁴ opposite vertex i, oriented by increasing vertex list — the induced orientation from Δ⁴ is (-1)^i — so consecutive facets (opposite i and opposite i+1... they don't share a face unless...). Facets opposite i and opposite i' share the face opposite {i, i'}. The induced orientations on the shared face: from facet i: (-1)^i × increasing order of vertices minus i; on the shared triangle (missing i,i'): from facet i it's (-1)^i × [v0..v̂i..v̂i'..v4]; from facet i' : (-1)^i' × [v0..v̂i'..v̂i..v4] — differs by a transposition of the two blocks. Hmm — orientation-reversing means the two induced orientations on the shared face are OPPOSITE. Let me just trust Python to check and adjust σ-choices accordingly. Since Orientable (not OrientationReversing) is what IsCombinatorialManifold requires, and Python can search σ, it's likely fine either way.
+
+For the Models.lean s3Simplex_orientationReversing theorem — if strict orientation-reversing holds for all entries, keep it; else drop it and keep s3Simplex_orientable. Python tells us.
+
+Let me now write the Python script. I need to see search.py's full API first — let me read the rest of search.py and h1check.py.
+dsh: reasoning:
+Progress: only 4 errors left:
+1. Line 711 timeout persists — my rewrite of the ending didn't fix it. The timeout must be elsewhere in that theorem.
+2. Line 824:15 overloaded error — let me see.
+3. Line 1170:69 unexpected token ')' — my boundaryEdgeClassesList edit — probably the `=>>` chain issue: `((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a => ...` — the local infix `=>>` — inside the same paren group maybe issue: line 1170: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b))` — hmm "unexpected token ')'; expected command" at 1170:69. Let me look at the current lines.
+4. Line 1193:84 unexpected token ')' — the BoundaryIsClosedSurface first conjunct.
+
+Let me view those lines.
+dsh: reasoning:
+Errors:
+
+1. Line 1170: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b)))` — there are 4 closing parens? `((List.finRange 4).filter (fun b => ...)))` — count: `(` `(List.finRange 4)` `.filter` `(fun b => ...)` `)` `)` `)` — 3 closing parens but only 2 opened (one before `(List.finRange 4)` and one for `filter (`). Hmm — `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b)))`: opens: `(` outer, `(` before List.finRange... wait `((List.finRange 4)` — that's `(` `(` — hmm: `((List.finRange 4).filter (...)` — the string has `((List` — two opens. Then `.filter (` third open. Closes: after the b-filter: `)))` — three closes: closes fun-b, filter-paren, and one of the two outer... leaving ONE open unclosed! The original (pre-my-edit) text was `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))` — hmm — wait the ORIGINAL line 1171 was:
+```
+1171:         ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))
+```
+That has `((` and `)))` — hmm that seems unbalanced too, but the original file had more context: line 1169-1171:
+```
+1169:     ((List.finRange 4) =>> fun a =>
+1170:       List.map (fun b => T.edgeClassOf f.t a b)
+1171:         ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))
+```
+So opens: `((List.finRange 4) =>> ...` — the flatMap chain: `((List.finRange 4) =>> fun a => List.map ... ((List.finRange 4).filter ...))` — outer `(` before `(List.finRange 4)`, the `=>>` chain, and the LAST close `)` closes the outer open... hmm: `((List.finRange 4) =>> fun a => X)` — `((List.finRange 4)` = `(` + `(List.finRange 4)` balanced + then `=>>` is infix — `A =>> fun a => B` — the whole chain `((List.finRange 4) =>> fun a => List.map (fun b => ...) ((List.finRange 4).filter (fun b => ...)))` — count opens: `(` #1, `(` #2 (before List.finRange, closed after 4), `(` #3 (List.map's arg fun), `(` #4 (before second List.finRange), `(` #5 (filter's fun arg). Closes: `)` after `...a < b` — closes #5 (fun b), #4 (the second `(List.finRange 4)`), and... the final `)))` — hmm.
+
+The original: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))` — 3 closes at end: fun-b, `(List.finRange 4)`-paren, outer `(` #1. And `(fun b => T.edgeClassOf f.t a b)` closes after a b. So original was balanced: `((A) =>> fun a => List.map (fun b => X) ((B).filter (fun b => Y)))` — hmm wait: `((List.finRange 4).filter ...))` — in original there was `((List` for the SECOND list too: `((List.finRange 4).filter (fun b => ...)))` — opens `(`#4 and `(`#4b?? Let me not overthink: the original had `... ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))` and it PARSED (the error before was only semantic — the compile reached line 1042 etc. — wait no, the ORIGINAL compile showed error at 1197 but not a parse error at 1171 — so original 1167-1171 parsed fine).
+
+My new version (lines 1166-1170): 
+```
+def boundaryEdgeClassesList (T : FacePairing3 N) : List (Finset (Finset (Corner N))) :=
+  (finsetToList T.boundaryFaces) =>> fun f =>
+    ((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>
+      List.map (fun b => T.edgeClassOf f.t a b)
+        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b ∧ a < b)))
+```
+Opens: `(` #1 before `(List.finRange 4).filter` (line 1168), `(List.finRange 4)` #2 balanced, `filter (` #3, `fun a =>` ... `)` closes #3 — then `=>>` ... `List.map (` #4 `fun b => ...` `)` closes #4 — then `((List.finRange 4)` #5 #6?? `((List.finRange 4).filter (fun b => ...))` — opens #5, #6 (List.finRange), #7 (filter fun b). Closes at end: `)))` — closes #7, #6, #5 — leaves #1 UNCLOSED. Need one more `)`: `... a < b))))`. Because in the original the outer chain was wrapped in `((List.finRange 4) =>> ... )` — one extra open at the chain start. In my version line 1168: `((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a =>` — opens #1 `(`, #2 `(List.finRange 4)`, #3 filter... `))` closes #3, #2 — leaving #1 open for the chain — correct: the chain is `(THING) =>> fun a => ...`. So at the end we need `))))`: #7, #6, #5, #1.
+
+Simplest fix: wrap line 1170's last parens: change `... a < b)))` to `... a < b))))`.
+
+2. Line 1193: same story — my edit #3 changed the first conjunct: `(∀ f ∈ bfs, (((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a => List.map (fun b => T.edgeClassOf f.t a b) ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧` — count: `(((` opens #1,#2,#3? Original: `(∀ f ∈ bfs, (((List.finRange 4) =>> fun a => List.map (fun b => T.edgeClassOf f.t a b) ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧` — original opens: `(∀ f ∈ bfs,` — that's the ∀ paren #A; `(((` — #B, #C, #D where #C = `(List.finRange 4)`... hmm — `(((List.finRange 4) =>> fun a => X)` — #B, #C(List.finRange), then `=>>` chain; X = `List.map (fun b => Y) ((List.finRange 4).filter (fun b => Z))` — closes inside X: fun-b, `(List.finRange 4)`, filter-fun-b → `)))`. Then `.eraseDups.length = 3` — needs #B closed: `)` — then `)` closes #A? `= 3)) ∧` — two closes: #B and #A. So original total after Z: `)))` (X internals) + `.eraseDups.length = 3` + `))` (#B, #A) ✓ balanced, and the count was: the X's closing `)))` — in the original text `...((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧` ✓.
+
+My edited version: `(∀ f ∈ bfs, (((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a => ...` — I added an EXTRA open+close pair: `((List.finRange 4).filter (fun a => a ≠ f.i))` — opens: #B, #C(List.finRange), #D(filter-a) — closes `))` (#D, #C) — leaves #B open for chain ✓. Then X's internals: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))` — opens #E, #F, #G closes `))` after b-filter... wait: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))` — that's #E, #F(List.finRange), #G(filter-b) then `))` closes #G and #F — leaving #E open! Then `).eraseDups.length = 3)) ∧` — `)` closes #E, then `= 3`, then `))` closes #B and #A ✓. Count text: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧` — let me count the current file line 1193: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧` — from my read: `        ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧` — hmm the error says 1193:84 unexpected token ')'. Col 84... `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b)))` — three closes after Z: #G, #F, #E ✓ — then `.eraseDups.length = 3)) ∧` — `))` closes #B, #A ✓. That seems balanced?! But error at 1193:84... wait — maybe the error is because of the ∀-paren: `(∀ f ∈ bfs, EXPR) ∧` — after `= 3` we need `)` to close the ∀-paren? The ∀ syntax: `∀ f ∈ bfs, EXPR` — the `,` binds everything to the end of the expression... In Lean, `∀ f ∈ bfs, P` — P extends as far as possible! So `(∀ f ∈ bfs, A) ∧ B` needs the paren after A. Original: `= 3)) ∧` — TWO closes after `= 3`?? Hmm — original line 1193 (from my very first read):
+```
+1193:   (∀ f ∈ bfs, (((List.finRange 4) =>> fun a =>
+1194:       List.map (fun b => T.edgeClassOf f.t a b)
+1195:         ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧
+```
+Original after Z: `))).eraseDups.length = 3)) ∧`: Z closes: `)))` = fun-b, `(List.finRange 4)` — wait `((List.finRange 4).filter (fun b => ...)))` — opens `(` `(` `filter (` — Z closes: `)` fun-b, `)` filter-paren? No — order: `(fun b => Z)` closes the filter's lambda arg; then `)` closes `(List.finRange 4)`... but `.filter`'s paren: `.filter (fun b => Z)` — the `(` before fun-b. So opens: #1 `(`, #2 `(List.finRange 4)`, #3 `filter (`, #4 `fun b =>`. Closes: #4, #3, #2, #1 → `))))`. Original had `)))` — #4, #3, #2 — and #1 = the outer `(` of `((List.finRange 4) =>> fun a => ...)`? NO wait — in the original the FIRST `(` of `(((List.finRange 4) =>>` — hmm.
+
+OK I'm going in circles. Original first conjunct text: `(((List.finRange 4) =>> fun a => List.map (fun b => ...) ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3))`. 
+Opens: `(((` — O1, O2, O3 where O2 is `(List.finRange 4)`... precisely: `(` O1, `(` O2, `List.finRange 4`, `)` closes O2, ` =>> fun a => List.map (` O3, `fun b => X`, `)` closes O3, ` ((List.finRange 4).filter (` — `(` O4, `(List.finRange 4)` O5, `)`, `.filter (` O6, `fun b => Z`, then `)))` closes O6, O5, O4, `.eraseDups.length = 3` — hmm but then O1 unclosed: `))` at the end closes O1 and the ∀-paren. Wait the end has `= 3))` — two closes: O1 and ∀-paren ✓. Total balanced ✓.
+
+My new version: `(((List.finRange 4).filter (fun a => a ≠ f.i)) =>> fun a => List.map (fun b => ...) ((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3))`. 
+Opens: O1 `(`, O2 `(List.finRange 4)`, O3 `.filter (` `fun a => P` `)` closes O3, `)` closes O2, ` =>> fun a => List.map (` O4, `fun b => ...` `)` closes O4, ` ((List.finRange 4)` O5 `(List.finRange 4)` O6 `.filter (` O7 `fun b => Z`. Closes after Z in current file: `)))` — closes O7, O6, O5. Then `.eraseDups.length = 3))` — closes O1, ∀-paren ✓. Balanced!! Hmm — so where's the error at 1193:84?
+
+Wait — col 84 of line 1193: `((List.finRange 4).filter (fun b => b ≠ f.i ∧ a ≠ b))).eraseDups.length = 3)) ∧` — hmm. Hold on, maybe the issue: `(∀ f ∈ bfs, ...)` — the ∀-body extends to end of expression; inside the body, at `= 3))` — the FIRST `)` closes O1?? and second closes ∀-paren ✓. Hmm.
+
+Hmm wait, actually — maybe the issue is different: `.eraseDups` — `(...).eraseDups.length` — `eraseDups` then `.length` ✓ fine.
+
+Let me look at the ACTUAL error message text (I only saw the grep lines). Let me view the full error context from the log.
+
+3. Line 824: `(fun E => ({E} : Finset (Finset (Corner N))))` — overloaded error — `{E}` — ambiguous singleton — with the type ascription `: Finset (Finset (Corner N))` — hmm, "overloaded, errors" — maybe `{E}` parsed as an implicit-arg singleton? `({E} : Finset (Finset (Corner N)))` — `{E}` with explicit type — should work. The overload error might be about `biUnion` — `(T.edgeClasses.filter ...).biUnion (fun E => {E})` — biUnion over Finset (Finset (Corner N)) with codomain Finset (Finset (Corner N)) ✓. Let me see the actual message.
+
+Let me get the full error messages from the log.
+dsh: reasoning:
+1. Line 824: `{E}` — the type ascription `({E} : Finset (Finset (Corner N)))` — hmm, "Singleton (Finset (Finset (Corner N))) (Finset (Finset (Corner N)))" — the `{E}` where E : Finset (Finset (Corner N))... wait, E is bound by `.filter (fun E => ...)` — E : Finset (Finset (Corner N)). Then `{E}` : Finset (Finset (Finset (Corner N)))?? NO — `{E} : Finset α` where α = type of E. The ascription says `Finset (Finset (Corner N))` — hmm, but E itself has type Finset (Finset (Corner N))?? Wait — `T.edgeClasses : Finset (Finset (Finset (Corner N)))` — filter over it: E : Finset (Finset (Corner N)). So `{E} : Finset (Finset (Finset (Corner N))))` — my ascription `Finset (Finset (Corner N))` is WRONG (off by one). But the error says "failed to synthesize Singleton (Finset (Finset (Corner N))) (Finset (Finset (Corner N)))" — the type ascription forces `{E}` to be of type `Finset (Finset (Corner N))`, so it needs `Singleton (Finset (Finset (Corner N))) (Finset (Finset (Corner N)))` — i.e., E would have to be `Finset (Corner N)`. But E : Finset (Finset (Corner N)) — mismatch. So the type of `edgeClassOf`'s body: the filter gives `Finset (Finset (Corner N))` (elements E : Finset (Corner N)?? wait — T.edgeClasses : Finset (Finset (Finset (Corner N))) — filtering gives a finset whose ELEMENTS E have type Finset (Finset (Corner N)). Hmm — that means edgeClasses' element type is Finset (Finset (Corner N)) — an edge class is a Finset of EDGES, where each edge is `Finset (Corner N)` (2-element set). So E : Finset (Finset (Corner N)) ✓ (E IS the edge class — a set of edges). So `{E}` should be : Finset (Finset (Finset (Corner N))) — but edgeClassOf must return `Finset (Finset (Corner N))` = THE CLASS E itself. 
+
+So simplest: `edgeClassOf T t a b : Finset (Finset (Corner N)) := (T.edgeClasses.filter (fun E => ... ∈ E)).biUnion id` — biUnion id over the filter result: the union of all E's — since exactly one E matches, = that E. `id` : Finset (Finset (Corner N)) → Finset (Finset (Corner N)) — biUnion (fun E => E) ✓ — but biUnion with `id` — does the elaborator accept `id`? biUnion f : Finset β where f : α → Finset β — here α = Finset (Finset (Corner N)) and f = id : α → α = Finset β ✓. Use `.biUnion id` — hmm wait, can there be ambiguity in `id`? f must be `α → Finset β` — `id : α → α` — so β = ... biUnion's type: `(s : Finset α) → (α → Finset β) → Finset β` — with f = id, α = Finset β ✓ — elaborates fine typically (same as faceClassOf which uses `.biUnion id` ✓).
+
+2. Parse errors at 1170 and 1193: both are `unexpected token ')'`. My counts must be off. Let me carefully count line 1193's parens... Actually, easier: rewrite both to avoid nested-paren chains by using `List.finRange 4 |>.filter ...` or `List.range` style... but `=>>` is the flatMap infix. The chain: `((List.finRange 4).filter (fun a
+The `by decide` for bijectivity on free variables in `facetGluePerm` won't reduce (also `Equiv.ofBijective` has a `Classical.choose` inverse, which would break `decide` on `Consistent`). I'll switch `s3Simplex` to an explicit computable permutation table generated from the facet formulas and verified in Python first. Let me inspect the Python infrastructure.
+dsh: TRANSPORT: DeepSeek API request to https://api.deepseek.com failed
