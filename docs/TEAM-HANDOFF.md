@@ -69,6 +69,8 @@ Per host (ophis-gpu, 360-1, 360-2):
    To run workers on a different model family entirely, export `WORKER_CMD` (e.g.
    `WORKER_CMD="codex exec --model <opus5-or-sol-id>"`) in the dispatcher's environment;
    default remains `bin/dsh_fixed.sh --profile headless`.
+   Lean/mathlib environment setup for any new host: `docs/MATHLIB-ONBOARDING.md`
+   (pin, elan placement, olean cache, 60-second probe, U-gap boundary rules).
 3. **Unblock admission**: `touch longrun/state/ADMISSION_OK`.
 4. **Dispatcher**: if not running, `cd longrun && nohup python3 bin/dispatch_loop.py >> logs/dispatch.out 2>&1 &`.
    `dispatcher.lock` (flock) prevents double-start; `bin/restart_fleet.py` stops

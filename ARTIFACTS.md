@@ -51,16 +51,26 @@ no sorry/axiom/native_decide in authored files), NOT semantic acceptance. See
 6. Admission: quota evidence auto-expires after 45 min (`ADMISSION_EVIDENCE_TTL`);
    `state/ADMISSION_OK` bypasses after a key swap; quota-paused tasks auto-requeue.
 
-## Excluded bulk (rebuildable; not in git)
+## Bulk archives (GitHub Release assets)
+
+Our constructed evidence that is too large or too log-heavy for git is archived at
+[release `artifacts-2026-09-12`](https://github.com/guoshaoyang-pku/lean-poincare/releases/tag/artifacts-2026-09-12):
+
+| asset | packed / unpacked | content |
+|---|---|---|
+| `d9-audit-build-logs-20260912.tar.zst` | 4.6M / ~1.0G | complete D9 adversarial-audit build logs (`d9b/raw`, `raw_final`, `raw_fresh`, per-file kernel logs) — full process evidence for visualization |
+| `gate-build-logs-oversize-20260912.tar.zst` | 503K / 109M | the one compile-gate build log above GitHub's 100M file limit |
+| `l1-baseline-pre-rebuild-20260912.tar.zst` | 192M / ~3.7G | L1 leader pre-rebuild snapshot of the release tree (lineage + visualization; superseded by `release/`) |
+
+Unpack with `tar -xf <asset>` (zstd auto-detected). Build-log visualization sources:
+these archives + in-repo `longrun/state/*/gate-build.log`, `latest.log`, `run-*.log`
+and `longrun/logs/events.jsonl`.
+
+## Excluded bulk (rebuildable; not stored anywhere)
 
 | item | size | how to rebuild |
 |---|---|---|
-| elan toolchains (`.elan-home` in worktrees) | 3.3G | `elan toolchain install leanprover/lean4:v4.32.1` |
-| L1 `baseline/pre-rebuild` backup snapshot | 3.7G | superseded by `release/` + git history |
-| L2 `evidence/mathlib-cache` | 435M | `lake exe cache get` in a mathlib-pinned package |
-| D9 `Audit/logs/**/raw*` + >5M raw build logs | ~1G | re-run the audit build; digests preserved in `theorem_cones.json` and audit reports |
-| `artifacts/**/share/packages/` (mathlib clone) | 131M | `lake update` / manifest-pinned fetch |
+| elan toolchains (`.elan-home` in worktrees) | 3.3G | `elan toolchain install leanprover/lean4:v4.32.1` — see `docs/MATHLIB-ONBOARDING.md` |
+| L2 `evidence/mathlib-cache` | 435M | `lake exe cache get` in a mathlib-pinned package — see `docs/MATHLIB-ONBOARDING.md` |
+| `artifacts/**/share/packages/` (mathlib clone) | 131M | manifest-pinned fetch — see `docs/MATHLIB-ONBOARDING.md` |
 | `.lake` build dirs, `*.olean/*.ilean/*.trace` | many G | `lake build` |
-
-Archives of the excluded items (if requested) can be published as GitHub Release assets
-on `guoshaoyang-pku/lean-poincare`; nothing here blocks a cold start.
