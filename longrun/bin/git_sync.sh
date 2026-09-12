@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rebuild the integrated repo snapshot from ophis and push to GitHub.
 set -euo pipefail
-cd "$HOME/Desktop/workdir/math"
+cd "$HOME/Desktop/workdir/poincare-formalization"
 test -d lean-poincare-repo/.git
 test -z "$(git -C lean-poincare-repo status --porcelain)" || { echo "Refusing to sync over local changes" >&2; exit 1; }
 ssh -o BatchMode=yes ophis-gpu 'cd ~/workdir/lean_poincare/longrun && python3 - << "PYEOF"

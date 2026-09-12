@@ -115,15 +115,34 @@ def is_running(task_id):
 
 
 def provider_admission_blocked():
-    """Return true after any worker records a provider quota/admission failure.
+    """Return true while FRESH provider quota/rate-limit evidence exists.
 
     ADMISSION_PAUSED intentionally freezes only recursive outbox imports.  A
     separate fail-closed check is needed for already-queued tasks, otherwise
     the dispatcher would spend one doomed invocation per queued task.
+
+    Evidence is honored only while fresher than ADMISSION_EVIDENCE_TTL
+    seconds (default 2700).  After expiry the dispatcher probes the provider
+    with normal launches: a still-broken provider writes fresh failing logs
+    and re-latches within one tick, while a restored provider (recharged
+    balance, new API key, or model swap) resumes the fleet automatically.
+    Creating state/ADMISSION_OK bypasses the check entirely; use it after an
+    operator-side key/model swap to skip the first probe cycle.
     """
+    if (STATE / "ADMISSION_OK").exists():
+        return False
+    try:
+        ttl = float(os.environ.get("ADMISSION_EVIDENCE_TTL", "2700"))
+    except ValueError:
+        ttl = 2700.0
+    if ttl <= 0:
+        return False
     patterns = ("QUOTA:", "RATE_LIMIT:", "Insufficient Balance", "Too many requests")
+    cutoff = time.time() - ttl
     for latest in STATE.glob("*/latest.log"):
         try:
+            if latest.stat().st_mtime < cutoff:
+                continue
             text = latest.read_text(errors="replace")
         except OSError:
             continue
@@ -241,6 +260,7 @@ def tick():
     import_inbox(queue)
     import_leader_outbox(queue)
     by_id = {task["id"]: task for task in queue["tasks"]}
+    admission_blocked = provider_admission_blocked()
     active = sum(is_running(task["id"]) for task in queue["tasks"] if task.get("host", HOST) == HOST)
     lane_limits = queue.get("concurrency", {}).get("lane_limits", {})
     lane_active = {lane: sum(is_running(t["id"]) for t in queue["tasks"] if t.get("host", HOST) == HOST and t.get("lane", "builder").split("+")[0] == lane) for lane in lane_limits}
@@ -253,6 +273,14 @@ def tick():
             append_event("task_stopped", task_id=task_id, reason="terminate_requested")
             save_json(QUEUE, queue)
             continue
+        if task["status"] == "paused" and owned and not admission_blocked:
+            marker = state / "PAUSED"
+            if marker.exists() and "provider quota" in marker.read_text(errors="replace").lower():
+                marker.rename(state / f"PAUSED.resumed-{int(time.time())}")
+                task["status"] = "queued"
+                task.pop("pause_reason", None)
+                log(f"RESUME {task_id} provider admission evidence expired; requeued from checkpoint")
+                continue
         if task["status"] in ("verified", "blocked", "gate_failed", "needs_review", "paused", "stopped"):
             continue
         if owned and is_running(task_id):
@@ -302,8 +330,8 @@ def tick():
                 task["status"] = "queued"
                 log(f"RECOVER {task_id} worker not alive")
     for task in queue["tasks"]:
-        if provider_admission_blocked():
-            log("ADMISSION_BLOCKED provider quota/rate-limit evidence detected")
+        if admission_blocked:
+            log("ADMISSION_BLOCKED fresh provider quota/rate-limit evidence; auto-probe after TTL")
             break
         if active >= admission_limit(queue):
             break
@@ -341,6 +369,7 @@ def tick():
             continue
         (state / "DONE").unlink(missing_ok=True)
         environment = dict(ENV, TASK_ID=task_id, PROMPT_FILE=prompt.name)
+        environment["DSH_MODEL_LABEL"] = str(queue.get("model", "deepseek-flash"))
         environment["DSH_USE_API_TUNNEL"] = "0" if HOST == "ophis-gpu" else "1"
         environment.pop("NODE_OPTIONS", None)
         environment["TASK_MAX_HOURS"] = str(task.get("max_hours", 72))
