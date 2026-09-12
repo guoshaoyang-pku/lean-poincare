@@ -138,7 +138,27 @@ exhaustion / repeated failures — these need a controller decision by design). 
 long experiment therefore needs: funded keys, leaders under `leader_loop.sh`, the cron
 watchdog installed, and a controller that reviews `PAUSED`/`blocked` items each cycle.
 
-## 6. Known open items
+## 6. Supervision & push discipline
+
+- **`fleet/ophis-live`** (branch on `guoshaoyang-pku/lean-poincare`) is the append-only
+  evidence stream: `longrun/bin/auto_push.sh quick` commits queue snapshot, per-task
+  state, result cards, dispatch/supervisor logs and leader heartbeats/checkpoints/briefs
+  **every 10 minutes** from ophis-gpu (deploy-key auth). Remote supervision = watch this
+  branch; no cluster access required.
+- **Hourly**: `build_artifact_bundle.sh` at :20 rebuilds the release overlay + artifacts;
+  `auto_push.sh full` at :25 pushes the complete tree to the same branch.
+- **`main`** stays curated by the lead; fleet evidence is merged forward as needed.
+- Dispatcher watchdog (every minute + `@reboot`) and admission self-healing keep the
+  execution plane alive independently of any supervisor session.
+- **Roles**: the lead (Shaoyang Guo) and the supervising agent own narrative, ledger,
+  promotions and publication. Collaborators contribute **API execution capacity**:
+  their controllers run workers/leaders on their infrastructure and submit results
+  only through the verifier gate / outbox protocol — never direct ledger, history or
+  classification edits. Their own evidence pushes go to their fork/branch at ≥30-min
+  cadence for the lead's supervision.
+- Revoke fleet push access anytime: repo Settings → Deploy keys → `ophis-fleet-autopush`.
+
+## 7. Known open items
 
 - `D12-tensor-maximum-bochner` blocked on ophis and 360-1 (mathematical blocker, see card).
 - `D13-integrated-kernel-audit` was mid-gate at outage time; the gate resumes on restart.
@@ -146,7 +166,7 @@ watchdog installed, and a controller that reviews `PAUSED`/`blocked` items each 
 - Semantic ledger (~23 open blockers) is the real critical path; compilation throughput
   is no longer the bottleneck once provider balance exists.
 
-## 7. Provenance
+## 8. Provenance
 
 - Publication repo: `github.com/guoshaoyang-pku/lean-poincare` (branch `main`).
 - Integrated into `swarm-research/ai4math-swarm` on branch `shaoyang/perelman_formulation`

@@ -16,6 +16,8 @@ mkdir -p "$LONGRUN/logs"
 if [ ! -d "$PUB/.git" ]; then
   git clone -q git@github.com:guoshaoyang-pku/lean-poincare.git "$PUB" || { echo "$(date -Is) $MODE: CLONE FAILED" >> "$LOG"; exit 1; }
 fi
+git -C "$PUB" config user.name "guoshaoyang-pku"
+git -C "$PUB" config user.email "161094568+guoshaoyang-pku@users.noreply.github.com"
 cd "$PUB"
 git fetch -q origin main
 git checkout -q fleet/ophis-live 2>/dev/null || git checkout -q -b fleet/ophis-live origin/main
