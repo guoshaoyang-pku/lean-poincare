@@ -118,12 +118,28 @@ Worker-side model choice is independent (section 4).
 `bin/leader_loop.sh` is a model-agnostic keep-alive wrapper. It re-invokes any one-shot
 agent CLI in slices (default 4 h, total budget `LEADER_MAX_HOURS` default 168 h), with
 heartbeat at `state/leaders/<id>/heartbeat.json`, quota backoff (45 min), fast-failure
-pause after 8 consecutive crashes, and a `LEADER_DONE` stop marker. Example for the
-planned stack (controller fable 5.1; leaders Astra/Sol/Opus 5; all max effort):
+pause after 8 consecutive crashes, and a `LEADER_DONE` stop marker.
+
+### Model policy — standard setting (hard)
+
+1. **Main controller: Fable 5.1 (max), fixed.** Never swapped.
+2. **Leaders / members default: Sol xhigh.** Opus allowed for other roles.
+3. The partner supplies the available-model list; **Fable 5.1 assigns dynamically per
+   task nature**; every assignment is appended to the audit log
+   `longrun/state/model-assignments.jsonl` with
+   `{"ts","task_id","role","model","family","assigned_by"}`.
+4. **Cross-family hard constraint:** gate acceptance and independent semantic review
+   must use a model family different from the producer (producer ≠ reviewer). The
+   driver may never downgrade or fallback a review step to a same-family model; a
+   same-family review is void and must be re-run. Reviewer family is recorded in
+   `longrun/evidence/semantic-review-*`.
+5. **All long-run tiers at max/ultra; no budget cap.**
+
+Example wiring (Sol xhigh leader):
 
 ```sh
 LEADER_ID=L4-geometric-critical-path \
-LEADER_CMD="codex exec --model <opus5-or-sol-id>" \
+LEADER_CMD="codex exec --model <sol-xhigh-id>" \
   nohup bin/leader_loop.sh >> logs/L4.leader.out 2>&1 &
 ```
 
