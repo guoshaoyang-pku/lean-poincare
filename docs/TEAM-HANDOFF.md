@@ -66,6 +66,9 @@ Per host (ophis-gpu, 360-1, 360-2):
    for sustained throughput.
 2. **Model**: edit the dsh headless profile `~/.dsh/profiles/headless` if your model id
    differs; update `queue.json`'s top-level `"model"` field so heartbeats/labels match.
+   To run workers on a different model family entirely, export `WORKER_CMD` (e.g.
+   `WORKER_CMD="codex exec --model <opus5-or-sol-id>"`) in the dispatcher's environment;
+   default remains `bin/dsh_fixed.sh --profile headless`.
 3. **Unblock admission**: `touch longrun/state/ADMISSION_OK`.
 4. **Dispatcher**: if not running, `cd longrun && nohup python3 bin/dispatch_loop.py >> logs/dispatch.out 2>&1 &`.
    `dispatcher.lock` (flock) prevents double-start; `bin/restart_fleet.py` stops

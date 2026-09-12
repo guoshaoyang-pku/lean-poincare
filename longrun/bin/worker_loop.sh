@@ -43,7 +43,10 @@ while [ "$(date +%s)" -lt "$deadline" ] && [ "$round" -lt "${TASK_MAX_ROUNDS:-24
   [ "$slice" -gt 0 ] || break
   context="$(cat "$PROMPT")
 Continue from existing files and checkpoint.json in this worktree; do not restart completed work. This invocation is limited to four hours. Save a compile-checked checkpoint at least every hour. Report a genuine mathematical blocker rather than claiming completion with a weaker theorem. Only your own longrun/results/$TASK_ID.md can complete this task."
-  timeout --signal=TERM --kill-after=30s "${slice}s" "$ROOT/../bin/dsh_fixed.sh" --profile headless "$context" > "$STATE/latest.log" 2>&1
+  # WORKER_CMD overrides the agent CLI (default: pinned dsh headless). Set it
+  # to e.g. "codex exec --model <id>" to run workers on another model family.
+  # shellcheck disable=SC2086
+  timeout --signal=TERM --kill-after=30s "${slice}s" ${WORKER_CMD:-$ROOT/../bin/dsh_fixed.sh --profile headless} "$context" > "$STATE/latest.log" 2>&1
   rc=$?
   printf '%s\n' "{\"task\":\"$TASK_ID\",\"ended\":\"$(date -Is)\",\"exit_code\":$rc,\"round\":$round}" > "$STATE/last_run.json"
   # Fail closed on provider admission/quota failures. Preserve the checkpoint
