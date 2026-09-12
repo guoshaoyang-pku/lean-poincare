@@ -1,0 +1,9 @@
+import Poincare.D12.ConnectionCurvature.SoThreeModel
+#check Poincare.D12.ConnectionCurvature.leviCivitaExists
+#print axioms Poincare.D12.ConnectionCurvature.leviCivitaExists
+#check Poincare.D12.ConnectionCurvature.milnorConnection_metricCompatible
+#print axioms Poincare.D12.ConnectionCurvature.milnorConnection_metricCompatible
+#check Poincare.D12.ConnectionCurvature.milnor_ricci_symm
+#print axioms Poincare.D12.ConnectionCurvature.milnor_ricci_symm
+#check Poincare.D12.ConnectionCurvature.SoThreeModel.so3_ricci_e00
+#print axioms Poincare.D12.ConnectionCurvature.SoThreeModel.so3_ricci_e00

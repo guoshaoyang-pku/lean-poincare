@@ -1,0 +1,9 @@
+import Poincare.D12.ComparisonGeodesics.Definitions
+import Mathlib.MeasureTheory.Integral.IntegrableOn
+open Set
+#check Icc_subset_Icc
+#check Icc_subset_Icc_right
+#check Ioo_subset_Ioo
+#check uIcc_of_le
+#check mem_uIcc
+#check Ioo_subset_Icc_self

@@ -1,0 +1,10 @@
+import Mathlib.Tactic
+import Mathlib.LinearAlgebra.Matrix.PosDef
+import Mathlib.Analysis.Calculus.Deriv.Basic
+#check @dotProduct_star_self_pos_iff
+#check @Matrix.dotProduct_self_star_pos_iff
+#check @HasDerivAt.const_sub
+#check @HasDerivAt.sub_const
+#check @Matrix.smul_apply
+#check @one_smul
+#check @zero_smul

@@ -1,0 +1,12 @@
+import Poincare.D7.HeatKernel.RepairStatus
+
+open Poincare.D7.HeatKernel
+
+-- D7-level consumer of the statement-level repair (new D7 module, no existing D7 file edited).
+#check @adversarial_datum_repaired_hypotheses
+#check @not_exists_isHeatKernel_adversarialTimeDerivativeSpacetime
+#check @exists_heatKernelData_adversarialTimeDerivativeSpacetime
+#check @snapshot_refuted_data_exists_adversarialTimeDerivative
+#print axioms not_exists_isHeatKernel_adversarialTimeDerivativeSpacetime
+#print axioms exists_heatKernelData_adversarialTimeDerivativeSpacetime
+#print axioms snapshot_refuted_data_exists_adversarialTimeDerivative

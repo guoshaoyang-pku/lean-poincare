@@ -1,0 +1,16 @@
+import Poincare.D12.ConnectionCurvature.ChartLeviCivita
+import Poincare.D12.ConnectionCurvature.ChartLeviCivitaForm
+import Poincare.D12.ConnectionCurvature.ChartLeviCivitaSmooth
+import Poincare.D12.ConnectionCurvature.ChartModel1D
+import Poincare.D12.ConnectionCurvature.ConformalChartModel
+import Poincare.D12.ConnectionCurvature.MilnorLeviCivita
+import Poincare.D12.ConnectionCurvature.RicciSymmetry
+import Poincare.D12.ConnectionCurvature.SoThreeModel
+#print Poincare.D12.ConnectionCurvature.leviCivitaExists
+#print axioms Poincare.D12.ConnectionCurvature.leviCivitaExists
+#print Poincare.D12.ConnectionCurvature.milnorConnection_metricCompatible
+#print axioms Poincare.D12.ConnectionCurvature.milnorConnection_metricCompatible
+#print Poincare.D12.ConnectionCurvature.RicciSymmetry.milnor_ricci_symm
+#print axioms Poincare.D12.ConnectionCurvature.RicciSymmetry.milnor_ricci_symm
+#print Poincare.D12.ConnectionCurvature.SoThreeModel.so3_ricci_e00
+#print axioms Poincare.D12.ConnectionCurvature.SoThreeModel.so3_ricci_e00

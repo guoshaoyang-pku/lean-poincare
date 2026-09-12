@@ -1,0 +1,17 @@
+import Poincare.D13.HeatKernelBridge.PredicateSemantics
+
+open Poincare.D13.HeatKernelBridge
+
+#check @heatOperator_eq_zero_iff
+#check @isHeatKernel_laplacian_snapshot_eq_timeDerivative
+#check @isHeatKernelV1_laplacian_snapshot_eq_timeDerivative
+#check @isHeatKernel_laplacian_snapshot_eq_zero_of_timeDerivative_eq_zero
+#check @isHeatKernelV1_laplacian_snapshot_eq_zero_of_timeDerivative_eq_zero
+#check @heatOperator_eq_zero_of_timeDerivative_eq_laplacian
+#check @flatHeatSpacetime
+#check @flatKernel_laplacian_snapshot_ne_zero
+#check @flatHeatSpacetime_positive
+#check @flatHeatSpacetime_normalized
+#check @flatHeatSpacetime_dirac_limitFor
+#check @flatHeatSpacetime_not_isHeatKernelV1_integrableClass
+#check @flatHeatSpacetime_not_isHeatKernel

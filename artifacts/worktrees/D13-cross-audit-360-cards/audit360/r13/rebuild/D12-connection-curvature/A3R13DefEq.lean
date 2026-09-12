@@ -1,0 +1,153 @@
+-- A3 round-13 definitional hyp-equals-conclusion screen (generated)
+import Poincare.D12.ConnectionCurvature
+import Poincare.D12.ConnectionCurvature.ChartLeviCivita
+import Poincare.D12.ConnectionCurvature.ChartLeviCivitaForm
+import Poincare.D12.ConnectionCurvature.ChartLeviCivitaSmooth
+import Poincare.D12.ConnectionCurvature.ChartModel1D
+import Poincare.D12.ConnectionCurvature.ConformalChartModel
+import Poincare.D12.ConnectionCurvature.MilnorLeviCivita
+import Poincare.D12.ConnectionCurvature.RicciSymmetry
+import Poincare.D12.ConnectionCurvature.SoThreeModel
+
+open Lean Elab Command
+open Lean Meta
+namespace A3R13D
+
+def claimed : List Name := [``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.christoffel,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.christoffelLower,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.christoffel_raised_contraction,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.christoffel_raised_contraction_first,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.christoffel_symm,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.gram_christoffel_contraction,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.gram_mul_gInv_delta,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.gram_mul_gInv_delta_first,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.metricDerivative_christoffel,
+  ``Poincare.D12.ConnectionCurvature.ChartMetricCoefficients.metricDerivative_christoffel',
+  ``Poincare.D12.ConnectionCurvature.ChartModel1D.chart1D,
+  ``Poincare.D12.ConnectionCurvature.ChartModel1D.chart1D_christoffel,
+  ``Poincare.D12.ConnectionCurvature.ChartModel1D.chart1D_christoffel_ne_zero,
+  ``Poincare.D12.ConnectionCurvature.ChartModel1D.chart1D_curvature_zero,
+  ``Poincare.D12.ConnectionCurvature.ChartModel1D.chart1D_metricCompatible,
+  ``Poincare.D12.ConnectionCurvature.ChartPoint,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.chartCoefficients,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.christoffelFamily,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.christoffelFamily_metricDerivative,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.christoffelFamily_smooth,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.christoffelFamily_symm,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.dFamily,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.dFamily_smooth,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.dFamily_symm,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.formField,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.gInv_component_smooth,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.g_component_smooth,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.lieBracket,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.lieBracket_smooth,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.nabla,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.nabla_apply,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.nabla_const_apply,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.nabla_metricCompatible,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.nabla_smooth,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.nabla_smul,
+  ``Poincare.D12.ConnectionCurvature.SmoothChartData.nabla_torsionFree,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.cross_e0_e1,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.cross_e1_e0,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.cross_e2_e0,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.cross_e2_e1,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.dot3,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.dot3_apply,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3Lie,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3MeanLeviCivita,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3Metric,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3_basis_eq_single,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3_bracketInvariant,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3_curvature_basis,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3_curvature_nonzero,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3_milnor_eq_mean,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3_ricci_e00,
+  ``Poincare.D12.ConnectionCurvature.SoThreeModel.so3_ricci_symm,
+  ``Poincare.D12.ConnectionCurvature.VectorField,
+  ``Poincare.D12.ConnectionCurvature.adTranspose,
+  ``Poincare.D12.ConnectionCurvature.adTranspose_apply_form,
+  ``Poincare.D12.ConnectionCurvature.adTranspose_apply_form_swap,
+  ``Poincare.D12.ConnectionCurvature.bracketInvariant,
+  ``Poincare.D12.ConnectionCurvature.chartAbstractConnection,
+  ``Poincare.D12.ConnectionCurvature.chartCurvatureOperator,
+  ``Poincare.D12.ConnectionCurvature.chartCurvatureOperator_apply,
+  ``Poincare.D12.ConnectionCurvature.chartMetricCompatible_form,
+  ``Poincare.D12.ConnectionCurvature.chartTorsionFree_form,
+  ``Poincare.D12.ConnectionCurvature.christoffel_pointwise_conformal,
+  ``Poincare.D12.ConnectionCurvature.conformalG,
+  ``Poincare.D12.ConnectionCurvature.conformalGInv,
+  ``Poincare.D12.ConnectionCurvature.conformalGInv_smooth,
+  ``Poincare.D12.ConnectionCurvature.conformalG_smooth,
+  ``Poincare.D12.ConnectionCurvature.conformalGamma,
+  ``Poincare.D12.ConnectionCurvature.conformalGamma_101_zero,
+  ``Poincare.D12.ConnectionCurvature.conformalGamma_origin_zero,
+  ``Poincare.D12.ConnectionCurvature.conformalPointwise,
+  ``Poincare.D12.ConnectionCurvature.conformal_contDiff_proj,
+  ``Poincare.D12.ConnectionCurvature.conformal_curvature_nonzero,
+  ``Poincare.D12.ConnectionCurvature.conformal_denom_ne_zero,
+  ``Poincare.D12.ConnectionCurvature.conformal_denom_pos,
+  ``Poincare.D12.ConnectionCurvature.conformal_riemann_1212_origin,
+  ``Poincare.D12.ConnectionCurvature.curvatureEndo,
+  ``Poincare.D12.ConnectionCurvature.curvature_skew_adjoint,
+  ``Poincare.D12.ConnectionCurvature.dFormOf,
+  ``Poincare.D12.ConnectionCurvature.fderiv_apply_eq_sum_single,
+  ``Poincare.D12.ConnectionCurvature.fderiv_mul_mul_apply,
+  ``Poincare.D12.ConnectionCurvature.formOf,
+  ``Poincare.D12.ConnectionCurvature.formOf_apply,
+  ``Poincare.D12.ConnectionCurvature.form_basis_apply_of_orthonormal,
+  ``Poincare.D12.ConnectionCurvature.form_nabla_eq_sum,
+  ``Poincare.D12.ConnectionCurvature.form_nabla_second_eq_sum,
+  ``Poincare.D12.ConnectionCurvature.leviCivitaExists,
+  ``Poincare.D12.ConnectionCurvature.linMap_apply_eq_sum_single,
+  ``Poincare.D12.ConnectionCurvature.meanLeviCivitaData,
+  ``Poincare.D12.ConnectionCurvature.milnorAbstractConnection,
+  ``Poincare.D12.ConnectionCurvature.milnorConnection,
+  ``Poincare.D12.ConnectionCurvature.milnorConnection_apply,
+  ``Poincare.D12.ConnectionCurvature.milnorConnection_eq_mean_iff,
+  ``Poincare.D12.ConnectionCurvature.milnorConnection_isLeviCivita,
+  ``Poincare.D12.ConnectionCurvature.milnorConnection_metricCompatible,
+  ``Poincare.D12.ConnectionCurvature.milnorConnection_torsionFree,
+  ``Poincare.D12.ConnectionCurvature.milnorLeviCivitaData,
+  ``Poincare.D12.ConnectionCurvature.milnor_ricci_symm,
+  ``Poincare.D12.ConnectionCurvature.nablaOf,
+  ``Poincare.D12.ConnectionCurvature.nablaOf_apply,
+  ``Poincare.D12.ConnectionCurvature.ricci_contraction_eq_sum_basis,
+  ``Poincare.D12.ConnectionCurvature.ricci_symm,
+  ``Poincare.D12.ConnectionCurvature.riemannComp,
+  ``Poincare.D12.ConnectionCurvature.scalarCurvature_eq_sum_ricci_basis,
+  ``Poincare.D12.ConnectionCurvature.sum_add_split,
+  ``Poincare.D12.ConnectionCurvature.sum_cycle_first_to_last,
+  ``Poincare.D12.ConnectionCurvature.sum_four_reorder,
+  ``Poincare.D12.ConnectionCurvature.sum_three_cycle,
+  ``Poincare.D12.ConnectionCurvature.sum_three_reorder,
+  ``Poincare.D12.ConnectionCurvature.trace_skew_adjoint_zero]
+
+/-- Only theorems with a Prop-valued hypothesis can commit the
+assumption-as-conclusion defect; a plain function whose argument type equals
+its result type (e.g. `def f (x : R) : R`) is benign. -/
+def run : CommandElabM Unit := do
+  liftTermElabM do
+    let mut checked := 0
+    for n in claimed do
+      let ci ← getConstInfo n
+      unless ci matches .thmInfo _ do continue
+      checked := checked + 1
+      Lean.Meta.forallTelescope ci.type (fun args body => do
+        if ← isDefEq body (.const ``True []) then
+          logInfo m!"A3R13D|TRIVIAL_TRUE|{n}"
+        for a in args do
+          let ty ← inferType a
+          if ← isProp ty then
+            if ← isDefEq ty body then
+              let u := a.fvarId!.name
+              logInfo m!"A3R13D|HYP_DEFEQ|{n}|{u}"
+        )
+    logInfo m!"A3R13D|CHECKED|{checked}"
+  logInfo m!"A3R13D|DONE"
+
+end A3R13D
+run_cmd A3R13D.run
