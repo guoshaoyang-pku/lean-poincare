@@ -1,48 +1,61 @@
-# Lean Poincaré / Ricci-flow formalization workbench
+# Lean Poincare - verifier-gated formalization
 
-**The Poincaré conjecture and Perelman's proof are NOT established by this repository.**
+![Ricci flow neck-pinch on a wireframe 3-sphere](assets/banner.png)
 
-The repository contains conditional interfaces, checked implication chains, concrete model-space lemmas and historical audit artifacts. In particular, `release/Poincare/D7/Recognition/Assembly.lean` assumes extinction, canonical-neighborhood and recognition certificates. A proof from those certificates does not construct them.
+> A public, evidence-first workspace for formalizing the geometric and analytic layers around Perelman's proof of the Poincare conjecture in Lean 4.
 
-## Current supervision
+[![publication branch](https://img.shields.io/badge/publication-ai4math--swarm%2Fshaoyang%2Fperelman__formulation-2b6f8e)](https://github.com/swarm-research/ai4math-swarm/tree/shaoyang/perelman_formulation)
+[![compile verified](https://img.shields.io/badge/compile--verified-96%20packages-147d64)](https://github.com/swarm-research/ai4math-swarm/tree/shaoyang/perelman_formulation/perelman_formulation/release)
+[![open blockers](https://img.shields.io/badge/open%20research%20blockers-24-b5472b)](https://github.com/swarm-research/ai4math-swarm/blob/shaoyang/perelman_formulation/perelman_formulation/manifest/blockers.md)
+[![Lean](https://img.shields.io/badge/Lean-4.32.1-5847bf)](https://github.com/swarm-research/ai4math-swarm/blob/shaoyang/perelman_formulation/perelman_formulation/release/lean-toolchain)
 
-See [the supervision report](longrun/SUPERVISION-2026-09-10.md), [the machine-readable long-term plan](longrun/D12-plan.json) and [the observation snapshot](longrun/supervision-2026-09-10.json).
+This repository is the readable landing page and historical release record for the project. The active handover and publication line is ai4math-swarm/shaoyang/perelman_formulation. The swarm branch contains the integrated release overlay, current manifests, leader lanes, handoff materials and reproducible evidence. This repository keeps the stable project narrative, selected release sources and historical audit trail.
 
-Fourteen D12 research tracks and two dependent D13 audit/review tasks have been assigned. The execution model is currently `deepseek-v4-pro`, with maximum reasoning effort. Each track has a 72-hour wall-clock budget, four-hour invocation slices, hourly checkpoints and at most 24 invocations. The fleet capacities are six tasks on ophis-gpu and nine on each 360 machine; the actual active count is recorded separately in the observation snapshot. These are resource limits, not promised theorem-completion times. Queued tasks may start later; the two follow-up reviews wait for terminal outcomes, including reported blockers.
+## What is proved, and what is not
 
-Supervision found and repaired transport stalls rather than counting idle workers as progress. ophis-gpu now uses its verified direct API route, while the 360 machines use a persistent Mac service forwarding encrypted API traffic through the existing HTTP proxy. Both 360 hosts were reachable again during the final inspection; SSH access remains intermittent, so use the timestamped observations rather than central `running` labels. Continued operation requires network/model availability and, for 360, the Mac/proxy remaining available. This is bounded automation, not a promise of continuous interactive-model supervision.
+The project currently contains kernel-checked definitions, model-space lemmas, conditional interfaces, implication chains and verifier artifacts. Compile-verified means that Lean compilation, per-file kernel checks, forbidden-token scans and an axiom-cone audit passed for the recorded package. It does not mean that the full Perelman proof or the Poincare conjecture has been formalized.
 
-## Evidence levels
+The major missing inputs remain analytic existence and regularity, genuine Riemannian geometry and measure constructions, entropy and noncollapsing, geometric compactness, canonical neighborhoods, surgery/extinction and the unconditional topological recognition step. A theorem with an explicit certificate or hypothesis is recorded as conditional; it is never presented as closure of the underlying blocker.
 
-1. **Compiled:** `lake build` and per-file Lean checks from the correct package, recorded with source hashes. The legacy queue label `verified` is retained for compatibility and must not be read as mathematical completion.
-2. **Kernel-audited:** every relevant declaration's transitive axiom dependencies checked against `propext`, `Classical.choice` and `Quot.sound`, with working negative controls.
-3. **Semantically reviewed:** theorem types and certificate fields expanded; geometric domain, hypotheses and non-vacuity checked independently.
-4. **Blocker closed:** the original missing input is constructed under the intended assumptions and consumed by a downstream checked theorem.
+## Progress map
 
-Passing one level does not imply the others. A theorem about Euclidean space, a finite discretization or an explicitly supplied certificate is not a theorem for arbitrary Ricci flows on closed three-manifolds. The current scheduling gate performs compilation only; the independent audit tasks must supply stronger acceptance evidence.
+| layer | status | evidence |
+|---|---|---|
+| **M0 - toolchain and baseline** | complete | pinned Lean/mathlib, clean baseline, declaration and axiom manifests |
+| **M1 - geometry** | partial | curvature, connection, Jacobi/Sturm and model-space results; general Riemann/Ricci/geodesic gaps remain |
+| **M2 - heat analysis** | open frontier | Euclidean heat-kernel bridge and audits exist; general manifold existence remains open |
+| **M3 - Ricci-flow producer** | open | DeTurck and short-time existence interfaces are stated, without a general inhabitant |
+| **M4 - entropy and volume** | partial | finite/model-level certificates compile; analytic monotonicity inputs remain open |
+| **M5-M7 - noncollapsing to surgery** | open | statement-only or conditional layers with named blockers |
+| **M8 - recognition** | open | topology and geometric realization tasks remain in the DAG |
 
-The `manifest/` directory primarily describes the historical D6 release. Its declaration counts, hashes and axiom audits do **not** certify every later file in the integrated source tree. This supervision update publishes the D11 Euclidean heat-kernel bridge with its rerun 61-declaration audit, the execution plan and control-source fixes. The bridge's ten-file project import closure matches the audited worker by SHA-256. It does not promote new D12 mathematics or claim a fresh integrated kernel audit.
+The current swarm snapshot records **96 compile-verified task packages**, a **145-node DAG**, five leader lanes and **24 named research blockers**. These are evidence indexes, not a percentage-complete claim.
 
-## Reproduction and execution
+## Reproduce the release
 
-The Lean package is [release/](release/). Use the toolchain recorded in [release/lean-toolchain](release/lean-toolchain) and the mathlib revision pinned in [release/lake-manifest.json](release/lake-manifest.json). Do not run a dependency update when reproducing an existing snapshot.
+For the active package, clone the publication branch and enter its release tree:
 
-```bash
-lake -d release build
-```
+    git clone -b shaoyang/perelman_formulation https://github.com/swarm-research/ai4math-swarm.git
+    cd ai4math-swarm/perelman_formulation/release
+    lake build
 
-The historical D6 audit tools in [tools/](tools/) can be inspected alongside their original manifests. Their environment-specific paths and baseline hashes must be understood before reuse; a historical audit should not be relabeled as a current clean rebuild.
+Use the pinned toolchain and mathlib revision in lean-toolchain and lake-manifest.json; do not update dependencies when reproducing a snapshot.
 
-The control sources in [longrun/bin/](longrun/bin/) document the deployed orchestration. They require an existing fleet layout, a configured dsh launcher, Lean packages and credentials provisioned outside Git. They are not a turnkey installer. Do not publish credentials, settings files, live logs or shared build caches. The source snapshot and worker worktrees are separate from the publication repository; Git metadata must never be synchronized with `rsync --delete`.
+## Project documents
 
-## Imported upstream workspace
+- [中文项目说明](docs/lean-formalization-agent-swarm-blog.zh-CN.md)
+- [研究计划与 DAG](docs/lean-formalization-agent-swarm-dag.html)
+- [控制面板](docs/lean-formalization-agent-swarm-control.html)
+- [项目总览图](docs/lean-formalization-agent-swarm.html)
+- [仓库结构](docs/REPOSITORY-STRUCTURE.md)
+- [协作者 handoff](docs/TEAM-HANDOFF.md)
+- [上游适配策略](docs/UPSTREAM-INTEGRATION.md)
+- [Mathlib onboarding](docs/MATHLIB-ONBOARDING.md)
+- [release manifest](manifest/weekly-release-manifest.md)
+- [blocker ledger](manifest/blockers.md)
 
-The complete tracked snapshot of [frenzymath/Poincare-Conjecture](https://github.com/frenzymath/Poincare-Conjecture) is preserved under [third_party/frenzymath/Poincare-Conjecture/](third_party/frenzymath/Poincare-Conjecture/). It is locked to commit `bb91a091f0b968f8bbe8d861e025a88d82b161be` and retains the upstream package boundaries, including `DoCarmoLib`, `MorganTianLib`, `Topping`, `Shared` and the source-reference projects.
+## Working model
 
-The upstream workspace is substantially larger than the local release and is the preferred reference for future geometry and Ricci-flow adapters. It is intentionally not flattened into `release/`: the two workspaces use different Lean and mathlib pins, and upstream compilation or blueprint status does not by itself promote a declaration into local evidence. See [the repository structure](docs/REPOSITORY-STRUCTURE.md) and [the integration plan](docs/UPSTREAM-INTEGRATION.md).
+The swarm publication branch is the source of truth for active work. Leaders and workers checkpoint into evidence artifacts; an integrator promotes only material that passes the compile and audit gates. Historical logs and large build caches stay out of this landing repository so a fresh reader can understand the project without downloading a multi-gigabyte runtime snapshot.
 
-## Scope of the remaining work
-
-Major open branches include analytic existence and regularity, actual Riemannian geometry/measure constructions, entropy and noncollapsing, geometric compactness and canonical neighborhoods, surgery/extinction and topology. Many underlying mathematical results are classical; their missing formalizations are not automatically "new mathematics."
-
-The old count of 22 blockers is a historical ledger count, not an exhaustive contemporary inventory or a percentage-complete denominator. D12 includes an independent semantic-ledger task to reassess this boundary from the actual Lean statements.
+For a cold start, follow the handoff guide and then clone shaoyang/perelman_formulation. Do not treat this repository's main branch as a replacement for the swarm publication branch.
